@@ -649,6 +649,7 @@ const en = {
           targetLayout: "Target's layout: {{name}}",
           layoutSync:
             "Switch the target's layout to what I type: the on-screen keyboard's language, the phone keyboard's letters",
+          layoutSyncFailed: "The target's layout was not switched: {{reason}}",
           start: 'Start the agent on the target',
           startConfirm: 'Type it',
           startExplain:

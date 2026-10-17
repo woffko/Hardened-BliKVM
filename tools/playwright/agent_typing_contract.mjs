@@ -4,7 +4,9 @@
 // English one before the Latin run, each once the keys before it are typed: the Cyrillic letters and the comma at the
 // Russian layout's keys, the Latin ones at the US layout's. Latin text while the target is already English switches
 // nothing, and with the option off nothing is switched at all. "Tänan, ok?" switches to the Estonian layout, its
-// letters and its question mark at that layout's keys, and Latin text after it keeps that layout.
+// letters and its question mark at that layout's keys, and Latin text after it keeps that layout. The on-screen
+// keyboard's switch, refused once, is said in its header and asked again as remote control is taken again, before the
+// first key.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -75,7 +77,11 @@ async function eventually(condition, timeoutMs = 6000) {
  * A phone's page with remote control and the phone keyboard open, and what it
  * sends in order: the agent's calls and the keyboard's reports.
  */
-async function open({ follow, installed = [ENGLISH, RUSSIAN] }) {
+async function open({
+  follow,
+  installed = [ENGLISH, RUSSIAN],
+  refuseLayouts = 0,
+}) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
@@ -98,6 +104,7 @@ async function open({ follow, installed = [ENGLISH, RUSSIAN] }) {
   page.on("pageerror", (error) => errors.push(error.message));
   const sent = [];
   let current = ENGLISH;
+  let refused = 0;
   await page.route("**/api/target-agent", (route) =>
     route.fulfill({
       json: {
@@ -124,6 +131,16 @@ async function open({ follow, installed = [ENGLISH, RUSSIAN] }) {
   await page.route("**/api/target-agent/call", (route) => {
     const { call } = route.request().postDataJSON();
     sent.push({ call, at: performance.now() });
+    if (call?.set_layout && refused < refuseLayouts) {
+      refused += 1;
+      return route.fulfill({
+        json: {
+          code: -409,
+          msg: "the agent is read under the keyboard's and mouse's lease: take control first",
+          data: null,
+        },
+      });
+    }
     if (call?.set_layout)
       current = installed.find((layout) => layout.id === call.set_layout.id);
     const answer =
@@ -337,8 +354,52 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  {
+    // The on-screen keyboard's switch refused once: said in its header, and
+    // asked again as remote control is taken again, before the first key.
+    const { context, page, errors, sent } = await open({
+      follow: true,
+      refuseLayouts: 1,
+    });
+    assert.ok(
+      await eventually(() => sent.some((entry) => entry.call === "keyboard")),
+    );
+    await page
+      .locator("svg.lucide-keyboard:not(:has(+ svg.lucide-smartphone))")
+      .first()
+      .tap();
+    await page.getByText("On-screen keyboard", { exact: true }).tap();
+    const onScreen = page.getByTestId("touch-virtual-keyboard");
+    await onScreen.waitFor();
+    await onScreen.locator("select").selectOption("ru");
+    const failure = onScreen.getByTestId("agent-layout-sync-failure");
+    await failure.waitFor();
+    assert.match(await failure.textContent(), /take control first/);
+    assert.deepEqual(layoutCalls(sent), [{ set_layout: { id: RUSSIAN.id } }]);
+    await page.getByRole("button", { name: "Disable remote control" }).tap();
+    await page.getByRole("button", { name: "Enable remote control" }).tap();
+    await page.getByRole("button", { name: "Confirm and control" }).tap();
+    assert.ok(
+      await eventually(() => layoutCalls(sent).length === 2),
+      JSON.stringify(layoutCalls(sent)),
+    );
+    await failure.waitFor({ state: "detached" });
+    const asked = sent.findLastIndex((entry) => entry.call?.set_layout);
+    await onScreen
+      .getByRole("button", { name: "Й", exact: true })
+      .first()
+      .tap();
+    // Й, the US Q key, the first key pressed after the switch (all keys let
+    // go as control is taken may come before it).
+    const pressed = () =>
+      reports(sent.slice(asked)).filter((report) => report.some(Boolean));
+    assert.ok(await eventually(() => pressed().length >= 1));
+    assert.deepEqual(pressed()[0], typed(0, 0x14)[0]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
   console.log(
-    'agent typing contract: ok (the target switched to Russian before "Привет, " and to English before "world", each after the keys before it; nothing switched for Latin text on English, by the closed on-screen keyboard or with the option off; the on-screen keyboard\'s language as it opens and as it is chosen; "Tänan, ok?" in the Estonian layout, kept for Latin text)',
+    'agent typing contract: ok (the target switched to Russian before "Привет, " and to English before "world", each after the keys before it; nothing switched for Latin text on English, by the closed on-screen keyboard or with the option off; the on-screen keyboard\'s language as it opens and as it is chosen; "Tänan, ok?" in the Estonian layout, kept for Latin text; a refused switch of the on-screen keyboard said and asked again as control is taken)',
   );
 } finally {
   await browser.close();

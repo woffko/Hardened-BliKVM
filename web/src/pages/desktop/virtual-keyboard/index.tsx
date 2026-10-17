@@ -4,6 +4,7 @@ import { AppleOutlined, WindowsOutlined } from '@ant-design/icons';
 import clsx from 'clsx';
 import { useAtom, useSetAtom } from 'jotai';
 import { XIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { KeyboardButtonTheme } from 'react-simple-keyboard';
 import * as SimpleKeyboard from 'react-simple-keyboard';
 import { Drawer } from 'vaul';
@@ -53,6 +54,7 @@ const KEYBOARD_LANGUAGES = [
 ];
 
 export const VirtualKeyboard = () => {
+  const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
 
   const [isKeyboardOpen, setIsKeyboardOpen] = useAtom(isKeyboardOpenAtom);
@@ -62,8 +64,19 @@ export const VirtualKeyboard = () => {
   const [keyboardLanguage, setKeyboardLanguage] = useState('en');
   const [activeModifierKeys, setActiveModifierKeys] = useState<string[]>([]);
   const { restricted, reportHid } = useHidLease();
-  // The target's layout follows the keyboard's language when asked to.
-  useAgentLayoutSync(keyboardLanguage, isKeyboardOpen);
+  // The target's layout follows the keyboard's language when asked to; a
+  // switch that failed is said in the header.
+  const layoutFailure = useAgentLayoutSync(keyboardLanguage, isKeyboardOpen);
+  const layoutNotice = layoutFailure ? (
+    <span
+      role="alert"
+      data-testid="agent-layout-sync-failure"
+      className="min-w-0 truncate text-xs text-red-600"
+      title={layoutFailure}
+    >
+      {t('settings.device.targetAgent.layoutSyncFailed', { reason: layoutFailure })}
+    </span>
+  ) : null;
 
   const keyboardRef = useRef<any>(null);
   // A key is down: a finger's up, leave and cancel each let it go, once.
@@ -308,6 +321,8 @@ export const VirtualKeyboard = () => {
               ))}
             </select>
 
+            {layoutNotice}
+
             {keyboardLanguage === 'en' && (
               <div className="flex overflow-hidden rounded border border-neutral-300 text-sm">
                 {systems.map((system) => (
@@ -406,6 +421,8 @@ export const VirtualKeyboard = () => {
                     onChange={selectSystem}
                   />
                 )}
+
+                {layoutNotice}
               </div>
             </ConfigProvider>
 
