@@ -471,7 +471,7 @@ pub enum ControlV2ValidationError {
     InvalidWifiNetwork,
     #[error("display sleep time is not one of the choices")]
     InvalidDisplaySleep,
-    #[error("target agent call timeout is out of range")]
+    #[error("target agent call or its timeout is invalid")]
     InvalidTargetAgentCall,
 }
 
@@ -667,15 +667,20 @@ impl PlatformControlRequestV2 {
                 timeout_ms,
                 lease,
             } => {
-                let leased = lease.is_some_and(|lease| {
-                    lease.lease_id.iter().any(|byte| *byte != 0)
-                        && lease.session_binding != 0
-                        && lease.target_binding.iter().any(|byte| *byte != 0)
-                });
-                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms)
-                    && call.is_valid()
-                    && (leased || (lease.is_none() && !call.needs_lease()))
-                {
+                // A read or an action only under a lease; a lease given is
+                // checked as every lease is.
+                match lease {
+                    Some(lease) => {
+                        validate_lease_id(&lease.lease_id)?;
+                        validate_session_binding(lease.session_binding)?;
+                        validate_target_binding(&lease.target_binding)?;
+                    }
+                    None if call.needs_lease() => {
+                        return Err(ControlV2ValidationError::InvalidLeaseId);
+                    }
+                    None => {}
+                }
+                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms) && call.is_valid() {
                     Ok(())
                 } else {
                     Err(ControlV2ValidationError::InvalidTargetAgentCall)
@@ -915,16 +920,51 @@ mod target_agent_tests {
         assert_eq!(read(Some(lease)).validate(), Ok(()));
         assert_eq!(
             read(None).validate(),
-            Err(ControlV2ValidationError::InvalidTargetAgentCall)
+            Err(ControlV2ValidationError::InvalidLeaseId)
         );
-        assert_eq!(
-            read(Some(TargetAgentLease {
-                lease_id: [0; 16],
-                ..lease
-            }))
-            .validate(),
-            Err(ControlV2ValidationError::InvalidTargetAgentCall)
-        );
+    }
+
+    #[test]
+    fn a_target_agent_calls_lease_is_refused_as_a_lease() {
+        let lease = TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        for (call, timeout_ms) in [
+            (bli_kvm_agent_protocol::Call::Monitors, 500),
+            (bli_kvm_agent_protocol::Call::Ping, 500),
+        ] {
+            let leased = |lease| PlatformControlRequestV2::TargetAgentCall {
+                call: call.clone(),
+                timeout_ms,
+                lease: Some(lease),
+            };
+            assert_eq!(
+                leased(TargetAgentLease {
+                    lease_id: [0; 16],
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidLeaseId)
+            );
+            assert_eq!(
+                leased(TargetAgentLease {
+                    session_binding: 0,
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidSessionBinding)
+            );
+            assert_eq!(
+                leased(TargetAgentLease {
+                    target_binding: [0; 32],
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidTargetBinding)
+            );
+        }
     }
 }
 
