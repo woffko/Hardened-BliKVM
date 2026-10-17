@@ -359,7 +359,8 @@ pub fn set_displays(mode: DisplayMode) -> Result<u32, String> {
 }
 
 /// Keeps the monitors' change: nothing is put back, and the configuration
-/// is saved as Windows' own.
+/// is saved as Windows' own. With no change waiting it fails, and a change
+/// not saved is still put back (`Revert::keep`).
 pub fn keep_displays() -> Result<(), String> {
     DISPLAYS.keep(|| {
         let current = reads::active_config().ok_or("the monitors' configuration was not read")?;

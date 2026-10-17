@@ -83,12 +83,19 @@ impl<C> Revert<C> {
         }
     }
 
-    /// Keeps the change that waits: nothing is put back, and `save` saves
-    /// the configuration as it is, under the lock.
+    /// Keeps the change that waits: `save` saves the configuration as it
+    /// is, under the lock, and only a saved change stops waiting, so that
+    /// one whose saving failed is still put back in time and may be kept
+    /// again meanwhile. With nothing waiting (put back already, or kept)
+    /// it fails, so that the page does not take it for kept.
     pub fn keep(&self, save: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
         let mut state = self.lock();
+        if state.pending.is_none() {
+            return Err("nothing is waiting to be kept".into());
+        }
+        save()?;
         state.pending = None;
-        save()
+        Ok(())
     }
 }
 
@@ -126,6 +133,38 @@ mod tests {
         // Only the second change's timer puts anything back: what was there
         // before the first.
         assert_eq!(*put_back.lock().unwrap(), vec![0]);
+    }
+
+    #[test]
+    fn only_a_change_that_waits_is_kept_and_one_not_saved_is_still_put_back() {
+        let revert = Revert::new();
+        let saved = Mutex::new(0);
+        let save = || {
+            *saved.lock().unwrap() += 1;
+            Ok(())
+        };
+        // Nothing waits: there is nothing to keep, and nothing is saved.
+        assert_eq!(
+            revert.keep(save),
+            Err("nothing is waiting to be kept".to_string())
+        );
+        assert_eq!(*saved.lock().unwrap(), 0);
+        // A keep whose saving fails leaves the change to be put back in time.
+        let change = revert.change(|| Ok(0)).unwrap();
+        assert_eq!(
+            revert.keep(|| Err("Windows refused".into())),
+            Err("Windows refused".to_string())
+        );
+        let mut put_back = Vec::new();
+        revert.due(change, |config| put_back.push(config));
+        assert_eq!(put_back, vec![0]);
+        // A change kept is not put back, and kept once.
+        let change = revert.change(|| Ok(0)).unwrap();
+        assert_eq!(revert.keep(save), Ok(()));
+        revert.due(change, |config| put_back.push(config));
+        assert_eq!(put_back, vec![0]);
+        assert!(revert.keep(save).is_err());
+        assert_eq!(*saved.lock().unwrap(), 1);
     }
 
     #[test]
