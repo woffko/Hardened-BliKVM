@@ -164,26 +164,28 @@ QUIC; reading monitors and layouts at once (the agent serialises calls).
 ## Status
 
 Filled in by the plan's work: the commit that fixed an item and its test,
-or why it was left.
+or why it was left. Each test failed on the code before its fix (the
+commits say how) and passes after; the work's log is
+`evidence/private/review-20261017/fix-log.md`.
 
 | Item | Plan | Status |
 | --- | --- | --- |
 | R1 | C1 | open |
 | R2 | C2 | open |
 | R3 | C3, D1 | open |
-| R4 | B1 | open |
-| R5 | B2 | open |
+| R4 | B1 | fixed, 5f358cf: `a_failed_switch_off_leaves_the_channel_as_the_switch` |
+| R5 | B2 | fixed, e8c3784: `a_refused_agent_change_leaves_later_gadgets_as_before` |
 | R6 | D2 | open |
 | R7 | C4, D3 | open |
-| R8 | B3 | open |
+| R8 | B3 | fixed, bb30cf9: `the_agents_drive_follows_the_switch_beside_an_ejected_medium`, `the_agents_drive_goes_even_when_the_storage_cannot_be_rebuilt`, `an_empty_lun_zero_is_a_removable_one_and_the_drive_can_go_alone` |
 | R9 | D4 | open |
-| R10 | B6 | open |
+| R10 | B6 | fixed, 3ed21c2: `a_refusal_from_the_target_is_kept_within_the_states_bounds` |
 | R11 | D5 | open |
 | R12 | C5 | open |
 | R13 | D7 | open |
-| R14 | B7 | open |
+| R14 | B7 | fixed, f4f8231: `a_call_whose_request_cannot_go_ends_at_once` |
 | R15 | D6 | open |
-| L1 | B8 | open |
+| L1 | B8 | fixed, 6abb6e2: `a_gadget_built_again_for_a_hid_request_closes_the_channel_meanwhile` |
 | L2 | C6 | open |
 | L3 | E | open |
 | L4 | E | open |
@@ -192,9 +194,31 @@ or why it was left.
 | L7 | D8 | open |
 | L8 | C7 | open |
 | L9 | C7 | open |
-| L10 | B9 | open |
+| L10 | B9 | fixed, 09d8379: `a_target_agent_calls_lease_is_refused_as_a_lease` |
 | L11 | C8 | open |
 | L12 | E | open |
-| L13 | B10 | open |
-| U1 | B4 | open |
-| U2 | B5 | open |
+| L13 | B10 | fixed, 7ae51f6: `absolute_reports_read_the_descriptor_once_for_each_change_of_the_gadget` |
+| U1 | B4 | shown, and fixed with R8 in bb30cf9: `the_agents_drive_puts_back_no_medium_the_target_ejected` |
+| U2 | B5 | shown, and fixed in 7f0679b: `a_storage_change_that_fails_binds_the_gadget_again` |
+
+## Gates
+
+- **Gate B** (2026-10-17): B1 to B10's tests failed before their fixes and
+  pass after; the owner's tests (194 with all features, and each feature
+  set `check.sh` runs), the media, gadget, HID and core tests pass.
+  `scripts/check.sh` on 7ae51f6 passed every step, each failure under the
+  shared host's load run again: five full runs each stopped at one timing
+  contract of the page, which phase B did not touch, while another
+  session's fuzzers, test oracles and builds held the load average between
+  6 and 57; every step before the QUIC video contract passed in the third
+  and fourth runs; that contract passed alone on its second try, the QUIC
+  share contract after it on its second, and every step after them passed.
+  Flaky under that load: `tools/playwright/mjpeg_upscale_contract.mjs`
+  (its watchdog's count, "drawn 7.3 of 10 a second"),
+  `tools/playwright/screen_area_contract.mjs` (a pointer moved before the
+  page had the board's answer), `tools/playwright/vp8_range_contract.mjs`
+  ("drawn 2.5 of 2.7 a second"), `tools/playwright/quic_video_contract.mjs`
+  (frames drawn per second, a pinch's buffer) and
+  `tools/playwright/quic_share_contract.mjs` (the page keeping up on the
+  narrow path; a session that started again); the logs are in
+  `evidence/private/review-20261017/`.
