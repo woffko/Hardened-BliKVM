@@ -27,6 +27,7 @@ import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.
 import { focusConfirmedAtom } from '@/jotai/restricted-control.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
+import { layoutSwitched, readAgentKeyboard } from '@/hooks/useTargetAgent.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
 import { KeyHelper } from './key-helper.tsx';
@@ -176,8 +177,7 @@ export const MobileLocalKeyboard = () => {
     hold();
     await drained();
     await targetAgent.askTargetAgent({ set_layout: { id: layout.id } });
-    const keyboard = store.get(agentKeyboardAtom);
-    if (keyboard) store.set(agentKeyboardAtom, { ...keyboard, current: layout });
+    layoutSwitched(layout);
     await new Promise((resolve) => setTimeout(resolve, LAYOUT_SWITCH_MS));
   }
 
@@ -188,9 +188,7 @@ export const MobileLocalKeyboard = () => {
     enqueue(async () => {
       hold();
       await drained();
-      const answer = await targetAgent.askTargetAgent('keyboard');
-      if (typeof answer === 'object' && 'keyboard' in answer)
-        getDefaultStore().set(agentKeyboardAtom, answer.keyboard);
+      await readAgentKeyboard();
     });
   }
 

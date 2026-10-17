@@ -14,6 +14,11 @@ export const targetAgentAtom = atom<TargetAgentState | null>(null);
 export const agentMonitorsAtom = atom<AgentMonitor[] | null>(null);
 export const agentKeyboardAtom = atom<AgentKeyboard | null>(null);
 
+// The target's layout switches this page has made: a read of the layouts
+// that began before the last of them is not kept, as it would put back the
+// layout switched from.
+export const agentLayoutSwitchesAtom = atom(0);
+
 // A monitors' change the agent puts back unless it is kept: when, on this
 // page's monotonic clock (performance.now()); null while none waits.
 export const displaysRevertAtAtom = atom<number | null>(null);

@@ -5,6 +5,7 @@ import * as api from '@/api/target-agent.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
+import { layoutSwitched } from '@/hooks/useTargetAgent.ts';
 
 /** Whether a layout's language tag is `language` ("ru" for "ru-RU"). */
 export function speaks(tag: string, language: string): boolean {
@@ -27,8 +28,7 @@ async function switchTo(language: string, hold: () => void, drained: () => Promi
   hold();
   await drained();
   await api.askTargetAgent({ set_layout: { id: wanted.id } });
-  const latest = store.get(agentKeyboardAtom);
-  if (latest) store.set(agentKeyboardAtom, { ...latest, current: wanted });
+  layoutSwitched(wanted);
 }
 
 /**

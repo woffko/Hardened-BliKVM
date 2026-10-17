@@ -3,7 +3,8 @@
 // mouse's lease; then it reads the monitors and the keyboard layouts. With the board's monitor on the right of two,
 // and no layout kept on the board, the absolute mouse lands on the right monitor by itself: the picture's right edge on
 // its last columns, its middle on its middle. Settings show the target's Windows and its monitors, the board's marked;
-// the Keyboard menu shows the target's layout. The actions go to the agent as the operator makes them: a layout
+// the Keyboard menu shows the target's layout, which a read of the layouts begun before a switch does not put back.
+// The actions go to the agent as the operator makes them: a layout
 // switched, the clipboard read and written, the session locked after a confirmation, and a monitors' change kept in
 // the dialog that counts down to its undoing, which a refused Keep leaves open with the reason, counting on, until a
 // Keep is done. The operator's word on which monitor is the board's goes to the agent,
@@ -108,6 +109,12 @@ const LAYOUT = {
 };
 
 const calls = [];
+// The target's layout in front, as the played agent switches it; the next
+// read of the layouts may be answered late with what it was when asked.
+let current = LAYOUT;
+let staleKeyboardMs = 0;
+let staleAsked = false;
+let staleAnswered = false;
 const absoluteReports = () =>
   app.requestDetails
     .filter(
@@ -189,6 +196,28 @@ try {
         },
       });
     }
+    if (call?.set_layout)
+      current = [LAYOUT, ENGLISH].find((one) => one.id === call.set_layout.id);
+    if (call === "keyboard" && staleKeyboardMs > 0) {
+      const late = staleKeyboardMs;
+      const was = current;
+      staleKeyboardMs = 0;
+      staleAsked = true;
+      return new Promise((resolve) => setTimeout(resolve, late)).then(() => {
+        staleAnswered = true;
+        return route.fulfill({
+          json: {
+            code: 0,
+            data: {
+              answer: {
+                keyboard: { current: was, installed: [LAYOUT, ENGLISH] },
+              },
+              roundTripUs: late * 1000,
+            },
+          },
+        });
+      });
+    }
     if (call?.set_board_monitor) boardId = call.set_board_monitor.id;
     if (call?.set_displays) displays = call.set_displays.mode;
     const both = [monitor(0), monitor(2560)];
@@ -204,7 +233,7 @@ try {
       call === "monitors"
         ? { monitors: shown }
         : call === "keyboard"
-          ? { keyboard: { current: LAYOUT, installed: [LAYOUT, ENGLISH] } }
+          ? { keyboard: { current, installed: [LAYOUT, ENGLISH] } }
           : call === "read_clipboard"
             ? { clipboard: "from the target" }
             : call?.set_displays
@@ -347,11 +376,22 @@ try {
       calls.some((made) => JSON.stringify(made) === JSON.stringify(call)),
     );
   const actions = page.getByTestId("agent-keyboard");
+  // The layout switched while the page's next read of the layouts is on its
+  // way: that read's answer, from before the switch, does not put Russian
+  // back.
+  staleKeyboardMs = 3000;
+  assert.ok(await eventually(() => staleAsked, 20000), "the layouts' read");
   await actions.getByRole("button", { name: "en-US", exact: true }).click();
   assert.ok(
     await called({ set_layout: { id: "04090409" } }),
     JSON.stringify(calls),
   );
+  assert.ok(await eventually(() => staleAnswered, 6000));
+  await page.waitForTimeout(300);
+  await page
+    .getByTestId("target-layout")
+    .getByText("Target's layout: English (United States) - US")
+    .waitFor();
   await actions.getByRole("button", { name: "Target's clipboard" }).click();
   const clipboard = page.getByRole("dialog", { name: "Target's clipboard" });
   await clipboard.getByRole("button", { name: "Read the target's" }).click();

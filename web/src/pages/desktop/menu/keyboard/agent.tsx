@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
+import { layoutSwitched, readAgentKeyboard } from '@/hooks/useTargetAgent.ts';
 
 /**
  * What the target agent does from the Keyboard menu, while it is connected
@@ -17,7 +18,7 @@ import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai
 export const AgentKeyboard = () => {
   const { t } = useTranslation();
   const connected = Boolean(useAtomValue(targetAgentAtom)?.agent);
-  const [keyboard, setKeyboard] = useAtom(agentKeyboardAtom);
+  const keyboard = useAtomValue(agentKeyboardAtom);
   const [sync, setSync] = useAtom(agentLayoutSyncAtom);
   const [clipboardOpen, setClipboardOpen] = useState(false);
   const [text, setText] = useState('');
@@ -40,11 +41,11 @@ export const AgentKeyboard = () => {
     }
   }
 
-  const switchTo = (id: string) =>
+  const switchTo = (layout: api.AgentLayout) =>
     run(async () => {
-      await api.askTargetAgent({ set_layout: { id } });
-      const answer = await api.askTargetAgent('keyboard');
-      if (typeof answer === 'object' && 'keyboard' in answer) setKeyboard(answer.keyboard);
+      await api.askTargetAgent({ set_layout: { id: layout.id } });
+      layoutSwitched(layout);
+      await readAgentKeyboard();
     });
 
   const readClipboard = () =>
@@ -81,7 +82,7 @@ export const AgentKeyboard = () => {
               type={keyboard.current?.id === layout.id ? 'primary' : 'default'}
               disabled={busy}
               title={layout.name}
-              onClick={() => switchTo(layout.id)}
+              onClick={() => switchTo(layout)}
             >
               {layout.language || layout.id}
             </Button>

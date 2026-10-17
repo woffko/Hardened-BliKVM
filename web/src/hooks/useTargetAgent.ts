@@ -1,13 +1,44 @@
 import { useEffect } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { getDefaultStore, useAtomValue, useSetAtom } from 'jotai';
 
 import * as api from '@/api/target-agent.ts';
 import type { AgentMonitor } from '@/lib/agent-layout.ts';
-import { agentKeyboardAtom, agentMonitorsAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
+import {
+  agentKeyboardAtom,
+  agentLayoutSwitchesAtom,
+  agentMonitorsAtom,
+  targetAgentAtom
+} from '@/jotai/target-agent.ts';
 import { leaseTransportAtom } from '@/jotai/transport.ts';
 
 const STATE_EVERY_MS = 5000;
 const READS_EVERY_MS = 15000;
+
+/** Says in the page's state that the target's layout was switched to `layout`. */
+export function layoutSwitched(layout: api.AgentLayout) {
+  const store = getDefaultStore();
+  store.set(agentLayoutSwitchesAtom, store.get(agentLayoutSwitchesAtom) + 1);
+  const keyboard = store.get(agentKeyboardAtom);
+  if (keyboard) store.set(agentKeyboardAtom, { ...keyboard, current: layout });
+}
+
+/**
+ * The target's layouts read now, and kept unless `keep` says otherwise or
+ * the page switched the layout while the read was on its way: the agent may
+ * have read them before the switch.
+ */
+export async function readAgentKeyboard(keep: () => boolean = () => true) {
+  const store = getDefaultStore();
+  const switches = store.get(agentLayoutSwitchesAtom);
+  const answer = await api.askTargetAgent('keyboard');
+  if (
+    keep() &&
+    store.get(agentLayoutSwitchesAtom) === switches &&
+    typeof answer === 'object' &&
+    'keyboard' in answer
+  )
+    store.set(agentKeyboardAtom, answer.keyboard);
+}
 
 /**
  * Keeps the target agent's state, and while an agent is connected and this
@@ -57,10 +88,7 @@ export function useTargetAgent(enabled: boolean) {
       const answer = monitors?.code === 0 ? (monitors.data?.answer as api.AgentAnswer) : null;
       if (!gone && answer && typeof answer === 'object' && 'monitors' in answer)
         setMonitors(answer.monitors as AgentMonitor[]);
-      const keyboard = await api.callTargetAgent('keyboard').catch(() => null);
-      const layouts = keyboard?.code === 0 ? (keyboard.data?.answer as api.AgentAnswer) : null;
-      if (!gone && layouts && typeof layouts === 'object' && 'keyboard' in layouts)
-        setKeyboard(layouts.keyboard);
+      await readAgentKeyboard(() => !gone).catch(() => undefined);
     };
     void read();
     const timer = window.setInterval(() => void read(), READS_EVERY_MS);
