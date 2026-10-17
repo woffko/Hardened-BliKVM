@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use bli_kvm_agent_protocol::{DISPLAYS_REVERT_SECONDS, DisplayMode, MAX_CLIPBOARD_BYTES};
+use bli_kvm_agent_protocol::{DISPLAYS_REVERT_SECONDS, DisplayMode};
 use bli_kvm_target_agent::{names, wide};
 use windows_sys::Win32::Devices::Display::{
     SDC_ALLOW_CHANGES, SDC_APPLY, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_CLONE, SDC_TOPOLOGY_EXTEND,
@@ -24,7 +24,9 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
-use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows_sys::Win32::System::Memory::{
+    GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+};
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
 };
@@ -123,40 +125,27 @@ fn open_clipboard(owner: HWND) -> Result<(), String> {
     Err("another program holds the clipboard".into())
 }
 
-/// The clipboard's text, its control characters other than tabs and line
-/// ends left out, cut to the protocol's bound at a character.
+/// The clipboard's text (`names::clipboard_text`), read no further than its
+/// block: another program may have put text there without a zero.
 pub fn read_clipboard() -> Result<String, String> {
     open_clipboard(null_mut())?;
     // SAFETY: the clipboard is open; the text's memory is locked while it
-    // is read, up to its zero, and the clipboard is closed on every way out.
-    let units = unsafe {
+    // is read, within the size Windows gives for the block, and the
+    // clipboard is closed on every way out.
+    let text = unsafe {
         let handle = GetClipboardData(UNICODE_TEXT);
-        let mut units = Vec::new();
+        let mut text = String::new();
         if !handle.is_null() {
             let pointer = GlobalLock(handle) as *const u16;
             if !pointer.is_null() {
-                let mut at = 0;
-                // Far more than the bound: the rest is cut below.
-                while at < 4 * MAX_CLIPBOARD_BYTES && *pointer.add(at) != 0 {
-                    units.push(*pointer.add(at));
-                    at += 1;
-                }
+                let units = GlobalSize(handle) / 2;
+                text = names::clipboard_text(std::slice::from_raw_parts(pointer, units));
                 GlobalUnlock(handle);
             }
         }
         CloseClipboard();
-        units
+        text
     };
-    let mut text = String::new();
-    for letter in char::decode_utf16(units).map(|unit| unit.unwrap_or('\u{fffd}')) {
-        if letter.is_control() && !matches!(letter, '\t' | '\n' | '\r') {
-            continue;
-        }
-        if text.len() + letter.len_utf8() > MAX_CLIPBOARD_BYTES {
-            break;
-        }
-        text.push(letter);
-    }
     Ok(text)
 }
 

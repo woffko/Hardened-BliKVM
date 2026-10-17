@@ -1,7 +1,7 @@
 //! What Windows' raw values are called, and how the agent says what it read:
 //! the parts of the reads that are not Windows' calls, tested everywhere.
 
-use bli_kvm_agent_protocol::{Keyboard, Monitor, System};
+use bli_kvm_agent_protocol::{Keyboard, MAX_CLIPBOARD_BYTES, Monitor, System};
 
 /// The first build of Windows 11, whose registry still says "Windows 10".
 const WINDOWS_11_BUILD: u32 = 22000;
@@ -115,6 +115,31 @@ pub fn least_corner(places: impl IntoIterator<Item = (i32, i32)>) -> Option<(i32
     places
         .into_iter()
         .reduce(|(x, y), (other_x, other_y)| (x.min(other_x), y.min(other_y)))
+}
+
+/// The clipboard's text from the units of its block, as many as Windows
+/// gives for the block (`GlobalSize`): up to the first zero, or to the
+/// block's end when the program that put it there gave it none; control
+/// characters other than tabs and line ends left out, cut to the protocol's
+/// bound at a character.
+pub fn clipboard_text(block: &[u16]) -> String {
+    // Far more than the bound: the rest is cut below.
+    let block = &block[..block.len().min(4 * MAX_CLIPBOARD_BYTES)];
+    let units = block
+        .iter()
+        .position(|unit| *unit == 0)
+        .map_or(block, |zero| &block[..zero]);
+    let mut text = String::new();
+    for letter in char::decode_utf16(units.iter().copied()).map(|unit| unit.unwrap_or('\u{fffd}')) {
+        if letter.is_control() && !matches!(letter, '\t' | '\n' | '\r') {
+            continue;
+        }
+        if text.len() + letter.len_utf8() > MAX_CLIPBOARD_BYTES {
+            break;
+        }
+        text.push(letter);
+    }
+    text
 }
 
 /// The value the agent's sign-in start has in the user's Run key.
@@ -356,6 +381,35 @@ mod tests {
         assert!(bli_kvm_agent_protocol::reads::monitor_id_is_valid(
             &monitor_id(path)
         ));
+    }
+
+    #[test]
+    fn the_clipboards_text_ends_at_its_zero_or_at_its_blocks_end() {
+        let units = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+        // Ended by its zero: what follows in the block is not the text.
+        let mut block = units("line one\r\nline\ttwo");
+        block.push(0);
+        block.extend(units("after the zero"));
+        assert_eq!(clipboard_text(&block), "line one\r\nline\ttwo");
+        // A block without a zero, as another program may give it: the text
+        // ends at the block's end.
+        assert_eq!(clipboard_text(&units("no zero")), "no zero");
+        assert_eq!(clipboard_text(&[]), "");
+        // Control characters left out, a lone surrogate replaced.
+        assert_eq!(
+            clipboard_text(&[u16::from(b'a'), 0x07, 0xd800, u16::from(b'b')]),
+            "a\u{fffd}b"
+        );
+        // Longer than the protocol's bound, with or without a zero far
+        // beyond it: cut at a character within the bound.
+        for long in [
+            units(&"ж".repeat(MAX_CLIPBOARD_BYTES)),
+            vec![u16::from(b'x'); 8 * MAX_CLIPBOARD_BYTES],
+        ] {
+            let text = clipboard_text(&long);
+            assert!(text.len() > MAX_CLIPBOARD_BYTES - 2, "{}", text.len());
+            assert!(bli_kvm_agent_protocol::clipboard_text_is_valid(&text));
+        }
     }
 
     #[test]
