@@ -5,7 +5,8 @@
 // its last columns, its middle on its middle. Settings show the target's Windows and its monitors, the board's marked;
 // the Keyboard menu shows the target's layout. The actions go to the agent as the operator makes them: a layout
 // switched, the clipboard read and written, the session locked after a confirmation, and a monitors' change kept in
-// the dialog that counts down to its undoing. The operator's word on which monitor is the board's goes to the agent,
+// the dialog that counts down to its undoing, which a refused Keep leaves open with the reason, counting on, until a
+// Keep is done. The operator's word on which monitor is the board's goes to the agent,
 // and the mouse follows it. The toolbar's Monitors menu says the mode the monitors are in, changes it as Windows
 // does, and the mouse follows the new mode.
 import assert from "node:assert/strict";
@@ -75,6 +76,7 @@ let displays = "extend";
 // The agent's monitors refused once, as the board refuses an answer out of
 // its bounds.
 let failMonitors = false;
+let refuseKeeps = 0;
 const monitor = (x) => ({
   id: x === 0 ? LEFT : RIGHT,
   name: x === 0 ? "DELL U2719D" : "USB Capture",
@@ -173,6 +175,15 @@ try {
           msg: "the agent did not do it: the agent's answer is not the call's or is out of its bounds",
         },
       });
+    if (call === "keep_displays" && refuseKeeps > 0) {
+      refuseKeeps -= 1;
+      return route.fulfill({
+        json: {
+          code: -409,
+          msg: "the agent did not do it: Windows refused the monitors' configuration (87)",
+        },
+      });
+    }
     if (call?.set_board_monitor) boardId = call.set_board_monitor.id;
     if (call?.set_displays) displays = call.set_displays.mode;
     const both = [monitor(0), monitor(2560)];
@@ -381,8 +392,27 @@ try {
   displays = "extend";
   const keep = page.getByRole("dialog", { name: "Keep these monitors?" });
   await keep.getByText(/in 1[45] s unless you keep them/).waitFor();
+  // The first Keep is refused: the dialog stays with the reason and counts
+  // on; Keep again keeps the change and closes it.
+  refuseKeeps = 1;
   await keep.getByRole("button", { name: "Keep", exact: true }).click();
   assert.ok(await called("keep_displays"));
+  await keep
+    .getByTestId("agent-displays-keep-failure")
+    .getByText("Windows refused the monitors' configuration (87)", {
+      exact: false,
+    })
+    .waitFor();
+  await keep
+    .getByText(/in (1[0-2]|\d) s unless you keep them/)
+    .waitFor({ timeout: 6000 });
+  await keep.getByRole("button", { name: "Keep", exact: true }).click();
+  assert.ok(
+    await eventually(
+      () => calls.filter((made) => made === "keep_displays").length >= 2,
+    ),
+  );
+  await keep.waitFor({ state: "hidden" });
 
   // The operator says the left monitor is the board's: the agent is told,
   // the list marks it, and the picture maps onto it.
@@ -418,7 +448,7 @@ try {
   await keepAgain.getByRole("button", { name: "Keep", exact: true }).click();
   assert.ok(
     await eventually(
-      () => calls.filter((made) => made === "keep_displays").length >= 2,
+      () => calls.filter((made) => made === "keep_displays").length >= 3,
     ),
   );
   // The monitors are read again: only the board's, the whole picture on it.

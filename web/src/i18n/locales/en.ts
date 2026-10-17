@@ -685,7 +685,8 @@ const en = {
             keep: 'Keep',
             putBack: "Don't keep",
             keepLeft:
-              'The monitors are put back as they were in {{seconds}} s unless you keep them. Without a picture, wait.'
+              'The monitors are put back as they were in {{seconds}} s unless you keep them. Without a picture, wait.',
+            keepFailed: 'The change was not kept: {{reason}}'
           },
           readFailed: "Failed to read the agent's state",
           switchFailed: 'Failed to switch the agent'
