@@ -2,7 +2,9 @@
 // agent's switch is on and no agent connected. Without remote control the button only says to enable it; with it,
 // a confirmation comes first, then the keyboard's reports: Win+R, a pause for the Run box, the line at the US layout's
 // positions key by key, Enter. An agent that does not come in 20 s leaves the start offered again with what to look
-// at; when the agent says hello, the page shows it connected.
+// at; when the agent says hello, the page shows it connected. An agent of another commit than the board's is said to
+// be so and offered an update, typed the same way and waited for until the board's agent is the connected one; an
+// agent of the board's commit is offered nothing.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,6 +55,8 @@ async function eventually(condition, timeoutMs = 8000) {
 
 try {
   let connected = false;
+  let agentCommit = "82af928c0ffee";
+  let boardCommit;
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
   });
@@ -76,7 +80,7 @@ try {
             ? {
                 program: "hardened-blikvm-agent",
                 version: "0.1.0",
-                commit: "82af928c0ffee",
+                commit: agentCommit,
                 system: null,
               }
             : null,
@@ -84,6 +88,7 @@ try {
           messagesIn: 0,
           messagesOut: 0,
           dropped: 0,
+          ...(boardCommit === undefined ? {} : { boardCommit }),
         },
       },
     }),
@@ -176,6 +181,39 @@ try {
     .getByText("Connected: hardened-blikvm-agent 0.1.0 (82af928c0ffe)")
     .waitFor({ timeout: 12000 });
   assert.equal(await button.count(), 0);
+
+  // The board names another commit: the agent is said not to be the
+  // board's, and an update is offered, typed as the start is.
+  boardCommit = "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890";
+  const otherVersion = page.getByTestId("target-agent-other-version");
+  await otherVersion.waitFor({ timeout: 12000 });
+  const update = page.getByRole("button", {
+    name: "Update the agent on the target",
+  });
+  assert.equal(await update.isDisabled(), false);
+  const updating = keyboardReports().length;
+  await update.click();
+  const updateDialog = page.getByRole("dialog", {
+    name: "Update the agent on the target",
+  });
+  await updateDialog.getByText("the agent running now leaves").waitFor();
+  await updateDialog.getByRole("button", { name: "Type it" }).click();
+  assert.ok(
+    await eventually(
+      () => keyboardReports().length >= updating + expected.length,
+      20000,
+    ),
+  );
+  await page.getByText("Typed; waiting for the agent to connect").waitFor();
+  // The board's agent takes the place of the other: nothing more is said
+  // or offered.
+  agentCommit = boardCommit;
+  await otherVersion.waitFor({ state: "detached", timeout: 12000 });
+  assert.equal(await update.count(), 0);
+  await page
+    .getByText("Typed; waiting for the agent to connect")
+    .waitFor({ state: "detached" });
+  assert.equal(await page.getByRole("alert").count(), 0);
   assert.deepEqual(errors, []);
   await context.close();
   console.log(

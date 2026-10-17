@@ -68,7 +68,20 @@ export type TargetAgentState = {
   messagesIn: number;
   messagesOut: number;
   dropped: number;
+  /** The commit the board was built from, which its hello names to the agent; empty or
+   * `unknown` from a board that does not say. */
+  boardCommit?: string;
 };
+
+/** Whether the connected agent was built from another commit than the board: the page
+ * then offers to update it from the board's drive. A board that does not name its commit
+ * is not said to differ. */
+export function agentIsNotTheBoards(state: TargetAgentState | null): boolean {
+  const board = state?.boardCommit ?? '';
+  return (
+    Boolean(state?.agent) && board !== '' && board !== 'unknown' && state?.agent?.commit !== board
+  );
+}
 
 export function getTargetAgent() {
   return http.get('/api/target-agent');

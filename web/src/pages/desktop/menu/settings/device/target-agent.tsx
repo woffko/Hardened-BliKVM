@@ -48,9 +48,11 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
     setStarting('waiting');
   }
 
-  // The agent connects, or after a while the start is offered again with
-  // what to look at on the target.
-  const agentConnected = Boolean(state?.agent);
+  // The agent connects (the board's own, when one of another version was
+  // updated), or after a while the start is offered again with what to look
+  // at on the target.
+  const otherVersion = api.agentIsNotTheBoards(state);
+  const agentConnected = Boolean(state?.agent) && !otherVersion;
   useEffect(() => {
     if (starting !== 'waiting') return;
     if (agentConnected) {
@@ -130,6 +132,11 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
             {status}
           </span>
         )}
+        {otherVersion && (
+          <span className="text-xs text-amber-400" data-testid="target-agent-other-version">
+            {t('settings.device.targetAgent.otherVersion')}
+          </span>
+        )}
         {system && (
           <span className="text-xs text-neutral-400" data-testid="target-agent-system">
             {t('settings.device.targetAgent.system', {
@@ -185,7 +192,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
             {t('settings.device.targetAgent.monitorsUnderControl')}
           </span>
         )}
-        {enabled && !state?.agent && (
+        {enabled && (!state?.agent || otherVersion) && (
           <div className="flex flex-col space-y-1">
             <Button
               size="small"
@@ -193,7 +200,9 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
               disabled={readOnly || !controlling || starting !== null}
               onClick={() => setStarting('confirm')}
             >
-              {t('settings.device.targetAgent.start')}
+              {otherVersion
+                ? t('settings.device.targetAgent.update')
+                : t('settings.device.targetAgent.start')}
             </Button>
             <span className="text-xs text-neutral-500">
               {controlling
@@ -237,13 +246,21 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
 
       <Modal
         open={starting === 'confirm'}
-        title={t('settings.device.targetAgent.start')}
+        title={
+          otherVersion
+            ? t('settings.device.targetAgent.update')
+            : t('settings.device.targetAgent.start')
+        }
         okText={t('settings.device.targetAgent.startConfirm')}
         cancelText={t('settings.device.cancelBtn')}
         onOk={() => void startAgent()}
         onCancel={() => setStarting(null)}
       >
-        <p>{t('settings.device.targetAgent.startExplain')}</p>
+        <p>
+          {otherVersion
+            ? t('settings.device.targetAgent.updateExplain')
+            : t('settings.device.targetAgent.startExplain')}
+        </p>
       </Modal>
 
       <Modal

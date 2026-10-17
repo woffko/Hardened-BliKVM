@@ -1702,6 +1702,7 @@ fn target_agent_state(
         messages_in: snapshot.messages_in,
         messages_out: snapshot.messages_out,
         dropped: snapshot.dropped,
+        board_commit: crate::target_agent::board_commit().into(),
     }
 }
 
@@ -2182,6 +2183,14 @@ mod tests {
                 agent: None,
                 ..
             }
+        ));
+        // The state names the commit the board's hello names.
+        assert!(matches!(
+            state
+                .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+                .await,
+            ControlResponse::TargetAgentState { board_commit, .. }
+                if board_commit == crate::target_agent::board_hello().commit
         ));
         // No agent has said hello: the call is refused at once.
         assert_eq!(

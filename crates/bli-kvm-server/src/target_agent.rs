@@ -48,6 +48,10 @@ pub(crate) struct TargetAgentView {
     messages_in: u64,
     messages_out: u64,
     dropped: u64,
+    /// The commit the board was built from, which its hello names to the
+    /// agent: the page offers to update an agent of another
+    /// (`docs/design/target-agent-v1.md`). Empty when not known.
+    board_commit: String,
 }
 
 impl TargetAgentView {
@@ -62,6 +66,7 @@ impl TargetAgentView {
             messages_in: 0,
             messages_out: 0,
             dropped: 0,
+            board_commit: String::new(),
         }
     }
 }
@@ -158,6 +163,7 @@ async fn view(state: &AppState, session_token: &str) -> TargetAgentView {
             messages_in,
             messages_out,
             dropped,
+            board_commit,
             ..
         }) => TargetAgentView {
             available: true,
@@ -174,6 +180,7 @@ async fn view(state: &AppState, session_token: &str) -> TargetAgentView {
             messages_in,
             messages_out,
             dropped,
+            board_commit,
         },
         _ => TargetAgentView::unavailable(),
     }

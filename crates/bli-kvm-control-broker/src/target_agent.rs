@@ -129,14 +129,18 @@ fn agent_reason(reason: &str, otherwise: &str) -> String {
     }
 }
 
-/// The board's hello: its program, version and, when the build says it, its
-/// commit.
-pub fn board_hello() -> Hello {
-    let commit = match option_env!("BLI_KVM_SOURCE_COMMIT") {
+/// The commit the owner was built from, as its build says it
+/// (`scripts/build-aarch64.sh`), or `unknown`.
+pub fn board_commit() -> &'static str {
+    match option_env!("BLI_KVM_SOURCE_COMMIT") {
         Some(commit) if !commit.is_empty() => commit,
         _ => "unknown",
-    };
-    Hello::new(BOARD_PROGRAM, env!("CARGO_PKG_VERSION"), commit)
+    }
+}
+
+/// The board's hello: its program, version and commit.
+pub fn board_hello() -> Hello {
+    Hello::new(BOARD_PROGRAM, env!("CARGO_PKG_VERSION"), board_commit())
 }
 
 /// What the owner tells the server about the channel.

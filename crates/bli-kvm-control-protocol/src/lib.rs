@@ -191,6 +191,11 @@ pub enum ControlResponse {
         messages_in: u64,
         messages_out: u64,
         dropped: u64,
+        /// The commit the owner was built from, which its hello names to the
+        /// agent (at most `MAX_HELLO_TEXT` characters, none a control
+        /// character); empty from an owner from before.
+        #[serde(default)]
+        board_commit: String,
     },
     /// The connected agent's answer to a call, and the round trip.
     TargetAgentAnswer {
@@ -577,13 +582,16 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
         problem,
         agent,
         refused,
+        board_commit,
         ..
     } = response
         && ([problem, refused].into_iter().flatten().any(|text| {
             text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
         }) || agent
             .as_ref()
-            .is_some_and(|hello| hello.refusal().is_some()))
+            .is_some_and(|hello| hello.refusal().is_some())
+            || board_commit.chars().count() > bli_kvm_agent_protocol::MAX_HELLO_TEXT
+            || board_commit.chars().any(char::is_control))
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
@@ -985,6 +993,7 @@ mod tests {
                 messages_in: 3,
                 messages_out: 3,
                 dropped: 1,
+                board_commit: "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890".into(),
             }
         };
         for response in [
@@ -1001,6 +1010,18 @@ mod tests {
             let response = envelope(response);
             let json = encode_response_v2(&response).unwrap();
             assert_eq!(decode_response_v2(&json).unwrap(), response);
+        }
+        // The board's commit is a hello's text: within its bound, on one line.
+        for board_commit in ["abc\n".to_string(), "9".repeat(65)] {
+            let mut odd = state(None, None);
+            if let ControlResponse::TargetAgentState {
+                board_commit: commit,
+                ..
+            } = &mut odd
+            {
+                *commit = board_commit;
+            }
+            assert!(encode_response_v2(&envelope(odd)).is_err());
         }
         // A refusal's reason is some text within its bound, on one line.
         for reason in [

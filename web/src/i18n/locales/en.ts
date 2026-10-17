@@ -658,6 +658,11 @@ const en = {
           startWaiting: 'Typed; waiting for the agent to connect',
           startTimeout:
             'The agent did not connect within 20 s: check that the target is signed in with the English (US) layout in front, and start it again',
+          otherVersion:
+            "This agent is not the board's version: update it, and the board's agent takes its place and the sign-in start",
+          update: 'Update the agent on the target',
+          updateExplain:
+            "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the board's agent from its drive BLIKVMAGENT; the agent running now leaves, and the board's takes its place. The target must be signed in, with an English (US) keyboard layout in front.",
           clipboard: "Target's clipboard",
           clipboardRead: "Read the target's",
           clipboardWrite: 'Put on the target',

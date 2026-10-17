@@ -67,6 +67,7 @@ async fn the_switch_is_the_owners_and_its_state_comes_back() {
             messages_in: 2,
             messages_out: 2,
             dropped: 0,
+            board_commit: "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890".into(),
         },
         _ => panic!("unexpected request {request:?}"),
     });
@@ -120,6 +121,11 @@ async fn the_switch_is_the_owners_and_its_state_comes_back() {
         "hardened-blikvm-agent"
     );
     assert_eq!(switched["data"]["messagesIn"], 2);
+    // The board's commit, beside the agent's, for the page to compare.
+    assert_eq!(
+        switched["data"]["boardCommit"],
+        "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890"
+    );
 
     // A body that is not the switch is refused before the owner.
     assert!(
