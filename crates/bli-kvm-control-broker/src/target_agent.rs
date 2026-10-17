@@ -112,6 +112,23 @@ const MAX_QUEUED_MESSAGES: usize = 64;
 /// The longest problem the state reports.
 const MAX_PROBLEM: usize = 160;
 
+/// A reason from the target as the owner carries it on, within the bounds
+/// of the state and of a call's refusal: its control characters left out,
+/// at most `MAX_PROBLEM` characters, and `otherwise` when nothing is left.
+/// A program on the target, not only the agent, may send one.
+fn agent_reason(reason: &str, otherwise: &str) -> String {
+    let reason: String = reason
+        .chars()
+        .filter(|letter| !letter.is_control())
+        .take(MAX_PROBLEM)
+        .collect();
+    if reason.trim().is_empty() {
+        otherwise.into()
+    } else {
+        reason
+    }
+}
+
 /// The board's hello: its program, version and, when the build says it, its
 /// commit.
 pub fn board_hello() -> Hello {
@@ -243,18 +260,17 @@ impl Session {
             }
             Message::Failed { id, reason } => {
                 if let Some((_, reply)) = self.pending.remove(&id) {
-                    let reason: String = reason
-                        .chars()
-                        .filter(|c| !c.is_control())
-                        .take(160)
-                        .collect();
+                    let reason = agent_reason(&reason, "the agent gave no reason");
                     let _ = reply.send(Err(CallError::Failed(reason)));
                 }
                 Vec::new()
             }
             Message::Refused { reason } => {
                 self.agent = None;
-                self.refused = Some(reason);
+                self.refused = Some(agent_reason(
+                    &reason,
+                    "the agent refused the board without a reason",
+                ));
                 self.fail_pending(CallError::NotConnected);
                 Vec::new()
             }
@@ -746,6 +762,25 @@ mod tests {
         session.receive(Message::Hello(agent_hello()), now);
         assert!(session.agent(now).is_some());
         assert_eq!(session.refused(), None);
+    }
+
+    #[test]
+    fn a_refusal_from_the_target_is_kept_within_the_states_bounds() {
+        // The genuine agent never sends one; a program on the target can.
+        for reason in [
+            String::new(),
+            " ".into(),
+            "line\nbreak".into(),
+            "x".repeat(200),
+        ] {
+            let mut session = Session::new(board_hello());
+            session.receive(Message::Refused { reason }, Instant::now());
+            let kept = session.refused().unwrap();
+            assert!(
+                bli_kvm_control_protocol::agent_reason_is_valid(kept),
+                "{kept:?}"
+            );
+        }
     }
 
     #[tokio::test]
