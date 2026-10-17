@@ -77,7 +77,9 @@ find.
   agent. The page then knows the target's Windows, its monitors (the
   absolute mouse kept on the captured one without a layout set by hand) and
   its keyboard layouts, and at the operator's action under remote control
-  switches the layout (also to the letters typed on a phone), changes the
+  switches the layout (also to the on-screen keyboard's language and to
+  the letters typed on a phone; the on-screen keyboard does not follow a
+  layout switched on the target itself, as by Alt+Shift), changes the
   monitors' mode (undone after 15 s unless kept), passes clipboard text both
   ways and locks the session. "Start the agent" types its start line on the
   target, also as "Update the agent" over an agent that is not the board's

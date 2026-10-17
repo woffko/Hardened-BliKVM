@@ -264,21 +264,29 @@ commits say how) and passes after; the work's log is
   attached, as found. The watching probes passed: the GUI walk at a
   desktop's and a phone's size (no failed API request), WebRTC H.264 and
   VP8, the QUIC video and touch reach.
-- **Gate F, the target (F3)** (2026-10-17): asked for the checks of R3,
-  R9, R6, R7 and R11 on the target with slot 96, the operator answered
-  "уже проверил" (already checked) and reported no fault; no other
-  observation was given. R3 read afterwards from the development host,
-  read only: the sign-in copy is now slot 96's agent (SHA-256
-  `53875510...b929`, "0.1.0 (cc6009432dd1...)") where slot 92's
-  (`465934e2...07aa`) was before, the sign-in entry still names it, it
-  runs in the console's session, and the board shows it connected with
-  the board's own commit, 36 messages each way and none dropped. R11's
-  durations were not given; neither the agent nor the board keeps them.
-  R12 and the sign-in start across a restart were offered at the
-  operator's choice and not reported, so they are not made.
+- **Gate F, the target (F3)** (2026-10-17), the operator's checks on the
+  target with slot 96, in the operator's words:
+  - R3 and R9: "Я проверил отдельно, работает" (checked on their own, it
+    works). Read afterwards from the development host, read only: the
+    sign-in copy is now slot 96's agent (SHA-256 `53875510...b929`,
+    "0.1.0 (cc6009432dd1...)") where slot 92's (`465934e2...07aa`) was
+    before, the sign-in entry still names it, it runs in the console's
+    session, and the board shows it connected with the board's own
+    commit, no message dropped.
+  - R6: the on-screen keyboard's language "после закрытия открытия
+    остается" (stays after control was off and on). Found with it: a
+    layout switched on the target itself (Alt+Shift) is not followed by
+    the on-screen keyboard, which keeps its language; left so at the
+    operator's word and said in the design note and the README.
+  - R7: "клик вне окна оставляет да" (after a click outside the window,
+    Keep keeps the change).
+  - R11: the Keep dialog said "около 3 секунд" (about 3 s) for a mode
+    change, about the 3 s the owner allowed one before the fix.
+  - R12 and the sign-in start across a restart: "пропускаем" (skipped).
 - **Phase G** (2026-10-17): the table above has every item; the design
-  note and the README are cc60094's. The board as found: its wide state
-  (69 values) read again after F3 differs from the one read before slot
-  96 only in the slot (96 confirmed, 95 the previous) and the clock; the
+  note and the README are cc60094's, with the on-screen keyboard's
+  one-way switch found at F3. The board as found: its wide state (69
+  values) read again after F3 differs from the one read before slot 96
+  only in the slot (96 confirmed, 95 the previous) and the clock; the
   agent's switch is on as the operator left it, and the agent connected.
   No release was asked for.

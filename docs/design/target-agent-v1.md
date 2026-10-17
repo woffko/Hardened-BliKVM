@@ -234,6 +234,15 @@ through the owner; the platform names the feature `target_agent`.
   page counts its layout switches, and a read of the layouts that began
   before the last of them is not kept, as the agent may have read them
   before the switch.
+- The on-screen keyboard's switch goes one way, from the keyboard to the
+  target. A layout switched on the target itself (Alt+Shift, Win+Space,
+  the language bar) leaves the on-screen keyboard in the language chosen
+  on it, and its keys, which send key positions, then type what the
+  target's layout has at them; the Keyboard menu shows the target's layout
+  from the next read. They agree again when the keyboard's language is
+  chosen as the target's, or the target's layout is switched back. Seen
+  on the target at the review's gate F and left so at the operator's word
+  (2026-10-17).
 
 ## The target
 
