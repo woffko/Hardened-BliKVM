@@ -88,7 +88,9 @@ pub struct GadgetHidConfig {
     /// The configfs root of a gadget this owner builds. With it, every
     /// absolute mouse report follows `hid.usb1`'s present descriptor: report
     /// ID 1 while it carries the target agent's collection, none without, and
-    /// nothing written for a descriptor that is neither. Without it the
+    /// nothing written for a descriptor that is neither. The descriptor is
+    /// read once for each change this process makes to the gadget
+    /// (`bli_kvm_usb_gadget::changes`), not for each report. Without it the
     /// reports are the pinned descriptor's.
     pub configfs_root: Option<PathBuf>,
 }
@@ -117,6 +119,9 @@ pub struct GadgetHidExecutor {
     absolute: std::sync::Mutex<AbsolutePointerReportComposer>,
     relative: std::sync::Mutex<RelativePointerReportComposer>,
     mode: std::sync::Mutex<PointerMode>,
+    /// The absolute mouse's report ID as last read, with the count of the
+    /// gadget's changes taken before it was read.
+    report_id: std::sync::Mutex<Option<(u64, Option<u8>)>>,
 }
 
 #[cfg(feature = "gadget-hid-profile")]
@@ -128,6 +133,7 @@ impl GadgetHidExecutor {
             absolute: std::sync::Mutex::new(AbsolutePointerReportComposer::new()),
             relative: std::sync::Mutex::new(RelativePointerReportComposer::new()),
             mode: std::sync::Mutex::new(PointerMode::default()),
+            report_id: std::sync::Mutex::new(None),
         }
     }
 
@@ -192,13 +198,32 @@ impl GadgetHidExecutor {
         .map_err(|_| gadget_error("gadget HID keyboard write failed"))
     }
 
-    fn write_absolute(&self, report: &[u8; 7]) -> Result<(), HidExecutorError> {
-        let report_id = match &self.config.configfs_root {
-            Some(root) => bli_kvm_usb_gadget::absolute_mouse_report_id(root).map_err(|_| {
-                gadget_error("gadget HID absolute pointer descriptor is not a known one")
-            })?,
-            None => None,
+    /// The report ID `hid.usb1`'s present descriptor asks for, read again
+    /// only after the gadget changed. A descriptor that is not a known one is
+    /// not kept: it is read again at the next report.
+    fn absolute_report_id(&self) -> Result<Option<u8>, HidExecutorError> {
+        let Some(root) = &self.config.configfs_root else {
+            return Ok(None);
         };
+        let mut known = self
+            .report_id
+            .lock()
+            .map_err(|_| gadget_error("gadget HID absolute pointer state is unavailable"))?;
+        let changes = bli_kvm_usb_gadget::changes(root);
+        if let Some((read_at, report_id)) = *known
+            && read_at == changes
+        {
+            return Ok(report_id);
+        }
+        let report_id = bli_kvm_usb_gadget::absolute_mouse_report_id(root).map_err(|_| {
+            gadget_error("gadget HID absolute pointer descriptor is not a known one")
+        })?;
+        *known = Some((changes, report_id));
+        Ok(report_id)
+    }
+
+    fn write_absolute(&self, report: &[u8; 7]) -> Result<(), HidExecutorError> {
+        let report_id = self.absolute_report_id()?;
         let mut bytes = Vec::with_capacity(8);
         bytes.extend(report_id);
         bytes.extend_from_slice(report);
@@ -998,5 +1023,95 @@ mod tests {
             (false, vec![])
         );
         assert_eq!(absolute_move_with(None).await, (false, vec![]));
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn absolute_reports_read_the_descriptor_once_for_each_change_of_the_gadget() {
+        let directory = tempfile::tempdir().unwrap();
+        let hidg = directory.path().join("dev");
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::create_dir_all(&configfs).unwrap();
+        let udc = "musb-hdrc.2.auto";
+        bli_kvm_usb_gadget::apply(
+            &configfs,
+            &bli_kvm_usb_gadget::GadgetSpec {
+                id_vendor: 0x1d6b,
+                id_product: 0x0104,
+                bcd_usb: 0x0200,
+                bcd_device: 0x0100,
+                strings: bli_kvm_usb_gadget::GadgetStrings {
+                    manufacturer: "Hardened BLi-KVM".into(),
+                    product: "BLi-KVM Composite Device".into(),
+                    serial: "BLK-descriptor-once".into(),
+                    configuration: "BLi-KVM configuration".into(),
+                },
+                udc: udc.into(),
+                functions: bli_kvm_usb_gadget::hid_functions(false),
+            },
+        )
+        .unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: hidg.clone(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: Some(configfs.clone()),
+            })),
+            HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap(),
+        )
+        .unwrap();
+        let owner = identity(1);
+        engine
+            .acquire(owner, Instant::now(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        // Each move goes elsewhere, so that each is a report of its own.
+        let device = hidg.join("hidg1");
+        let mut moves = 0_u8;
+        let mut absolute_move = async || {
+            moves += 1;
+            std::fs::write(&device, b"").unwrap();
+            engine
+                .report(
+                    owner,
+                    Instant::now(),
+                    &HidReport::AbsoluteMouse {
+                        data: [1, moves, 0x40, 0x00, 0x20, 0],
+                    },
+                )
+                .await
+                .unwrap();
+            std::fs::read(&device).unwrap()
+        };
+        let plain = absolute_move().await;
+        assert_eq!((plain.len(), plain[0]), (7, 1), "the left button");
+
+        // A descriptor written behind the gadget's back is not read again:
+        // the descriptor is read once for each change of the gadget.
+        std::fs::write(
+            configfs.join("hardened/functions/hid.usb1/report_desc"),
+            bli_kvm_usb_gadget::absolute_mouse_function(true).report_descriptor,
+        )
+        .unwrap();
+        assert_eq!(absolute_move().await.len(), 7);
+
+        // The switch's change of the gadget: the reports follow it, both ways.
+        for agent in [true, false] {
+            bli_kvm_usb_gadget::replace_hid_function(
+                &configfs,
+                udc,
+                &bli_kvm_usb_gadget::absolute_mouse_function(agent),
+            )
+            .unwrap();
+            let report = absolute_move().await;
+            if agent {
+                assert_eq!((report.len(), report[0], report[1]), (8, 1, 1));
+            } else {
+                assert_eq!((report.len(), report[0]), (7, 1));
+            }
+        }
     }
 }

@@ -20,7 +20,7 @@ pub use hid_descriptors::{
     pinned_hid_functions,
 };
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -472,7 +472,35 @@ fn step_error(path: &Path, error: std::io::Error) -> GadgetError {
     GadgetError::Io(format!("{}: {error}", path.display()))
 }
 
+/// How many changes this process has made to the gadget under each configfs
+/// root, counted as each change ends.
+static CHANGES: std::sync::Mutex<BTreeMap<PathBuf, u64>> = std::sync::Mutex::new(BTreeMap::new());
+
+/// The changes this process has made to the gadget under `root`: what was
+/// read from the gadget with this count taken before stays current while
+/// the count is the same. A change made by another process is not counted.
+pub fn changes(root: &Path) -> u64 {
+    CHANGES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(root)
+        .copied()
+        .unwrap_or(0)
+}
+
 fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
+    let result = run_steps(root, steps);
+    // Counted after the steps, whatever came of them: a reading made while
+    // they ran is taken again.
+    *CHANGES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(root.to_path_buf())
+        .or_insert(0) += 1;
+    result
+}
+
+fn run_steps(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
     for step in steps {
         match step {
             Step::WriteFile { path, value } => {
