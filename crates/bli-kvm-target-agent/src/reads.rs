@@ -243,8 +243,8 @@ pub fn chosen_board_monitor() -> Option<String> {
 }
 
 /// Whether a path's monitor is the board's capture: the one the operator
-/// chose, or, without a choice among the active monitors, by its EDID, as
-/// `monitors` marks it.
+/// chose, or, without a choice, the one with a known capture's EDID, as
+/// `monitors` marks it (`names::mark_board_monitor`).
 pub fn is_board(path: &DISPLAYCONFIG_PATH_INFO) -> bool {
     let target = target_name(path);
     monitors()

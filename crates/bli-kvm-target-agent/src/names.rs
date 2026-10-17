@@ -77,19 +77,26 @@ pub fn layout_language(handle: usize) -> u16 {
     handle as u32 as u16
 }
 
-/// The board's monitor among the target's: the one the operator chose, or
-/// else the first with a known capture's EDID.
+/// The board's monitor among the target's: the one the operator chose, and
+/// none while the chosen one is not active (the EDID does not stand in for
+/// the choice); without a choice, the one monitor with a known capture's
+/// EDID, and none when more than one has it, as they cannot be told apart.
 pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chosen: Option<&str>) {
-    let index = chosen
-        .filter(|id| !id.is_empty())
-        .and_then(|id| monitors.iter().position(|monitor| monitor.id == id))
-        .or_else(|| {
-            monitors.iter().position(|monitor| {
+    let index = match chosen.filter(|id| !id.is_empty()) {
+        Some(id) => monitors.iter().position(|monitor| monitor.id == id),
+        None => {
+            let mut captures = monitors.iter().enumerate().filter_map(|(index, monitor)| {
                 known
                     .iter()
                     .any(|(maker, product)| monitor.maker == *maker && monitor.product == *product)
-            })
-        });
+                    .then_some(index)
+            });
+            match (captures.next(), captures.next()) {
+                (Some(index), None) => Some(index),
+                _ => None,
+            }
+        }
+    };
     if let Some(index) = index {
         monitors[index].board = true;
     }
@@ -401,10 +408,24 @@ mod tests {
             twins.iter().map(|m| m.board).collect::<Vec<_>>(),
             [false, true]
         );
-        // A choice of a monitor that is not there leaves the EDID's word.
+        // A choice of a monitor that is not there marks none.
         let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 2560)];
         mark_board_monitor(&mut twins, &[], Some("0123456789abcdef"));
         assert!(twins.iter().all(|m| !m.board));
+    }
+
+    #[test]
+    fn the_edid_stands_in_for_no_choice_and_marks_only_a_monitor_of_its_own() {
+        // Two monitors with a known capture's EDID and no choice: they
+        // cannot be told apart, and neither is said to be the board's.
+        let mut twins = vec![monitor("MSI", 0x2131, 0), monitor("MSI", 0x2131, 2560)];
+        mark_board_monitor(&mut twins, &[("MSI", 0x2131)], None);
+        assert!(twins.iter().all(|m| !m.board));
+        // The chosen monitor is not active (only the others show): the
+        // EDID does not stand in for the choice.
+        let mut others = vec![monitor("DEL", 1, 0), monitor("MSI", 0x2131, 2560)];
+        mark_board_monitor(&mut others, &[("MSI", 0x2131)], Some("0123456789abcdef"));
+        assert!(others.iter().all(|m| !m.board));
     }
 
     #[test]
