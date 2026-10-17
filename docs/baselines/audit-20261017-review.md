@@ -170,33 +170,33 @@ commits say how) and passes after; the work's log is
 
 | Item | Plan | Status |
 | --- | --- | --- |
-| R1 | C1 | open |
-| R2 | C2 | open |
-| R3 | C3, D1 | open |
+| R1 | C1 | fixed, 0c78808: `the_clipboards_text_ends_at_its_zero_or_at_its_blocks_end` |
+| R2 | C2 | fixed, 3272448: `a_timer_that_fires_while_a_second_change_is_made_puts_back_the_first_undo_point` |
+| R3 | C3, D1 | fixed, 201796d (the agent: `an_agent_of_another_commit_takes_the_place_of_the_one_running`, `the_status_says_when_the_agent_is_not_the_boards`; the board's build names its commit) and d87bb3e (the page: `target_agent_start_contract.mjs`); shown on the target at phase F |
 | R4 | B1 | fixed, 5f358cf: `a_failed_switch_off_leaves_the_channel_as_the_switch` |
 | R5 | B2 | fixed, e8c3784: `a_refused_agent_change_leaves_later_gadgets_as_before` |
-| R6 | D2 | open |
-| R7 | C4, D3 | open |
+| R6 | D2 | fixed, 2d289b5: `agent_typing_contract.mjs`, a refused switch |
+| R7 | C4, D3 | fixed, d769704 (the agent: `only_a_change_that_waits_is_kept_and_one_not_saved_is_still_put_back`) and 9bd8550 (the page: `target_agent_reads_contract.mjs`, a refused Keep) |
 | R8 | B3 | fixed, bb30cf9: `the_agents_drive_follows_the_switch_beside_an_ejected_medium`, `the_agents_drive_goes_even_when_the_storage_cannot_be_rebuilt`, `an_empty_lun_zero_is_a_removable_one_and_the_drive_can_go_alone` |
-| R9 | D4 | open |
+| R9 | D4 | fixed, cae6c12: `target_agent_start_contract.mjs`, Win+R held back 800 ms |
 | R10 | B6 | fixed, 3ed21c2: `a_refusal_from_the_target_is_kept_within_the_states_bounds` |
-| R11 | D5 | open |
-| R12 | C5 | open |
-| R13 | D7 | open |
+| R11 | D5 | fixed, f395d1c: `a_monitors_change_waits_longer_than_a_read` (server), `target_agent_reads_contract.mjs` (a change answered after 4 s) |
+| R12 | C5 | fixed, 4e20b87: `only_the_consoles_session_serves_the_board` |
+| R13 | D7 | fixed, 6081692: `tools/test_watching_probes.mjs` |
 | R14 | B7 | fixed, f4f8231: `a_call_whose_request_cannot_go_ends_at_once` |
-| R15 | D6 | open |
+| R15 | D6 | fixed, dce2610: `target_agent_reads_contract.mjs`, a read of the layouts answered after a switch |
 | L1 | B8 | fixed, 6abb6e2: `a_gadget_built_again_for_a_hid_request_closes_the_channel_meanwhile` |
-| L2 | C6 | open |
-| L3 | E | open |
-| L4 | E | open |
-| L5 | E | open |
-| L6 | E | open |
-| L7 | D8 | open |
-| L8 | C7 | open |
-| L9 | C7 | open |
+| L2 | C6 | fixed, e35548d: `the_edid_stands_in_for_no_choice_and_marks_only_a_monitor_of_its_own` |
+| L3 | E | done, c56a96b: the stores' own tests |
+| L4 | E | done, 9a41f1e: the owner's tests in every feature set |
+| L5 | E | done, 02e20ac: `a_second_lun_is_made_before_the_link_and_goes_before_the_function` and the media executor's |
+| L6 | E | done, f52f6d0: `target_agent_reads_contract.mjs`, `agent_typing_contract.mjs` |
+| L7 | D8 | fixed, acaed9d: `target_agent_contract.mjs`, the settings open for 11 s |
+| L8 | C7 | fixed, e766d55: `the_boards_path_is_found_among_a_configurations_names` (the repeated reads were Windows' calls; no test can fail on them) |
+| L9 | C7 | fixed with L8, e766d55 |
 | L10 | B9 | fixed, 09d8379: `a_target_agent_calls_lease_is_refused_as_a_lease` |
-| L11 | C8 | open |
-| L12 | E | open |
+| L11 | C8 | done, 6ee5d55: the protocol's tests |
+| L12 | E | done, dce2610 (the patch of the page's state, with R15) and ce57ef4 (the switch under the lease): `agent_typing_contract.mjs`, `target_agent_reads_contract.mjs` |
 | L13 | B10 | fixed, 7ae51f6: `absolute_reports_read_the_descriptor_once_for_each_change_of_the_gadget` |
 | U1 | B4 | shown, and fixed with R8 in bb30cf9: `the_agents_drive_puts_back_no_medium_the_target_ejected` |
 | U2 | B5 | shown, and fixed in 7f0679b: `a_storage_change_that_fails_binds_the_gadget_again` |
@@ -222,3 +222,46 @@ commits say how) and passes after; the work's log is
   `tools/playwright/quic_share_contract.mjs` (the page keeping up on the
   narrow path; a session that started again); the logs are in
   `evidence/private/review-20261017/`.
+- **Gate C** (2026-10-17): C1 to C8's tests failed before their fixes
+  (written first as the agent behaved, then fixed) or, for L8, L9 and L11,
+  are the tests of the code moved, and pass after; the agent's 25 portable
+  tests pass on Linux, its Windows code is clean under `cargo xwin clippy`
+  and `check.sh` built it twice to the same bytes. `scripts/check.sh` on
+  6ee5d55 passed every step, run again under the shared host's load: the
+  first run stopped at `tools/test_gui_parity_app.mjs` (a 404 in the
+  console, a flake known under load), which then passed alone; the steps
+  after it stopped at `tools/playwright/vp8_range_contract.mjs` and, from
+  there with each page contract tried up to five times, at
+  `tools/playwright/quic_video_contract.mjs`, five failures at a load of 44
+  (frames drawn per second); with the other sessions' jobs paused at the
+  operator's word, the steps from that contract on passed, it on its third
+  try and the QUIC share contract on its fourth.
+- **Gate D** (2026-10-17): D1 to D8's tests failed on the page or the
+  server before their fixes and pass after (the contracts with a played
+  board; the server's and the control protocol's own tests). Two of the
+  contracts' assumptions from before were wrong and are corrected: the
+  Monitors menu closes when its Keep dialog is clicked, as a click beside
+  it does, and was only read while it was closing; and a Keep button with
+  antd's loading icon kept the name "loading Keep" while the icon left,
+  so the Keep is disabled while it waits instead. `tsc`, `eslint` and
+  `prettier` are clean.
+- **Phase E**: L3, L4, L5, L6 and L12 moved code under the tests that
+  already covered it (L11 went with C8); none was left.
+- **Gates D and E**: `scripts/check.sh` on cc60094, the branch's tip with
+  phases D and E and the design note, passed every step in one run, with
+  the other sessions' jobs paused (load average 13 falling to 2); no page
+  contract needed a second try.
+- **Gate F, the board** (2026-10-17): slot 96 (0.1.0-beta.8, source
+  cc60094, the bundle's SHA-256 `6152cc8d...ff70`) installed through the
+  update API at the operator's word ("Ставь, как соберётся") and
+  confirmed; 95 is the previous slot. Every setting and switch as found
+  (the wide state compared before and after); the services active; the
+  agent's switch on as the operator left it, its channel open, the
+  board's commit cc6009432dd191b38fa028e59fe42dfdfe94ad09 in its state
+  (until now every slot's hello said `unknown`); the agent's drive from
+  slot 96 (its agent's SHA-256 `53875510...b929`, built from cc60094) on
+  LUN 0, alone and not removable, as no image of the operator's was
+  attached, as found. The watching probes passed: the GUI walk at a
+  desktop's and a phone's size (no failed API request), WebRTC H.264 and
+  VP8, the QUIC video and touch reach. The operator's checks on the
+  target (F3) are recorded below as the operator gives them.
