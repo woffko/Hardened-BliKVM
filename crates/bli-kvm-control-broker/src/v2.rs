@@ -1335,14 +1335,28 @@ impl ControlV2State {
             };
         }
 
-        // Lazy gadget recovery: a gadget lost to an external unbind or a USB
-        // controller reset is rebuilt before the lease is served, so the first
-        // HID request after a reboot still finds a keyboard and a mouse.
+        // Lazy gadget recovery: a gadget that is gone (the owner's start found
+        // no configfs yet, or it was taken apart by hand) is built before the
+        // lease is served, so the first HID request still finds a keyboard
+        // and a mouse. A gadget present but unbound is left as it is. The
+        // agent's channel is closed meanwhile, as for every gadget change.
         #[cfg(feature = "gadget-media-profile")]
         if let Some(media) = self.media.as_ref()
-            && let Err(error) = media.ensure_hid_gadget()
+            && media.needs_hid_gadget()
         {
-            eprintln!("gadget: lazy HID bind failed: {error:?}");
+            let channel = self
+                .target_agent
+                .as_ref()
+                .map(|(channel, _)| channel.clone());
+            if let Some(channel) = channel.as_ref() {
+                channel.pause().await;
+            }
+            if let Err(error) = media.ensure_hid_gadget() {
+                eprintln!("gadget: lazy HID bind failed: {error:?}");
+            }
+            if let Some(channel) = channel.as_ref() {
+                channel.resume().await;
+            }
         }
 
         let (session_binding, target_binding, ttl_seconds) = match lease {
@@ -2203,29 +2217,29 @@ mod tests {
         assert!(state.target_agent_shared().is_some());
     }
 
+    /// The owner's gadget on a fake configfs under `directory` (`configfs`,
+    /// with an empty store of images), its HID functions bound.
     #[cfg(feature = "gadget-media-profile")]
-    #[tokio::test]
-    async fn a_failed_switch_off_leaves_the_channel_as_the_switch() {
-        let directory = tempfile::tempdir().unwrap();
-        let configfs = directory.path().join("configfs");
-        let images = directory.path().join("images");
+    fn gadget_engine(directory: &std::path::Path, serial: &str) -> MediaTransitionEngine {
+        let configfs = directory.join("configfs");
+        let images = directory.join("images");
         std::fs::create_dir_all(&configfs).unwrap();
         std::fs::create_dir_all(&images).unwrap();
         let catalog = images.join("catalog.json");
         std::fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
         let engine = MediaTransitionEngine::open_with_executor(
-            directory.path().join("journal.json"),
+            directory.join("journal.json"),
             bli_kvm_media_catalog::MediaCatalog::open(&catalog).unwrap(),
             bli_kvm_media_transition::MediaExecutor::Gadget(
                 bli_kvm_media_transition::GadgetMediaExecutor::new(
                     bli_kvm_media_transition::GadgetMediaConfig {
-                        configfs_root: configfs.clone(),
+                        configfs_root: configfs,
                         udc: "musb-hdrc.2.auto".into(),
                         image_directory: images,
                         strings: bli_kvm_usb_gadget::GadgetStrings {
                             manufacturer: "Hardened BLi-KVM".into(),
                             product: "BLi-KVM Composite Device".into(),
-                            serial: "BLK-agent-switch-off".into(),
+                            serial: serial.into(),
                             configuration: "BLi-KVM configuration".into(),
                         },
                         id_vendor: 0x1d6b,
@@ -2238,6 +2252,96 @@ mod tests {
         )
         .unwrap();
         assert!(engine.ensure_hid_gadget().unwrap());
+        engine
+    }
+
+    #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+    #[tokio::test]
+    async fn a_gadget_built_again_for_a_hid_request_closes_the_channel_meanwhile() {
+        use bli_kvm_hid_transition::{
+            GadgetHidConfig, GadgetHidExecutor, HidExecutor, HidReleaseLedger, HidTransitionEngine,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let hid = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().join("absent-devices"),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
+            })),
+            HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap(),
+        )
+        .unwrap();
+        let mut state = ControlV2State::with_hid_policy(HidControlPolicy::new(hid))
+            .with_media_engine(gadget_engine(directory.path(), "BLK-lazy-build"));
+        // The channel's device, a new one at each open: one end of a socket
+        // pair, the target's end kept.
+        let opens = std::sync::Arc::new(AtomicUsize::new(0));
+        let targets = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opener: crate::target_agent::Opener = Box::new({
+            let (opens, targets) = (opens.clone(), targets.clone());
+            move || {
+                let (board, target) =
+                    std::os::unix::net::UnixDatagram::pair().map_err(|error| error.to_string())?;
+                board
+                    .set_nonblocking(true)
+                    .map_err(|error| error.to_string())?;
+                targets.lock().unwrap().push(target);
+                opens.fetch_add(1, Ordering::SeqCst);
+                Ok(std::fs::File::from(std::os::fd::OwnedFd::from(board)))
+            }
+        });
+        let channel = crate::target_agent::AgentChannel::start_with(
+            opener,
+            crate::target_agent::board_hello(),
+        );
+        state.with_target_agent(
+            channel.clone(),
+            crate::target_agent::AgentSwitch::open(directory.path().join("target-agent.env")),
+        );
+        channel.want(true).await;
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+
+        // The gadget is gone (taken apart by hand): a HID request, whatever
+        // it is answered, builds it again, the channel's device closed
+        // meanwhile and opened again after.
+        std::fs::remove_dir_all(configfs.join("hardened")).unwrap();
+        let _ = state
+            .handle(
+                &PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: TARGET,
+                        ttl_seconds: 30,
+                    },
+                },
+                Instant::now(),
+            )
+            .await;
+        assert!(
+            bli_kvm_usb_gadget::observe(&configfs)
+                .unwrap()
+                .udc
+                .is_some()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while opens.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        assert!(channel.snapshot().open);
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn a_failed_switch_off_leaves_the_channel_as_the_switch() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let engine = gadget_engine(directory.path(), "BLK-agent-switch-off");
         let mut state = ControlV2State::disabled().with_media_engine(engine);
         let switch_path = directory.path().join("target-agent.env");
         state.with_target_agent(
@@ -2286,36 +2390,7 @@ mod tests {
     async fn the_target_agents_switch_changes_the_gadget_and_is_kept() {
         let directory = tempfile::tempdir().unwrap();
         let configfs = directory.path().join("configfs");
-        let images = directory.path().join("images");
-        std::fs::create_dir_all(&configfs).unwrap();
-        std::fs::create_dir_all(&images).unwrap();
-        let catalog = images.join("catalog.json");
-        std::fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
-        let engine = MediaTransitionEngine::open_with_executor(
-            directory.path().join("journal.json"),
-            bli_kvm_media_catalog::MediaCatalog::open(&catalog).unwrap(),
-            bli_kvm_media_transition::MediaExecutor::Gadget(
-                bli_kvm_media_transition::GadgetMediaExecutor::new(
-                    bli_kvm_media_transition::GadgetMediaConfig {
-                        configfs_root: configfs.clone(),
-                        udc: "musb-hdrc.2.auto".into(),
-                        image_directory: images,
-                        strings: bli_kvm_usb_gadget::GadgetStrings {
-                            manufacturer: "Hardened BLi-KVM".into(),
-                            product: "BLi-KVM Composite Device".into(),
-                            serial: "BLK-agent-switch".into(),
-                            configuration: "BLi-KVM configuration".into(),
-                        },
-                        id_vendor: 0x1d6b,
-                        id_product: 0x0104,
-                        bcd_usb: 0x0200,
-                        bcd_device: 0x0100,
-                    },
-                ),
-            ),
-        )
-        .unwrap();
-        assert!(engine.ensure_hid_gadget().unwrap());
+        let engine = gadget_engine(directory.path(), "BLK-agent-switch");
         let mut state = ControlV2State::disabled().with_media_engine(engine);
         let switch_path = directory.path().join("target-agent.env");
         state.with_target_agent(

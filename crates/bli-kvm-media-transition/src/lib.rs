@@ -132,6 +132,22 @@ impl MediaExecutor {
         }
     }
 
+    /// Whether [`Self::ensure_hid_gadget`] would build a gadget, so that the
+    /// caller may close what the change would pull away first.
+    pub fn needs_hid_gadget(&self) -> bool {
+        #[cfg(feature = "gadget-media-profile")]
+        match self {
+            MediaExecutor::Gadget(executor) => executor.needs_hid_gadget(),
+            #[allow(unreachable_patterns)]
+            _ => false,
+        }
+        #[cfg(not(feature = "gadget-media-profile"))]
+        {
+            let _ = self;
+            false
+        }
+    }
+
     /// Gives the absolute mouse's interface the target agent's collection,
     /// or takes it away (`GadgetMediaExecutor::set_agent`); a backend
     /// without a gadget of its own cannot.
@@ -460,12 +476,19 @@ impl GadgetMediaExecutor {
         }
     }
 
+    /// Whether there is no gadget to keep, which
+    /// [`Self::ensure_hid_gadget`] would build: the configfs is there and
+    /// holds none. A gadget present but unbound is not built again.
+    pub fn needs_hid_gadget(&self) -> bool {
+        self.config.configfs_root.is_dir() && !self.state_present()
+    }
+
     /// Brings the HID functions up before the first media operation. A
     /// reboot leaves no gadget behind, so without this the keyboard and mouse
     /// stay dead until an image is attached. A gadget that is already present is
     /// left untouched, so an attached image survives an owner restart.
     pub fn ensure_hid_gadget(&self) -> Result<bool, MediaTransitionError> {
-        if !self.config.configfs_root.is_dir() || self.state_present() {
+        if !self.needs_hid_gadget() {
             return Ok(false);
         }
         bli_kvm_usb_gadget::apply(&self.config.configfs_root, &self.rest_spec())
@@ -806,6 +829,11 @@ impl MediaTransitionEngine {
     /// unavailable, and the device HID gate is the acceptance proof.
     pub fn ensure_hid_gadget(&self) -> Result<bool, MediaTransitionError> {
         self.executor.ensure_hid_gadget()
+    }
+
+    /// See [`MediaExecutor::needs_hid_gadget`].
+    pub fn needs_hid_gadget(&self) -> bool {
+        self.executor.needs_hid_gadget()
     }
 
     /// See [`MediaExecutor::set_agent`].

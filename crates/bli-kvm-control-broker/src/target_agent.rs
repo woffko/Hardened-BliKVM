@@ -331,7 +331,7 @@ enum Command {
 }
 
 /// Opens the channel's device: the agent's `/dev/hidg1` on the board.
-type Opener = Box<dyn FnMut() -> Result<std::fs::File, String> + Send>;
+pub(crate) type Opener = Box<dyn FnMut() -> Result<std::fs::File, String> + Send>;
 
 /// The owner's handle on the channel's task.
 #[derive(Clone)]
@@ -347,7 +347,7 @@ impl AgentChannel {
         Self::start_with(Box::new(move || open_device(&device)), board)
     }
 
-    fn start_with(opener: Opener, board: Hello) -> Self {
+    pub(crate) fn start_with(opener: Opener, board: Hello) -> Self {
         let (commands, receiver) = mpsc::channel(32);
         let snapshot = Arc::new(Mutex::new(AgentSnapshot::default()));
         tokio::spawn(run(opener, board, receiver, snapshot.clone()));
