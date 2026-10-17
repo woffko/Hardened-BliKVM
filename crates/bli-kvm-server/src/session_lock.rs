@@ -39,20 +39,12 @@ pub fn load(state_dir: &std::path::Path) -> u64 {
 }
 
 fn store(state_dir: &std::path::Path, duration: u64) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(state_dir)?;
-    let path = state_dir.join(SESSION_LOCK_FILE);
-    // A file of its own per write: two changes at once cannot share one.
-    let mut file = tempfile::Builder::new()
-        .prefix(".session-lock-")
-        .tempfile_in(state_dir)?;
-    file.as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(&serde_json::to_vec(&Persisted { duration }).map_err(std::io::Error::other)?)?;
-    file.as_file().sync_all()?;
-    file.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    crate::state_file::replace(
+        state_dir,
+        ".session-lock-",
+        SESSION_LOCK_FILE,
+        &serde_json::to_vec(&Persisted { duration }).map_err(std::io::Error::other)?,
+    )
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

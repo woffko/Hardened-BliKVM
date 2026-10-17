@@ -56,6 +56,7 @@ mod session_lock;
 mod shortcuts;
 pub mod shutdown;
 mod ssh;
+mod state_file;
 mod system_action;
 mod system_log;
 mod system_time;

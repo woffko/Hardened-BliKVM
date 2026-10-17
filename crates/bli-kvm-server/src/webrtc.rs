@@ -131,7 +131,7 @@ pub(crate) fn load_engine(state_dir: &std::path::Path) -> H264Engine {
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) fn store_engine(state_dir: &std::path::Path, engine: H264Engine) -> std::io::Result<()> {
-    store_state(
+    crate::state_file::replace(
         state_dir,
         ".h264-engine-",
         ENGINE_FILE,
@@ -152,36 +152,12 @@ pub(crate) fn load_bitrate(state_dir: &std::path::Path) -> u32 {
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) fn store_bitrate(state_dir: &std::path::Path, kbps: u32) -> std::io::Result<()> {
-    store_state(
+    crate::state_file::replace(
         state_dir,
         ".webrtc-bitrate-",
         BITRATE_FILE,
         &serde_json::to_vec(&PersistedBitrate { kbps }).map_err(std::io::Error::other)?,
     )
-}
-
-/// Replaces `name` in the state directory with `bytes`: written to a
-/// temporary file of mode 0600, synced, and renamed.
-#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-fn store_state(
-    state_dir: &std::path::Path,
-    prefix: &str,
-    name: &str,
-    bytes: &[u8],
-) -> std::io::Result<()> {
-    use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(state_dir)?;
-    let mut file = tempfile::Builder::new()
-        .prefix(prefix)
-        .tempfile_in(state_dir)?;
-    file.as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(bytes)?;
-    file.as_file().sync_all()?;
-    file.persist(state_dir.join(name))
-        .map_err(|error| error.error)?;
-    Ok(())
 }
 
 /// Holds an encoder's demand connection; dropping it ends the demand.

@@ -79,20 +79,12 @@ pub fn load(state_dir: &std::path::Path) -> Option<ScreenArea> {
 }
 
 fn store(state_dir: &std::path::Path, view: &ScreenAreaView) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(state_dir)?;
-    // A file of its own per write: two changes at once cannot share one.
-    let mut file = tempfile::Builder::new()
-        .prefix(".screen-area-")
-        .tempfile_in(state_dir)?;
-    file.as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(&serde_json::to_vec(view).map_err(std::io::Error::other)?)?;
-    file.as_file().sync_all()?;
-    file.persist(state_dir.join(SCREEN_AREA_FILE))
-        .map_err(|error| error.error)?;
-    Ok(())
+    crate::state_file::replace(
+        state_dir,
+        ".screen-area-",
+        SCREEN_AREA_FILE,
+        &serde_json::to_vec(view).map_err(std::io::Error::other)?,
+    )
 }
 
 pub(crate) async fn get_screen_area(
