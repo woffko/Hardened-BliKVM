@@ -237,11 +237,19 @@ fn validate_image_path(file: &Path) -> Result<(), GadgetError> {
 pub const MIN_CDROM_IMAGE_BYTES: u64 = 300 * 2048;
 
 fn validate_mass_storage(config: &MassStorageConfig) -> Result<(), GadgetError> {
-    validate_image_path(&config.file)?;
+    // A removable LUN 0 may be empty: the target ejected its medium, and a
+    // rebuild for the agent's drive keeps it so.
+    let empty = config.file.as_os_str().is_empty();
+    if empty && !config.removable {
+        return Err(GadgetError::ImageMissing);
+    }
+    if !empty {
+        validate_image_path(&config.file)?;
+    }
     if let Some(second) = &config.second_lun {
         validate_image_path(second)?;
     }
-    if config.cdrom {
+    if config.cdrom && !empty {
         let size = std::fs::metadata(&config.file)
             .map(|metadata| metadata.len())
             .map_err(|_| GadgetError::ImageMissing)?;
@@ -317,10 +325,17 @@ fn function_steps(function: &Function) -> Vec<Step> {
                 path: lun.join("removable"),
                 value: bool_value(storage.removable),
             });
-            steps.push(Step::WriteFile {
-                path: lun.join("file"),
-                value: storage.file.to_string_lossy().into_owned(),
-            });
+            if storage.file.as_os_str().is_empty() {
+                // No medium: the LUN is made empty, as an eject leaves it.
+                steps.push(Step::ClearAttribute {
+                    path: lun.join("file"),
+                });
+            } else {
+                steps.push(Step::WriteFile {
+                    path: lun.join("file"),
+                    value: storage.file.to_string_lossy().into_owned(),
+                });
+            }
             // The kernel makes a LUN only while the function is not linked:
             // the second is made here, before the link, read-only and not
             // removable, its file last.
@@ -716,6 +731,30 @@ pub fn absolute_mouse_report_id(root: &Path) -> Result<Option<u8>, GadgetError> 
         .ok_or(GadgetError::InvalidReportDescriptor)
 }
 
+/// Takes the second LUN (the target agent's drive) out of a present gadget
+/// and binds it again, leaving LUN 0 and every other function as they are:
+/// the way out when the mass storage cannot be built again, so that the
+/// drive never outlives its switch and an owner from before the drive,
+/// which knows one LUN, can still take the function apart. The kernel lets
+/// a LUN go only from a function that is not in use, hence the unbinding.
+pub fn remove_second_lun(root: &Path, udc: &str) -> Result<(), GadgetError> {
+    validate_udc(udc)?;
+    let steps = second_lun_removal(root);
+    if steps.is_empty() {
+        return Ok(());
+    }
+    unbind(root)?;
+    let removed = execute(root, &steps);
+    let bound = execute(
+        root,
+        &[Step::WriteFile {
+            path: gadget_path().join("UDC"),
+            value: udc.to_string(),
+        }],
+    );
+    removed.and(bound)
+}
+
 /// Releases and removes the second LUN, if there is one: configfs drops a
 /// function only once the LUNs made in it are gone.
 fn second_lun_removal(root: &Path) -> Vec<Step> {
@@ -984,6 +1023,45 @@ mod tests {
 
     fn read(root: &Path, path: &str) -> String {
         std::fs::read_to_string(root.join(path)).unwrap()
+    }
+
+    #[test]
+    fn an_empty_lun_zero_is_a_removable_one_and_the_drive_can_go_alone() {
+        let directory = root_with_image();
+        let drive = directory.path().join("agent-drive.img");
+        std::fs::write(&drive, b"drive").unwrap();
+        let empty = |removable| {
+            let mut spec = spec(Path::new(""));
+            spec.functions = vec![Function::MassStorage(MassStorageConfig {
+                file: PathBuf::new(),
+                read_only: true,
+                cdrom: true,
+                removable,
+                second_lun: Some(drive.clone()),
+            })];
+            spec
+        };
+        // A fixed LUN 0 needs its file; a removable one may be left empty,
+        // even as a CD-ROM, as an eject leaves it.
+        assert_eq!(validate_spec(&empty(false)), Err(GadgetError::ImageMissing));
+        assert_eq!(apply(directory.path(), &empty(true)), Ok(()));
+        let storage = observe(directory.path()).unwrap().mass_storage.unwrap();
+        assert!(storage.file.as_os_str().is_empty() && storage.removable);
+        assert_eq!(storage.second_lun.as_deref(), Some(drive.as_path()));
+
+        // The drive goes alone, and the controller is bound again.
+        assert_eq!(
+            remove_second_lun(directory.path(), "musb-hdrc.2.auto"),
+            Ok(())
+        );
+        let state = observe(directory.path()).unwrap();
+        assert_eq!(state.mass_storage.unwrap().second_lun, None);
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
+        // Nothing to take out: nothing is unbound.
+        assert_eq!(
+            remove_second_lun(directory.path(), "musb-hdrc.2.auto"),
+            Ok(())
+        );
     }
 
     #[test]

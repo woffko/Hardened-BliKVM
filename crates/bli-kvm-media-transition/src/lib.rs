@@ -284,10 +284,30 @@ impl GadgetMediaExecutor {
         }
     }
 
+    /// LUN 0 as the gadget has it now, for a rebuild that must leave it as
+    /// it is (the agent's drive): the image of that name in the store, or no
+    /// medium where the target ejected it, whatever this owner selected
+    /// before. None without a removable LUN 0.
+    fn lun_zero(&self) -> Option<SelectedImage> {
+        let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root).ok()?;
+        let storage = state.mass_storage.filter(|storage| storage.removable)?;
+        let path = match storage.file.file_name() {
+            Some(name) => self.config.image_directory.join(name),
+            None => PathBuf::new(),
+        };
+        Some(SelectedImage {
+            path,
+            read_only: storage.read_only,
+            cdrom: storage.cdrom,
+        })
+    }
+
     /// Presents the target agent's drive, or stops presenting it, and keeps
-    /// gadgets built later so. An attached image stays attached; the target
-    /// sees the device leave and come back. Returns whether anything
-    /// changed.
+    /// gadgets built later so. An attached image stays attached, and a
+    /// medium the target ejected stays out; the target sees the device
+    /// leave and come back. Taking the drive away from beside an image
+    /// takes its LUN out even when the storage cannot be built again.
+    /// Returns whether anything changed.
     pub fn set_agent_drive(&self, drive: Option<PathBuf>) -> Result<bool, MediaTransitionError> {
         self.want_agent_drive(drive.clone());
         if !self.config.configfs_root.is_dir() {
@@ -300,8 +320,9 @@ impl GadgetMediaExecutor {
             return Ok(false);
         }
         let root = &self.config.configfs_root;
-        let result = if self.has_mass_storage() {
-            let Some(selected) = self.current_selection() else {
+        let beside_an_image = self.has_mass_storage();
+        let result = if beside_an_image {
+            let Some(selected) = self.lun_zero() else {
                 return Err(MediaTransitionError::Backend);
             };
             bli_kvm_usb_gadget::replace_mass_storage(root, &self.spec(&selected))
@@ -310,10 +331,17 @@ impl GadgetMediaExecutor {
         } else {
             bli_kvm_usb_gadget::remove_mass_storage(root, &self.hid_spec())
         };
-        result.map_err(|error| {
+        if let Err(error) = result {
             eprintln!("media: the agent's drive could not be changed: {error:?}");
-            MediaTransitionError::Backend
-        })?;
+            if drive.is_none() && beside_an_image && self.presented_drive().is_some() {
+                bli_kvm_usb_gadget::remove_second_lun(root, &self.config.udc).map_err(|error| {
+                    eprintln!("media: the agent's drive could not be taken out: {error:?}");
+                    MediaTransitionError::Backend
+                })?;
+                return Ok(true);
+            }
+            return Err(MediaTransitionError::Backend);
+        }
         Ok(true)
     }
 
@@ -1678,6 +1706,119 @@ mod tests {
                 .udc
                 .is_some()
         );
+    }
+
+    /// A gadget with an image attached and the agent's drive beside it, as
+    /// the test's executor left it, and the files the tests need.
+    #[cfg(feature = "gadget-media-profile")]
+    fn attached_with_drive(
+        directory: &std::path::Path,
+        serial: &str,
+    ) -> (GadgetMediaConfig, MediaCatalog, PathBuf, PathBuf) {
+        let config = gadget_config_for_test(directory, serial);
+        let image_dir = config.image_directory.clone();
+        std::fs::create_dir_all(&config.configfs_root).unwrap();
+        std::fs::write(image_dir.join("kubuntu.img"), b"image").unwrap();
+        let drive = directory.join("agent-drive.img");
+        std::fs::write(&drive, b"drive").unwrap();
+        let catalog_path = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog_path,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"kubuntu.img","size":1,"sha256":"{}","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+        let lun = config
+            .configfs_root
+            .join("hardened/functions/mass_storage.usb0/lun.0/file");
+        (config, catalog, drive, lun)
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn the_agents_drive_follows_the_switch_beside_an_ejected_medium() {
+        let directory = tempfile::tempdir().unwrap();
+        let (config, catalog, drive, lun) = attached_with_drive(directory.path(), "BLK-eject");
+        let storage = || {
+            bli_kvm_usb_gadget::observe(&config.configfs_root)
+                .unwrap()
+                .mass_storage
+        };
+        let mount = VirtualMediaCommand::Mount {
+            image_id: 7,
+            mode: VirtualMediaControlMode::RemovableDisk,
+            writable: false,
+        };
+        assert!(
+            GadgetMediaExecutor::new(config.clone())
+                .execute(&mount, &catalog)
+                .is_ok()
+        );
+        // The target ejects the medium; the owner starts again and knows
+        // no selection of its own.
+        std::fs::write(&lun, "\n").unwrap();
+        let executor = GadgetMediaExecutor::new(config.clone());
+        assert!(executor.set_agent_drive(Some(drive.clone())).unwrap());
+        let both = storage().unwrap();
+        assert!(
+            both.removable && both.file.as_os_str().is_empty(),
+            "{both:?}"
+        );
+        assert_eq!(both.second_lun, Some(drive.clone()));
+        assert!(executor.set_agent_drive(None).unwrap());
+        let alone = storage().unwrap();
+        assert!(alone.removable && alone.file.as_os_str().is_empty());
+        assert_eq!(alone.second_lun, None);
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn the_agents_drive_puts_back_no_medium_the_target_ejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let (config, catalog, drive, lun) = attached_with_drive(directory.path(), "BLK-recorded");
+        let executor = GadgetMediaExecutor::new(config.clone());
+        let mount = VirtualMediaCommand::Mount {
+            image_id: 7,
+            mode: VirtualMediaControlMode::RemovableDisk,
+            writable: false,
+        };
+        assert!(executor.execute(&mount, &catalog).is_ok());
+        // The same owner, with its selection recorded, after the target
+        // ejected the medium: the drive's change keeps the medium out.
+        std::fs::write(&lun, "\n").unwrap();
+        assert!(executor.set_agent_drive(Some(drive.clone())).unwrap());
+        let both = bli_kvm_usb_gadget::observe(&config.configfs_root)
+            .unwrap()
+            .mass_storage
+            .unwrap();
+        assert!(both.file.as_os_str().is_empty(), "{both:?}");
+        assert_eq!(both.second_lun, Some(drive));
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn the_agents_drive_goes_even_when_the_storage_cannot_be_rebuilt() {
+        let directory = tempfile::tempdir().unwrap();
+        let (config, catalog, drive, _) = attached_with_drive(directory.path(), "BLK-drop-drive");
+        let executor = GadgetMediaExecutor::new(config.clone());
+        executor.want_agent_drive(Some(drive.clone()));
+        let mount = VirtualMediaCommand::Mount {
+            image_id: 7,
+            mode: VirtualMediaControlMode::RemovableDisk,
+            writable: false,
+        };
+        assert!(executor.execute(&mount, &catalog).is_ok());
+        // The attached image's file is gone from the store, so the storage
+        // cannot be built again; taking the drive away still takes LUN 1
+        // out and leaves the gadget bound, for whichever owner comes next.
+        std::fs::remove_file(config.image_directory.join("kubuntu.img")).unwrap();
+        assert!(executor.set_agent_drive(None).unwrap());
+        let state = bli_kvm_usb_gadget::observe(&config.configfs_root).unwrap();
+        assert_eq!(state.mass_storage.unwrap().second_lun, None);
+        assert!(state.udc.is_some());
     }
 
     #[cfg(feature = "gadget-media-profile")]
