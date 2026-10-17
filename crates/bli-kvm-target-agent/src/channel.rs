@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use bli_kvm_agent_protocol::{Answer, Call, Hello};
 use bli_kvm_target_agent::client::Client;
-use bli_kvm_target_agent::names::Words;
+use bli_kvm_target_agent::names::{self, Words};
 use bli_kvm_target_agent::{VERSION, source_commit};
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
@@ -143,10 +143,7 @@ pub fn start(window: isize, message: u32, words: Words) {
             let hello = Hello::new(PROGRAM, VERSION, source_commit()).with_system(reads::system());
             let mut client = Client::new(link, hello).with_answerer(Box::new(answer));
             match client.hello(HELLO_TIMEOUT) {
-                Ok(board) => set_status(
-                    format!("{} {} {}", words.connected, board.program, board.version),
-                    message,
-                ),
+                Ok(board) => set_status(names::connected(&words, &board, source_commit()), message),
                 Err(error) => {
                     not_connected(&error);
                     pause(LOOK_AGAIN);

@@ -5,8 +5,9 @@
 //! takes the key away. No administrator rights are needed or used.
 //! Windows' calls are this module's unsafe code.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
+use std::time::Duration;
 
 use bli_kvm_target_agent::{names, wide};
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
@@ -24,6 +25,22 @@ fn kept_program() -> Option<PathBuf> {
             .join(names::AUTOSTART_FOLDER)
             .join(names::AUTOSTART_PROGRAM),
     )
+}
+
+/// Whether two paths name one file.
+fn same_file(one: &Path, other: &Path) -> bool {
+    match (std::fs::canonicalize(one), std::fs::canonicalize(other)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => false,
+    }
+}
+
+/// Whether the running program is the copy the sign-in start keeps.
+pub fn runs_from_kept_copy() -> bool {
+    match (std::env::current_exe(), kept_program()) {
+        (Ok(running), Some(kept)) => same_file(&running, &kept),
+        _ => false,
+    }
 }
 
 /// Whether the user's Run key names the agent.
@@ -46,15 +63,25 @@ pub fn enabled() -> bool {
 }
 
 /// Starts the agent at sign-in: the running program copied to the user's
-/// folder (unless it runs from there) and named in the Run key.
+/// folder (unless it runs from there) and named in the Run key. The copy
+/// replaces an older one, which may take a moment to be let go of by an
+/// agent that has just left.
 pub fn enable() -> Result<(), String> {
     let running = std::env::current_exe().map_err(|error| error.to_string())?;
     let kept = kept_program().ok_or("the user's local application folder is not known")?;
-    if running != kept {
+    if !same_file(&running, &kept) {
         if let Some(folder) = kept.parent() {
             std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
         }
-        std::fs::copy(&running, &kept).map_err(|error| error.to_string())?;
+        let mut copied = std::fs::copy(&running, &kept);
+        for _ in 0..10 {
+            if copied.is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+            copied = std::fs::copy(&running, &kept);
+        }
+        copied.map_err(|error| error.to_string())?;
     }
     let command = wide(&names::run_command(&kept.to_string_lossy()), 1024);
     let key = wide(RUN_KEY, 128);

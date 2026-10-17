@@ -32,6 +32,16 @@ CC_aarch64_unknown_linux_musl=clang
 AR_aarch64_unknown_linux_musl=llvm-ar-18
 CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-linux-musl --sysroot=$musl_headers -nostdinc -isystem $musl_headers/include -isystem $clang_resources/include -ffile-prefix-map=$target_dir=/target -ffile-prefix-map=${cargo_home:-/nonexistent}=/cargo -ffile-prefix-map=$project_root=/src"
 export CC_aarch64_unknown_linux_musl AR_aarch64_unknown_linux_musl CFLAGS_aarch64_unknown_linux_musl
+# The board's owner names the commit it was built from in its hello, as the
+# target agent built from the same tree does (scripts/build-target-agent.sh),
+# so that the agent can say when it is not the board's
+# (docs/design/target-agent-v1.md).
+source_commit=$(git -C "$project_root" rev-parse HEAD 2>/dev/null || echo unknown)
+if [ "$source_commit" != unknown ] \
+  && [ -n "$(git -C "$project_root" status --porcelain --untracked-files=no)" ]; then
+  source_commit="$source_commit-dirty"
+fi
+BLI_KVM_SOURCE_COMMIT="$source_commit" \
 BLI_KVM_REMAP_PROJECT_ROOT="$project_root" \
 BLI_KVM_REMAP_RUST_SYSROOT="$rust_sysroot" \
 BLI_KVM_REMAP_CARGO_HOME="$cargo_home" \

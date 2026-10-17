@@ -1,7 +1,7 @@
 //! What Windows' raw values are called, and how the agent says what it read:
 //! the parts of the reads that are not Windows' calls, tested everywhere.
 
-use bli_kvm_agent_protocol::{Keyboard, MAX_CLIPBOARD_BYTES, Monitor, System};
+use bli_kvm_agent_protocol::{Hello, Keyboard, MAX_CLIPBOARD_BYTES, Monitor, System};
 
 /// The first build of Windows 11, whose registry still says "Windows 10".
 const WINDOWS_11_BUILD: u32 = 22000;
@@ -155,6 +155,57 @@ pub fn run_command(path: &str) -> String {
     format!("\"{}\"", path.replace('"', ""))
 }
 
+/// What an agent started while another holds the session does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrival {
+    /// The running agent stays, and this one leaves.
+    Leave,
+    /// The running agent is asked to leave, and this one takes its place.
+    Replace,
+}
+
+/// The commit an agent's window title names (`crate::title`): the first
+/// twelve characters of the commit it was built from.
+pub fn title_commit(title: &str) -> Option<&str> {
+    let (_, commit) = title
+        .strip_prefix("Hardened BliKVM agent ")?
+        .rsplit_once(" (")?;
+    commit.strip_suffix(')').filter(|commit| !commit.is_empty())
+}
+
+/// What an agent of `own_commit` does when another agent, whose window is
+/// titled `running_title`, holds the session: one of the same commit is
+/// left to run; one of another commit (an older slot's, kept for the
+/// sign-in start) is asked to leave, and the newcomer, which the operator
+/// started, takes its place; a window that does not say which agent it is
+/// is left alone.
+pub fn arrival(own_commit: &str, running_title: &str) -> Arrival {
+    let own = own_commit.get(..12).unwrap_or(own_commit);
+    match title_commit(running_title) {
+        Some(running) if running != own => Arrival::Replace,
+        _ => Arrival::Leave,
+    }
+}
+
+/// Whether an agent that takes the session refreshes the sign-in start's
+/// copy of the program: while the sign-in start is on, the copy becomes the
+/// agent that runs, unless that agent is the copy itself.
+pub fn refreshes_sign_in(sign_in: bool, runs_from_kept_copy: bool) -> bool {
+    sign_in && !runs_from_kept_copy
+}
+
+/// The status while connected to `board`: its program and version, and
+/// that this agent is not the board's when the board names another commit
+/// (a board that names none, from before, is not said to differ).
+pub fn connected(words: &Words, board: &Hello, own_commit: &str) -> String {
+    let status = format!("{} {} {}", words.connected, board.program, board.version);
+    if board.commit != "unknown" && board.commit != own_commit {
+        format!("{status}, {}", words.other_version)
+    } else {
+        status
+    }
+}
+
 /// The words of the icon's menu and status, in Russian where the user's
 /// Windows speaks it and in English otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +219,9 @@ pub struct Words {
     pub not_connected: &'static str,
     pub connected: &'static str,
     pub channel_off: &'static str,
+    /// Said after the board's version while the board was built from
+    /// another commit than this agent.
+    pub other_version: &'static str,
 }
 
 const ENGLISH: Words = Words {
@@ -180,6 +234,7 @@ const ENGLISH: Words = Words {
     not_connected: "Not connected",
     connected: "Connected to",
     channel_off: "the board's channel is off",
+    other_version: "not the board's version",
 };
 
 const RUSSIAN: Words = Words {
@@ -192,6 +247,7 @@ const RUSSIAN: Words = Words {
     not_connected: "Не подключён",
     connected: "Подключён к",
     channel_off: "канал платы выключен",
+    other_version: "версия не та, что у платы",
 };
 
 /// The words for the user's interface language (a Windows language id).
@@ -421,6 +477,68 @@ mod tests {
             r#""C:\Users\Op Erator\AppData\Local\HardenedBliKVM\hardened-blikvm-agent.exe""#
         );
         assert_eq!(run_command(r#"C:\a"b.exe"#), r#""C:\ab.exe""#);
+    }
+
+    #[test]
+    fn an_agent_of_another_commit_takes_the_place_of_the_one_running() {
+        let title = |commit: &str| {
+            format!(
+                "Hardened BliKVM agent 0.1.0-beta.7 ({})",
+                commit.get(..12).unwrap_or(commit)
+            )
+        };
+        let own = "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890";
+        let older = "6e50a26c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60";
+        // The same commit runs: the newcomer leaves it be.
+        assert_eq!(arrival(own, &title(own)), Arrival::Leave);
+        // Another commit runs (an older slot's sign-in copy): it is asked
+        // to leave, and the newcomer takes its place.
+        assert_eq!(arrival(own, &title(older)), Arrival::Replace);
+        // A build with changes names the same twelve characters.
+        assert_eq!(
+            arrival(&format!("{own}-dirty"), &title(own)),
+            Arrival::Leave
+        );
+        // The title an agent gives its window names its commit.
+        let commit = crate::source_commit();
+        assert_eq!(
+            title_commit(&crate::title()),
+            Some(commit.get(..12).unwrap_or(commit))
+        );
+        // A window that does not say which agent it is, is left alone.
+        assert_eq!(arrival(own, ""), Arrival::Leave);
+        assert_eq!(arrival(own, "Hardened BliKVM agent"), Arrival::Leave);
+        // The sign-in start keeps the agent that took the session, unless
+        // that agent is the kept copy itself.
+        assert!(refreshes_sign_in(true, false));
+        assert!(!refreshes_sign_in(true, true));
+        assert!(!refreshes_sign_in(false, false));
+    }
+
+    #[test]
+    fn the_status_says_when_the_agent_is_not_the_boards() {
+        let board = |commit: &str| Hello::new("hardened-blikvm-board", "0.1.0-beta.8", commit);
+        let own = "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890";
+        let older = "6e50a26c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60";
+        let english = words(0x0409);
+        assert_eq!(
+            connected(&english, &board(own), own),
+            "Connected to hardened-blikvm-board 0.1.0-beta.8"
+        );
+        assert_eq!(
+            connected(&english, &board(older), own),
+            "Connected to hardened-blikvm-board 0.1.0-beta.8, not the board's version"
+        );
+        assert_eq!(
+            connected(&words(0x0419), &board(older), own),
+            "Подключён к hardened-blikvm-board 0.1.0-beta.8, версия не та, что у платы"
+        );
+        // A board that does not name its commit (a slot from before) is not
+        // said to differ.
+        assert_eq!(
+            connected(&english, &board("unknown"), own),
+            "Connected to hardened-blikvm-board 0.1.0-beta.8"
+        );
     }
 
     #[test]

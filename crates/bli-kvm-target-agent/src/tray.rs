@@ -3,17 +3,22 @@
 //! connected to the board on the icon and in its menu (right or left
 //! click), what it reads shown on request, Stop and Start for the channel,
 //! and Exit; in Russian on a Russian Windows. One agent runs in a user's
-//! session; a second start leaves the first. The icon comes back when the
-//! taskbar is started again. Windows' calls are this module's unsafe code.
+//! session: a second start of the same commit leaves the first; one of
+//! another commit asks the first to leave (its menu's Exit) and takes its
+//! place, the sign-in start's copy with it (decision 1 of
+//! `docs/baselines/work-plan-20261017-review-fixes.md`). The icon comes back
+//! when the taskbar is started again. Windows' calls are this module's
+//! unsafe code.
 
 use std::mem::zeroed;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
-use bli_kvm_target_agent::names::{Words, describe, words};
-use bli_kvm_target_agent::{title, wide};
+use bli_kvm_target_agent::names::{self, Arrival, Words, describe, words};
+use bli_kvm_target_agent::{source_commit, title, wide};
 use windows_sys::Win32::Foundation::{
-    ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, WPARAM,
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM,
 };
 use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -24,12 +29,13 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, GetSystemMetrics, HICON, IDI_APPLICATION,
-    IMAGE_ICON, LR_DEFAULTCOLOR, LoadIconW, LoadImageW, MB_ICONINFORMATION, MB_OK, MF_CHECKED,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON,
-    SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND,
-    WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowTextW,
+    HICON, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTCOLOR, LoadIconW, LoadImageW, MB_ICONINFORMATION,
+    MB_OK, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON,
+    SM_CYSMICON, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
+    WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+    WS_OVERLAPPED,
 };
 
 /// What the icon sends its window when it is clicked.
@@ -54,6 +60,12 @@ fn texts() -> Words {
 const STATUS_MESSAGE: u32 = WM_APP + 2;
 /// The icon's number among the window's icons.
 const ICON_ID: u32 = 1;
+/// The agent's window class and its session's mutex, every agent's since
+/// the first: an older one is found by them and asked to leave.
+const CLASS: &str = "HardenedBliKVMAgent";
+const SESSION_MUTEX: &str = "Local\\HardenedBliKVMAgent";
+/// How long an agent asked to leave is waited for.
+const LEAVE_WAIT: Duration = Duration::from_secs(5);
 /// The message the taskbar sends every window when it starts again.
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -63,17 +75,22 @@ pub fn run() -> i32 {
     // that outlives the call, structures zeroed and then filled, and the
     // window procedure below for the class it registers.
     unsafe {
-        let name = wide("Local\\HardenedBliKVMAgent", 64);
-        let mutex = CreateMutexW(null(), 0, name.as_ptr());
-        if mutex.is_null() {
-            return 1;
-        }
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            // Another agent runs in this session.
-            return 0;
+        // Kept for the process's life: the session's agent holds it.
+        let _session = match take_session() {
+            Ok(mutex) => mutex,
+            Err(code) => return code,
+        };
+        if names::refreshes_sign_in(
+            crate::autostart::enabled(),
+            crate::autostart::runs_from_kept_copy(),
+        ) {
+            // The sign-in start keeps the agent that runs now: one started
+            // from the board's drive after an update replaces the older
+            // copy. A copy that cannot be made now is made at the next start.
+            let _ = crate::autostart::enable();
         }
         let instance = GetModuleHandleW(null());
-        let class = wide("HardenedBliKVMAgent", 64);
+        let class = wide(CLASS, 64);
         let mut window_class: WNDCLASSW = zeroed();
         window_class.lpfnWndProc = Some(window_procedure);
         window_class.hInstance = instance;
@@ -115,6 +132,50 @@ pub fn run() -> i32 {
             DispatchMessageW(&message);
         }
         0
+    }
+}
+
+/// The session's mutex, taken: from no agent, or from an agent of another
+/// commit, which is asked to leave by its menu's Exit and waited for. Else
+/// the process's exit code: 0 while an agent of this commit runs, or one
+/// asked to leave stays; 1 when the mutex cannot be made.
+unsafe fn take_session() -> Result<HANDLE, i32> {
+    let name = wide(SESSION_MUTEX, 64);
+    let class = wide(CLASS, 64);
+    let mut asked: Option<Instant> = None;
+    // SAFETY: zero-ended names; a handle that is not kept is closed; the
+    // title's buffer goes with its length.
+    unsafe {
+        loop {
+            let mutex = CreateMutexW(null(), 0, name.as_ptr());
+            if mutex.is_null() {
+                return Err(1);
+            }
+            if GetLastError() != ERROR_ALREADY_EXISTS {
+                return Ok(mutex);
+            }
+            // Closed, so that the mutex goes with the agent that holds it.
+            CloseHandle(mutex);
+            match asked {
+                None => {
+                    let running = FindWindowW(class.as_ptr(), null());
+                    if running.is_null() {
+                        return Err(0);
+                    }
+                    let mut units = [0_u16; 128];
+                    let length = GetWindowTextW(running, units.as_mut_ptr(), units.len() as i32);
+                    let running_title = String::from_utf16_lossy(&units[..length.max(0) as usize]);
+                    if names::arrival(source_commit(), &running_title) != Arrival::Replace {
+                        return Err(0);
+                    }
+                    PostMessageW(running, WM_COMMAND, EXIT, 0);
+                    asked = Some(Instant::now());
+                }
+                Some(at) if at.elapsed() >= LEAVE_WAIT => return Err(0),
+                Some(_) => {}
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 
