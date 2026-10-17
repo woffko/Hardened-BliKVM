@@ -71,10 +71,9 @@ pub fn frames(number: u16, message: &[u8]) -> Result<Vec<[u8; FRAME_BYTES]>, Fra
     if message.len() > MAX_MESSAGE_BYTES {
         return Err(FrameError::TooLong(message.len()));
     }
-    let chunks: Vec<&[u8]> = message.chunks(PAYLOAD_BYTES).collect();
-    let count = chunks.len();
-    Ok(chunks
-        .into_iter()
+    let count = message.len().div_ceil(PAYLOAD_BYTES);
+    Ok(message
+        .chunks(PAYLOAD_BYTES)
         .enumerate()
         .map(|(index, chunk)| {
             let mut frame = [0_u8; FRAME_BYTES];
