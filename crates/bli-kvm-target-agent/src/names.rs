@@ -194,6 +194,16 @@ pub fn refreshes_sign_in(sign_in: bool, runs_from_kept_copy: bool) -> bool {
     sign_in && !runs_from_kept_copy
 }
 
+/// Whether the agent of session `own` serves the board while session
+/// `console` is the console's (`u32::MAX` while none is): only the
+/// console's session's agent does, so that an agent left in a session
+/// switched away from, or in a remote one, neither reads nor acts on a
+/// session the operator does not see, and two sessions' agents never both
+/// answer.
+pub fn serves_session(own: u32, console: u32) -> bool {
+    console != u32::MAX && own == console
+}
+
 /// The status while connected to `board`: its program and version, and
 /// that this agent is not the board's when the board names another commit
 /// (a board that names none, from before, is not said to differ).
@@ -222,6 +232,9 @@ pub struct Words {
     /// Said after the board's version while the board was built from
     /// another commit than this agent.
     pub other_version: &'static str,
+    /// Why the agent of a session that is not the console's keeps the
+    /// board's channel closed.
+    pub other_session: &'static str,
 }
 
 const ENGLISH: Words = Words {
@@ -235,6 +248,7 @@ const ENGLISH: Words = Words {
     connected: "Connected to",
     channel_off: "the board's channel is off",
     other_version: "not the board's version",
+    other_session: "another session is at the console",
 };
 
 const RUSSIAN: Words = Words {
@@ -248,6 +262,7 @@ const RUSSIAN: Words = Words {
     connected: "Подключён к",
     channel_off: "канал платы выключен",
     other_version: "версия не та, что у платы",
+    other_session: "консоль у другого сеанса",
 };
 
 /// The words for the user's interface language (a Windows language id).
@@ -539,6 +554,18 @@ mod tests {
             connected(&english, &board("unknown"), own),
             "Connected to hardened-blikvm-board 0.1.0-beta.8"
         );
+    }
+
+    #[test]
+    fn only_the_consoles_session_serves_the_board() {
+        // The console's own session.
+        assert!(serves_session(1, 1));
+        // A session switched away from, or a remote one.
+        assert!(!serves_session(1, 2));
+        assert!(!serves_session(3, 1));
+        // While no session is at the console (Windows says 0xFFFFFFFF).
+        assert!(!serves_session(u32::MAX, u32::MAX));
+        assert!(!serves_session(1, u32::MAX));
     }
 
     #[test]

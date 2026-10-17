@@ -4,6 +4,10 @@
 //! is there, and finds the collection again whenever it goes (a virtual
 //! media change, the switch, the board's restart). The user can stop it
 //! from the icon's menu, which closes the collection, and start it again.
+//! It serves the board only while its session is the console's: an agent
+//! left in a session switched away from, or in a remote one, closes the
+//! collection and opens it again when its session is the console's
+//! (decision 2 of `docs/baselines/work-plan-20261017-review-fixes.md`).
 //! What it is connected to is said to the icon's window.
 
 use std::sync::Mutex;
@@ -14,6 +18,10 @@ use bli_kvm_agent_protocol::{Answer, Call, Hello};
 use bli_kvm_target_agent::client::Client;
 use bli_kvm_target_agent::names::{self, Words};
 use bli_kvm_target_agent::{VERSION, source_commit};
+use windows_sys::Win32::System::RemoteDesktop::{
+    ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
+};
+use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::actions;
@@ -96,6 +104,16 @@ fn answer(call: Call) -> Result<Answer, String> {
     }
 }
 
+/// Whether this agent's session is the console's (`names::serves_session`).
+fn at_console() -> bool {
+    // SAFETY: reads this process's session and the console's.
+    unsafe {
+        let mut own = 0_u32;
+        ProcessIdToSessionId(GetCurrentProcessId(), &mut own) != 0
+            && names::serves_session(own, WTSGetActiveConsoleSessionId())
+    }
+}
+
 /// Waits `duration`, or less if the user stops the channel meanwhile.
 fn pause(duration: Duration) {
     let until = Instant::now() + duration;
@@ -117,6 +135,11 @@ pub fn start(window: isize, message: u32, words: Words) {
             if stopped() {
                 set_status(words.stopped.into(), message);
                 std::thread::sleep(LISTEN);
+                continue;
+            }
+            if !at_console() {
+                not_connected(&words.other_session);
+                pause(LOOK_AGAIN);
                 continue;
             }
             let path = match hid::find() {
@@ -151,7 +174,7 @@ pub fn start(window: isize, message: u32, words: Words) {
                 }
             }
             let mut pinged = Instant::now();
-            while !stopped() {
+            while !stopped() && at_console() {
                 let served = client.serve(LISTEN).and_then(|()| {
                     if pinged.elapsed() >= PING_EVERY {
                         pinged = Instant::now();
