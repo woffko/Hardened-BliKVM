@@ -7,11 +7,10 @@
 //! module's unsafe code.
 
 use std::ptr::{null, null_mut};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bli_kvm_agent_protocol::{DISPLAYS_REVERT_SECONDS, DisplayMode};
+use bli_kvm_target_agent::revert::Revert;
 use bli_kvm_target_agent::{names, wide};
 use windows_sys::Win32::Devices::Display::{
     SDC_ALLOW_CHANGES, SDC_APPLY, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_CLONE, SDC_TOPOLOGY_EXTEND,
@@ -191,9 +190,8 @@ pub fn write_clipboard(owner: HWND, text: &str) -> Result<(), String> {
     }
 }
 
-/// The configuration to put back, and the change it belongs to.
-static REVERT: Mutex<Option<(u64, DisplayConfig)>> = Mutex::new(None);
-static CHANGE: AtomicU64 = AtomicU64::new(0);
+/// The monitors' changes that wait to be kept or put back.
+static DISPLAYS: Revert<DisplayConfig> = Revert::new();
 
 fn apply(config: &DisplayConfig, flags: u32) -> Result<(), String> {
     // SAFETY: the arrays are a configuration Windows gave, changed only in
@@ -334,40 +332,28 @@ fn only_after_extending(before: &DisplayConfig, keep: impl Fn(bool) -> bool) -> 
 /// Changes the monitors' mode and puts the configuration before it back
 /// after `DISPLAYS_REVERT_SECONDS` unless `keep_displays` comes first. A
 /// second change before the first is kept puts back the configuration
-/// before the first.
+/// before the first (`Revert`, whose lock the change and its timer hold).
 pub fn set_displays(mode: DisplayMode) -> Result<u32, String> {
-    let before = reads::active_config().ok_or("the monitors' configuration was not read")?;
-    match mode {
-        DisplayMode::Extend => topology(SDC_TOPOLOGY_EXTEND)?,
-        DisplayMode::Duplicate => topology(SDC_TOPOLOGY_CLONE)?,
-        DisplayMode::BoardOnly => only_after_extending(&before, |board| board)?,
-        DisplayMode::OthersOnly => only_after_extending(&before, |board| !board)?,
-        DisplayMode::BoardPrimary => {
-            let current =
-                reads::active_config().ok_or("the monitors' configuration was not read")?;
-            apply(&board_primary(current)?, 0)?;
+    let change = DISPLAYS.change(|| {
+        let before = reads::active_config().ok_or("the monitors' configuration was not read")?;
+        match mode {
+            DisplayMode::Extend => topology(SDC_TOPOLOGY_EXTEND)?,
+            DisplayMode::Duplicate => topology(SDC_TOPOLOGY_CLONE)?,
+            DisplayMode::BoardOnly => only_after_extending(&before, |board| board)?,
+            DisplayMode::OthersOnly => only_after_extending(&before, |board| !board)?,
+            DisplayMode::BoardPrimary => {
+                let current =
+                    reads::active_config().ok_or("the monitors' configuration was not read")?;
+                apply(&board_primary(current)?, 0)?;
+            }
         }
-    }
-    let change = CHANGE.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Ok(mut revert) = REVERT.lock() {
-        let earliest = revert.take().map(|(_, config)| config).unwrap_or(before);
-        *revert = Some((change, earliest));
-    }
+        Ok(before)
+    })?;
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(u64::from(DISPLAYS_REVERT_SECONDS)));
-        let due = REVERT.lock().ok().and_then(|mut revert| {
-            if revert
-                .as_ref()
-                .is_some_and(|(pending, _)| *pending == change)
-            {
-                revert.take().map(|(_, config)| config)
-            } else {
-                None
-            }
-        });
-        if let Some(config) = due {
+        DISPLAYS.due(change, |config| {
             let _ = apply(&config, SDC_SAVE_TO_DATABASE);
-        }
+        });
     });
     Ok(DISPLAYS_REVERT_SECONDS)
 }
@@ -375,9 +361,8 @@ pub fn set_displays(mode: DisplayMode) -> Result<u32, String> {
 /// Keeps the monitors' change: nothing is put back, and the configuration
 /// is saved as Windows' own.
 pub fn keep_displays() -> Result<(), String> {
-    if let Ok(mut revert) = REVERT.lock() {
-        revert.take();
-    }
-    let current = reads::active_config().ok_or("the monitors' configuration was not read")?;
-    apply(&current, SDC_SAVE_TO_DATABASE)
+    DISPLAYS.keep(|| {
+        let current = reads::active_config().ok_or("the monitors' configuration was not read")?;
+        apply(&current, SDC_SAVE_TO_DATABASE)
+    })
 }

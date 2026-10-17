@@ -9,6 +9,7 @@
 
 pub mod client;
 pub mod names;
+pub mod revert;
 
 /// The agent's version: the workspace's.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
