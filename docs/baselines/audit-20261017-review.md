@@ -166,6 +166,35 @@ QUIC; reading monitors and layouts at once (the agent serialises calls).
 Filled in by the plan's work: the commit that fixed an item and its test,
 or why it was left.
 
-| Item | Status |
-| --- | --- |
-| R1 to R15, L1 to L13, U1, U2 | open |
+| Item | Plan | Status |
+| --- | --- | --- |
+| R1 | C1 | open |
+| R2 | C2 | open |
+| R3 | C3, D1 | open |
+| R4 | B1 | open |
+| R5 | B2 | open |
+| R6 | D2 | open |
+| R7 | C4, D3 | open |
+| R8 | B3 | open |
+| R9 | D4 | open |
+| R10 | B6 | open |
+| R11 | D5 | open |
+| R12 | C5 | open |
+| R13 | D7 | open |
+| R14 | B7 | open |
+| R15 | D6 | open |
+| L1 | B8 | open |
+| L2 | C6 | open |
+| L3 | E | open |
+| L4 | E | open |
+| L5 | E | open |
+| L6 | E | open |
+| L7 | D8 | open |
+| L8 | C7 | open |
+| L9 | C7 | open |
+| L10 | B9 | open |
+| L11 | C8 | open |
+| L12 | E | open |
+| L13 | B10 | open |
+| U1 | B4 | open |
+| U2 | B5 | open |
