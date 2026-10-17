@@ -302,6 +302,28 @@ fn validate_spec(spec: &GadgetSpec) -> Result<(), GadgetError> {
     Ok(())
 }
 
+/// A LUN's steps: read-only, CD-ROM and removable as `flags` say, and its
+/// file last, as the kernel makes the LUN busy as soon as `file` is
+/// written; an empty file leaves the LUN empty, as an eject does.
+fn lun_steps(steps: &mut Vec<Step>, lun: &Path, flags: [bool; 3], file: &Path) {
+    for (attribute, on) in ["ro", "cdrom", "removable"].into_iter().zip(flags) {
+        steps.push(Step::WriteFile {
+            path: lun.join(attribute),
+            value: bool_value(on),
+        });
+    }
+    if file.as_os_str().is_empty() {
+        steps.push(Step::ClearAttribute {
+            path: lun.join("file"),
+        });
+    } else {
+        steps.push(Step::WriteFile {
+            path: lun.join("file"),
+            value: file.to_string_lossy().into_owned(),
+        });
+    }
+}
+
 fn function_steps(function: &Function) -> Vec<Step> {
     let config = config_path();
     let name = function.name().to_string();
@@ -310,53 +332,22 @@ fn function_steps(function: &Function) -> Vec<Step> {
 
     match function {
         Function::MassStorage(storage) => {
-            // The kernel makes the LUN busy as soon as `file` is written, so
-            // every other attribute must be set first.
-            let lun = base.join("lun.0");
-            steps.push(Step::WriteFile {
-                path: lun.join("ro"),
-                value: bool_value(storage.read_only),
-            });
-            steps.push(Step::WriteFile {
-                path: lun.join("cdrom"),
-                value: bool_value(storage.cdrom),
-            });
-            steps.push(Step::WriteFile {
-                path: lun.join("removable"),
-                value: bool_value(storage.removable),
-            });
-            if storage.file.as_os_str().is_empty() {
-                // No medium: the LUN is made empty, as an eject leaves it.
-                steps.push(Step::ClearAttribute {
-                    path: lun.join("file"),
-                });
-            } else {
-                steps.push(Step::WriteFile {
-                    path: lun.join("file"),
-                    value: storage.file.to_string_lossy().into_owned(),
-                });
-            }
+            lun_steps(
+                &mut steps,
+                &base.join("lun.0"),
+                [storage.read_only, storage.cdrom, storage.removable],
+                &storage.file,
+            );
             // The kernel makes a LUN only while the function is not linked:
             // the second is made here, before the link, read-only and not
-            // removable, its file last.
+            // removable.
             if let Some(second) = &storage.second_lun {
-                let lun = base.join(SECOND_LUN);
-                steps.push(Step::WriteFile {
-                    path: lun.join("ro"),
-                    value: bool_value(true),
-                });
-                steps.push(Step::WriteFile {
-                    path: lun.join("cdrom"),
-                    value: bool_value(false),
-                });
-                steps.push(Step::WriteFile {
-                    path: lun.join("removable"),
-                    value: bool_value(false),
-                });
-                steps.push(Step::WriteFile {
-                    path: lun.join("file"),
-                    value: second.to_string_lossy().into_owned(),
-                });
+                lun_steps(
+                    &mut steps,
+                    &base.join(SECOND_LUN),
+                    [true, false, false],
+                    second,
+                );
             }
         }
         Function::Hid(hid) => {
