@@ -291,3 +291,24 @@ without fetching (the database as fetched on 2026-10-09, 1,296 advisories),
 reports the same one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked
 only into `bli-kvm-quic-gateway`, which is part of the system (beta.4's
 update runtime `0.1.0~dev38`), not of this bundle nor of the agent.
+
+## RustSec scan for 0.1.0-beta.8 (2026-10-17)
+
+An application release with the target agent's Windows program beside it,
+made of the fixes of the review of beta.7. The lock is beta.7's (317
+packages, unchanged). `cargo audit --deny warnings`, run without fetching
+(the database as fetched on 2026-10-17, its last advisory commit of that
+night, 1,334 advisories), reports RUSTSEC-2026-0009 in `time` 0.3.45 as
+before and four advisories of 2026-10-14 in `rustls` 0.23.45, fixed in
+0.23.46: RUSTSEC-2026-0346 (a client's session values in `Debug` output),
+RUSTSEC-2026-0347 (a client's buffered data sent after an ECH rejection),
+RUSTSEC-2026-0348 (Brotli certificate decompression) and RUSTSEC-2026-0349
+(a client's key share predicted from an unauthenticated ServerHello). Both
+crates are linked only into `bli-kvm-quic-gateway` (`rustls` through
+`wtransport` and `quinn`), which is part of the system (beta.4's update
+runtime `0.1.0~dev38`), not of this bundle nor of the agent. None of the
+four is reachable there: the gateway is only a QUIC server (its links to
+the server are Unix sockets), so the three about clients do not apply, and
+the fourth needs `rustls`'s `brotli` feature, which the lock does not have
+(no `brotli` package). A system release would take `rustls` 0.23.46 and
+`time` 0.3.47.
