@@ -9,6 +9,7 @@ import { agentMonitorsAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
+import { AgentMonitorList } from '@/pages/desktop/agent-monitor-list.tsx';
 
 /** How long Windows' Run box is given to open before the line is typed. */
 const RUN_BOX_MS = 1000;
@@ -128,39 +129,13 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
           </span>
         )}
         {state?.agent && monitors && (
-          <ul
-            className="m-0 list-none p-0 text-xs text-neutral-400"
-            data-testid="target-agent-monitors"
-          >
-            {monitors.map((monitor) => (
-              <li
-                key={monitor.id || `${monitor.x},${monitor.y}`}
-                className="flex items-center justify-between gap-2"
-              >
-                <span className="min-w-0 flex-1">
-                  {t('settings.device.targetAgent.monitor', {
-                    name: monitor.name || monitor.maker,
-                    width: monitor.width,
-                    height: monitor.height,
-                    x: monitor.x,
-                    y: monitor.y
-                  })}
-                  {monitor.board ? ` — ${t('settings.device.targetAgent.boards')}` : ''}
-                </span>
-                {!monitor.board && monitor.id && (
-                  <Button
-                    size="small"
-                    type="link"
-                    className="h-auto shrink-0 px-0 text-xs"
-                    disabled={readOnly || displays.busy}
-                    onClick={() => void displays.chooseBoard(monitor.id!)}
-                  >
-                    {t('settings.device.targetAgent.chooseBoard')}
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <AgentMonitorList
+            monitors={monitors}
+            className="text-neutral-400"
+            testId="target-agent-monitors"
+            disabled={readOnly || displays.busy}
+            onChoose={(id) => void displays.chooseBoard(id)}
+          />
         )}
         {state?.agent && monitors && !monitors.some((monitor) => monitor.board) && (
           <span className="text-xs text-neutral-500" data-testid="target-agent-choose-board">

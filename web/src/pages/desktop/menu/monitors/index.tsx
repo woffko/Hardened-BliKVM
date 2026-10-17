@@ -12,6 +12,7 @@ import { readAgentMonitors, useAgentDisplays } from '@/hooks/useAgentDisplays.ts
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
+import { AgentMonitorList } from '@/pages/desktop/agent-monitor-list.tsx';
 
 /** Windows' own choices, in its order, with the board's monitor for "show only on". */
 const MODES: DisplayMode[] = ['duplicate', 'extend', 'board_only', 'others_only'];
@@ -71,36 +72,12 @@ export const Monitors = () => {
                   : t(`settings.device.targetAgent.displays.${now}`)
             })}
           </span>
-          <ul className="m-0 flex list-none flex-col space-y-1 p-0 text-xs text-neutral-300">
-            {monitors.map((monitor) => (
-              <li
-                key={monitor.id || `${monitor.x},${monitor.y}`}
-                className="flex items-center justify-between gap-2"
-              >
-                <span className="min-w-0 flex-1">
-                  {t('settings.device.targetAgent.monitor', {
-                    name: monitor.name || monitor.maker,
-                    width: monitor.width,
-                    height: monitor.height,
-                    x: monitor.x,
-                    y: monitor.y
-                  })}
-                  {monitor.board ? ` — ${t('settings.device.targetAgent.boards')}` : ''}
-                </span>
-                {!monitor.board && monitor.id && (
-                  <Button
-                    size="small"
-                    type="link"
-                    className="h-auto shrink-0 px-0 text-xs"
-                    disabled={displays.busy}
-                    onClick={() => void displays.chooseBoard(monitor.id!)}
-                  >
-                    {t('settings.device.targetAgent.chooseBoard')}
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <AgentMonitorList
+            monitors={monitors}
+            className="flex flex-col space-y-1 text-neutral-300"
+            disabled={displays.busy}
+            onChoose={(id) => void displays.chooseBoard(id)}
+          />
           {!boardKnown && (
             <span className="text-xs text-neutral-500">
               {t('settings.device.targetAgent.chooseBoardHint')}
