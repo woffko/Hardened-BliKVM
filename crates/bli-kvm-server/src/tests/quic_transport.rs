@@ -83,10 +83,10 @@ impl Gateway {
     }
 }
 
-struct Page {
-    app: Router,
-    cookie: String,
-    csrf: String,
+pub(super) struct Page {
+    pub(super) app: Router,
+    pub(super) cookie: String,
+    pub(super) csrf: String,
 }
 
 impl Page {
@@ -662,7 +662,7 @@ async fn board_with_input() -> (
 impl Page {
     /// The operator confirms the target and the focus, as the page does
     /// before it acquires a lease.
-    async fn confirm_focus(&self) {
+    pub(super) async fn confirm_focus(&self) {
         let challenge =
             self.call(Method::GET, "/api/hid/focus", Value::Null).await["data"]["challenge"]
                 .as_str()
@@ -684,7 +684,7 @@ impl Page {
     }
 
     /// A request over HTTPS with its status, the way the page sees both.
-    async fn post(&self, uri: &str, body: Value) -> (StatusCode, Value) {
+    pub(super) async fn post(&self, uri: &str, body: Value) -> (StatusCode, Value) {
         let mut request = json_request(Method::POST, uri, body);
         request
             .headers_mut()

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Modal } from 'antd';
-import { useAtom } from 'jotai';
+import { useAtom, useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
-import { displaysRevertAtAtom } from '@/jotai/target-agent.ts';
+import { displaysChangeTookAtom, displaysRevertAtAtom } from '@/jotai/target-agent.ts';
 import { DISPLAYS_SETTLE_MS, readAgentMonitors } from '@/hooks/useAgentDisplays.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
@@ -19,6 +19,7 @@ import { useHidLease } from '@/hooks/useHidLease.ts';
 export const AgentDisplaysKeep = () => {
   const { t } = useTranslation();
   const [revertAt, setRevertAt] = useAtom(displaysRevertAtAtom);
+  const took = useAtomValue(displaysChangeTookAtom);
   const [left, setLeft] = useState(0);
   const [keeping, setKeeping] = useState(false);
   const [failure, setFailure] = useState('');
@@ -80,6 +81,11 @@ export const AgentDisplaysKeep = () => {
       onCancel={dontKeep}
     >
       <p>{t('settings.device.targetAgent.displays.keepLeft', { seconds: left })}</p>
+      {took !== null && (
+        <p className="text-neutral-500" data-testid="agent-displays-took">
+          {t('settings.device.targetAgent.displays.took', { seconds: (took / 1000).toFixed(1) })}
+        </p>
+      )}
       {failure && (
         <p role="alert" className="text-red-500" data-testid="agent-displays-keep-failure">
           {t('settings.device.targetAgent.displays.keepFailed', { reason: failure })}

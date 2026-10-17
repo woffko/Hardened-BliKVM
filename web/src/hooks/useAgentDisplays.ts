@@ -3,7 +3,11 @@ import { getDefaultStore, useAtomValue } from 'jotai';
 
 import * as api from '@/api/target-agent.ts';
 import type { AgentMonitor } from '@/lib/agent-layout.ts';
-import { agentMonitorsAtom, displaysRevertAtAtom } from '@/jotai/target-agent.ts';
+import {
+  agentMonitorsAtom,
+  displaysChangeTookAtom,
+  displaysRevertAtAtom
+} from '@/jotai/target-agent.ts';
 
 /** How long Windows is given to settle a monitors' change before they are read. */
 export const DISPLAYS_SETTLE_MS = 1500;
@@ -44,12 +48,14 @@ export function useAgentDisplays() {
 
   const changeDisplays = (mode: api.DisplayMode) =>
     run(async () => {
-      const answer = await api.askTargetAgent({ set_displays: { mode } });
-      if (typeof answer === 'object' && 'displays_changed' in answer)
+      const { answer, roundTripUs } = await api.askTargetAgentTimed({ set_displays: { mode } });
+      if (typeof answer === 'object' && 'displays_changed' in answer) {
+        getDefaultStore().set(displaysChangeTookAtom, roundTripUs / 1000);
         getDefaultStore().set(
           displaysRevertAtAtom,
           performance.now() + answer.displays_changed.revert_in_seconds * 1000
         );
+      }
       await settle();
       await readAgentMonitors();
     });

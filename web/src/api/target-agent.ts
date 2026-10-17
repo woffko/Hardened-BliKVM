@@ -95,12 +95,22 @@ export function callTargetAgent(call: AgentCall) {
   return http.post('/api/target-agent/call', { call });
 }
 
-/** The agent's answer to `call`, or the reason there is none. */
-export async function askTargetAgent(call: AgentCall): Promise<AgentAnswer> {
+/** The agent's answer to `call` and its round trip, or the reason there is none. */
+export async function askTargetAgentTimed(
+  call: AgentCall
+): Promise<{ answer: AgentAnswer; roundTripUs: number }> {
   const rsp = await callTargetAgent(call);
   if (rsp.code !== 0 || rsp.data?.answer === undefined)
     throw new Error(rsp.msg || 'the agent did not answer');
-  return rsp.data.answer as AgentAnswer;
+  return {
+    answer: rsp.data.answer as AgentAnswer,
+    roundTripUs: typeof rsp.data.roundTripUs === 'number' ? rsp.data.roundTripUs : 0
+  };
+}
+
+/** The agent's answer to `call`, or the reason there is none. */
+export async function askTargetAgent(call: AgentCall): Promise<AgentAnswer> {
+  return (await askTargetAgentTimed(call)).answer;
 }
 
 /** Switching makes the board's USB device leave the target and come back. */

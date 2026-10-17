@@ -213,6 +213,96 @@ async fn a_ping_goes_to_the_agent_and_a_read_needs_the_sessions_lease() {
     );
 }
 
+/// A change of the monitors waits for the agent as long as the owner lets a
+/// call wait, as Windows sets a mode or two before it answers; a read waits
+/// 3 s.
+#[tokio::test]
+async fn a_monitors_change_waits_longer_than_a_read() {
+    use bli_kvm_agent_protocol::{Answer, Call, DisplayMode, Keyboard};
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::{HidLeaseRequest, PlatformControlRequestV2 as Request};
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let seen = super::quic_transport::owner(&control, |request| match request {
+        Request::HidLease {
+            lease: HidLeaseRequest::Acquire { .. },
+        } => ControlResponse::LeaseGranted {
+            lease_id: [0x55; 16],
+        },
+        Request::TargetAgentCall { call, .. } => ControlResponse::TargetAgentAnswer {
+            answer: match call {
+                Call::SetDisplays { .. } => Answer::DisplaysChanged {
+                    revert_in_seconds: 15,
+                },
+                Call::Keyboard => Answer::Keyboard(Keyboard {
+                    current: None,
+                    installed: Vec::new(),
+                }),
+                _ => Answer::Done,
+            },
+            round_trip_us: 4_000_000,
+        },
+        _ => ControlResponse::Applied,
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = super::quic_transport::Page { app, cookie, csrf };
+    page.confirm_focus().await;
+    let (status, acquired) = page
+        .post(
+            "/api/hid/lease",
+            serde_json::json!({
+                "action": "acquire",
+                "operationId": "00112233445566778899aabbccddeeff",
+                "ttlSeconds": 30,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{acquired}");
+    for call in [
+        serde_json::json!({"set_displays": {"mode": "board_only"}}),
+        serde_json::json!("keep_displays"),
+        serde_json::json!("keyboard"),
+    ] {
+        let (_, answered) = page
+            .post(
+                "/api/target-agent/call",
+                serde_json::json!({ "call": call }),
+            )
+            .await;
+        assert_eq!(answered["code"], 0, "{answered}");
+    }
+    let waits: Vec<(Call, u32)> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| match request {
+            Request::TargetAgentCall {
+                call, timeout_ms, ..
+            } => Some((call.clone(), *timeout_ms)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        waits,
+        vec![
+            (
+                Call::SetDisplays {
+                    mode: DisplayMode::BoardOnly
+                },
+                10_000
+            ),
+            (Call::KeepDisplays, 10_000),
+            (Call::Keyboard, 3_000),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_refused_switch_is_reported_and_no_owner_means_unavailable() {
     use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};

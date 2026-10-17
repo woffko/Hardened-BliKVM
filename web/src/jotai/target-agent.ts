@@ -18,6 +18,10 @@ export const agentKeyboardAtom = atom<AgentKeyboard | null>(null);
 // page's monotonic clock (performance.now()); null while none waits.
 export const displaysRevertAtAtom = atom<number | null>(null);
 
+// How long the last monitors' change took the agent, in milliseconds, from
+// its call's round trip; the Keep dialog says it.
+export const displaysChangeTookAtom = atom<number | null>(null);
+
 // Keep the target's layout in step with the on-screen keyboard's language
 // (this browser's choice).
 const layoutSyncAtom = atom(getAgentLayoutSync());

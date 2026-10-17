@@ -77,6 +77,11 @@ let displays = "extend";
 // its bounds.
 let failMonitors = false;
 let refuseKeeps = 0;
+// The next monitors' change is answered this late, its round trip with it.
+let slowChangeMs = 0;
+// How long the played agent waits before it puts a change back: long enough
+// for the dialog's steps under the host's load.
+const REVERT_SECONDS = 30;
 const monitor = (x) => ({
   id: x === 0 ? LEFT : RIGHT,
   name: x === 0 ? "DELL U2719D" : "USB Capture",
@@ -203,10 +208,19 @@ try {
           : call === "read_clipboard"
             ? { clipboard: "from the target" }
             : call?.set_displays
-              ? { displays_changed: { revert_in_seconds: 15 } }
+              ? { displays_changed: { revert_in_seconds: REVERT_SECONDS } }
               : call === "ping"
                 ? "pong"
                 : "done";
+    if (call?.set_displays && slowChangeMs > 0) {
+      const late = slowChangeMs;
+      slowChangeMs = 0;
+      return new Promise((resolve) => setTimeout(resolve, late)).then(() =>
+        route.fulfill({
+          json: { code: 0, data: { answer, roundTripUs: late * 1000 } },
+        }),
+      );
+    }
     return route.fulfill({
       json: { code: 0, data: { answer, roundTripUs: 3000 } },
     });
@@ -382,7 +396,9 @@ try {
       exact: true,
     })
     .waitFor();
-  // A monitors' change waits to be kept, and is kept.
+  // A monitors' change waits to be kept, and is kept. Answered after 4 s,
+  // it still opens the dialog, which says how long it took.
+  slowChangeMs = 4000;
   await page
     .getByTestId("target-agent-displays")
     .getByRole("button", { name: "Only the board's monitor" })
@@ -391,7 +407,13 @@ try {
   // The played agent shows both monitors again for what follows.
   displays = "extend";
   const keep = page.getByRole("dialog", { name: "Keep these monitors?" });
-  await keep.getByText(/in 1[45] s unless you keep them/).waitFor();
+  await keep.getByText(/in (29|30) s unless you keep them/).waitFor({
+    timeout: 12000,
+  });
+  await keep
+    .getByTestId("agent-displays-took")
+    .getByText("The change took 4.0 s.")
+    .waitFor();
   // The first Keep is refused: the dialog stays with the reason and counts
   // on; Keep again keeps the change and closes it.
   refuseKeeps = 1;
@@ -404,7 +426,7 @@ try {
     })
     .waitFor();
   await keep
-    .getByText(/in (1[0-2]|\d) s unless you keep them/)
+    .getByText(/in (2[0-7]|1\d|\d) s unless you keep them/)
     .waitFor({ timeout: 6000 });
   await keep.getByRole("button", { name: "Keep", exact: true }).click();
   assert.ok(
@@ -451,11 +473,14 @@ try {
       () => calls.filter((made) => made === "keep_displays").length >= 3,
     ),
   );
-  // The monitors are read again: only the board's, the whole picture on it.
+  // The Keep, a click beside the menu, closed it; opened again, it shows
+  // the monitors read again: only the board's, the whole picture on it.
+  await menu.waitFor({ state: "hidden" });
+  await page.locator("svg.lucide-monitor-cog").first().click();
   await menu
     .getByTestId("agent-monitors-now")
     .getByText("Now: Only the board's monitor")
-    .waitFor({ timeout: 8000 });
+    .waitFor({ timeout: 15000 });
   await page.locator("svg.lucide-monitor-cog").first().click();
   await menu.waitFor({ state: "hidden" });
   // The same point of the picture is now the middle of the whole desktop,

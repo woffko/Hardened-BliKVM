@@ -90,8 +90,19 @@ pub(crate) struct AnswerView {
     round_trip_us: u64,
 }
 
-/// How long a call from the page waits for the agent.
+/// How long a call from the page waits for the agent: a read 3 s, a change
+/// of the monitors as long as the owner lets a call wait, as Windows sets a
+/// mode or two before it answers (decision 3 of
+/// `docs/baselines/work-plan-20261017-review-fixes.md`).
 const CALL_TIMEOUT_MS: u32 = 3_000;
+
+fn call_timeout_ms(call: &bli_kvm_agent_protocol::Call) -> u32 {
+    use bli_kvm_agent_protocol::Call;
+    match call {
+        Call::SetDisplays { .. } | Call::KeepDisplays => bli_kvm_core::MAX_TARGET_AGENT_CALL_MS,
+        _ => CALL_TIMEOUT_MS,
+    }
+}
 
 /// Asks the owner about, or for, the agent.
 #[cfg(feature = "restricted-control-surface")]
@@ -231,8 +242,8 @@ pub(crate) async fn call(
         &state,
         &session.token,
         bli_kvm_core::PlatformControlRequestV2::TargetAgentCall {
+            timeout_ms: call_timeout_ms(&body.call),
             call: body.call,
-            timeout_ms: CALL_TIMEOUT_MS,
             lease,
         },
     )
