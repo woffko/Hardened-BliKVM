@@ -52,6 +52,10 @@ pub(crate) struct TargetAgentView {
     /// agent: the page offers to update an agent of another
     /// (`docs/design/target-agent-v1.md`). Empty when not known.
     board_commit: String,
+    /// The SHA-256 of the agent on the board's drive, from the slot's own
+    /// checksums: the page's start line runs a program of that digest only
+    /// (security review of 2026-10-18). Empty when not known.
+    agent_sha256: String,
 }
 
 impl TargetAgentView {
@@ -67,8 +71,28 @@ impl TargetAgentView {
             messages_out: 0,
             dropped: 0,
             board_commit: String::new(),
+            agent_sha256: String::new(),
         }
     }
+}
+
+/// The digest the slot's checksums give the agent on its drive, or nothing.
+fn agent_digest(web_root: Option<&std::path::Path>) -> String {
+    let Some(root) = web_root else {
+        return String::new();
+    };
+    std::fs::read_to_string(root.join("agent/SHA256SUMS"))
+        .ok()
+        .and_then(|sums| {
+            sums.lines().find_map(|line| {
+                let (digest, name) = line.split_once("  ")?;
+                (name.trim() == "hardened-blikvm-agent.exe"
+                    && digest.len() == 64
+                    && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then(|| digest.to_ascii_lowercase())
+            })
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +216,7 @@ async fn view(state: &AppState, session_token: &str) -> TargetAgentView {
             messages_out,
             dropped,
             board_commit,
+            agent_sha256: agent_digest(state.options.web_root.as_deref()),
         },
         _ => TargetAgentView::unavailable(),
     }

@@ -4,7 +4,7 @@ import { useAtom, useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
-import { commandSteps, runBoxSteps } from '@/lib/agent-start.ts';
+import { agentStartCommand, commandSteps, runBoxSteps } from '@/lib/agent-start.ts';
 import { agentMonitorsAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
@@ -51,7 +51,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
     // another window.
     await drained();
     await new Promise((resolve) => window.setTimeout(resolve, RUN_BOX_MS));
-    for (const step of commandSteps()) press(step.modifier, step.usage);
+    for (const step of commandSteps(agentStartCommand(digest))) press(step.modifier, step.usage);
     setStarting('waiting');
   }
 
@@ -59,6 +59,10 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   // updated), or after a while the start is offered again with what to look
   // at on the target.
   const otherVersion = api.agentIsNotTheBoards(state);
+  // The line runs only a program of the board's agent's digest; without it
+  // nothing is typed.
+  const digest = state?.agentSha256 ?? '';
+  const digestKnown = /^[0-9a-f]{64}$/.test(digest);
   const agentConnected = Boolean(state?.agent) && !otherVersion;
   useEffect(() => {
     if (starting !== 'waiting') return;
@@ -152,7 +156,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
             <Button
               size="small"
               className="self-start"
-              disabled={readOnly || !controlling || starting !== null}
+              disabled={readOnly || !controlling || !digestKnown || starting !== null}
               onClick={() => setStarting('confirm')}
             >
               {otherVersion
@@ -160,11 +164,13 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
                 : t('settings.device.targetAgent.start')}
             </Button>
             <span className="text-xs text-neutral-500">
-              {controlling
-                ? starting === 'waiting'
-                  ? t('settings.device.targetAgent.startWaiting')
-                  : t('settings.device.targetAgent.startHint')
-                : t('settings.device.targetAgent.startNeedsControl')}
+              {!digestKnown
+                ? t('settings.device.targetAgent.startNoDigest')
+                : controlling
+                  ? starting === 'waiting'
+                    ? t('settings.device.targetAgent.startWaiting')
+                    : t('settings.device.targetAgent.startHint')
+                  : t('settings.device.targetAgent.startNeedsControl')}
             </span>
           </div>
         )}

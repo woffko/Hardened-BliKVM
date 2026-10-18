@@ -147,6 +147,57 @@ async fn the_switch_is_the_owners_and_its_state_comes_back() {
     );
 }
 
+/// The digest of the agent on the board's drive, from the slot's own
+/// checksums, for the page's start line to run that program alone.
+#[tokio::test]
+async fn the_state_names_the_digest_of_the_boards_agent() {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::PlatformControlRequestV2 as Request;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let _seen = super::quic_transport::owner(&control, move |request| match request {
+        Request::TargetAgentState {} => ControlResponse::TargetAgentState {
+            enabled: true,
+            wanted: true,
+            open: true,
+            problem: None,
+            agent: None,
+            refused: None,
+            messages_in: 0,
+            messages_out: 0,
+            dropped: 0,
+            board_commit: String::new(),
+        },
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let web = root.path().join("web");
+    std::fs::create_dir_all(web.join("agent")).unwrap();
+    std::fs::write(web.join("index.html"), "<!doctype html>").unwrap();
+    let digest = "5387551047879ddf4d2d3dac19f65f86ceaa01cb20bdc2fe6d7fe5e4f1eeb929";
+    std::fs::write(
+        web.join("agent/SHA256SUMS"),
+        format!(
+            "{digest}  hardened-blikvm-agent.exe\n{}  agent-drive.img\n",
+            "1".repeat(64)
+        ),
+    )
+    .unwrap();
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        web_root: Some(web.clone()),
+        ..ServerOptions::default()
+    });
+    let (cookie, _) = setup_and_login(&app).await;
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["agentSha256"], digest, "{state}");
+    // Without the slot's checksums the digest is empty and nothing is run.
+    std::fs::remove_file(web.join("agent/SHA256SUMS")).unwrap();
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["agentSha256"], "", "{state}");
+}
+
 #[tokio::test]
 async fn a_ping_goes_to_the_agent_and_a_read_needs_the_sessions_lease() {
     use bli_kvm_control_protocol::ControlResponse;

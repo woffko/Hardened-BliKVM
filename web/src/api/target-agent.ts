@@ -71,6 +71,8 @@ export type TargetAgentState = {
   /** The commit the board was built from, which its hello names to the agent; empty or
    * `unknown` from a board that does not say. */
   boardCommit?: string;
+  /** The SHA-256 of the agent on the board's drive; empty when not known. */
+  agentSha256?: string;
 };
 
 /** Whether the connected agent was built from another commit than the board: the page

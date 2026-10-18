@@ -54,8 +54,14 @@ async function eventually(condition, timeoutMs = 8000) {
   return condition();
 }
 
+// The SHA-256 of the board's agent, which the line checks before it runs
+// anything (the security review of 2026-10-18).
+const DIGEST =
+  "5387551047879ddf4d2d3dac19f65f86ceaa01cb20bdc2fe6d7fe5e4f1eeb929";
+
 try {
   let connected = false;
+  let agentSha256 = DIGEST;
   let agentCommit = "82af928c0ffee";
   let boardCommit;
   const context = await browser.newContext({
@@ -106,6 +112,7 @@ try {
           messagesOut: 0,
           dropped: 0,
           ...(boardCommit === undefined ? {} : { boardCommit }),
+          agentSha256,
         },
       },
     }),
@@ -135,6 +142,17 @@ try {
   if (await confirm.isVisible()) await confirm.click();
   await confirm.waitFor({ state: "hidden" });
 
+  // Without the board's agent's digest nothing is typed: the button says why.
+  agentSha256 = "";
+  await openDevice();
+  await page
+    .getByText("The board does not name its agent's checksum", { exact: false })
+    .waitFor({ timeout: 12000 });
+  assert.equal(await button.isDisabled(), true);
+  agentSha256 = DIGEST;
+  assert.ok(await eventually(async () => !(await button.isDisabled()), 12000));
+  await page.keyboard.press("Escape");
+
   // A confirmation first, which says what is typed.
   await openDevice();
   await button.click();
@@ -154,7 +172,10 @@ try {
 
   // Win+R, released, then the line and Enter, each key pressed and released.
   const expected = [];
-  for (const step of [...start.runBoxSteps(), ...start.commandSteps()]) {
+  for (const step of [
+    ...start.runBoxSteps(),
+    ...start.commandSteps(start.agentStartCommand(DIGEST)),
+  ]) {
     expected.push(
       [step.modifier, 0, step.usage, 0, 0, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 0, 0],

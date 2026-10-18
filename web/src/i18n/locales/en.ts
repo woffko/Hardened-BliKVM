@@ -658,6 +658,8 @@ const en = {
             "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the agent from the board's drive BLIKVMAGENT. The target must be signed in, with an English (US) keyboard layout in front.",
           startHint: 'Types Win+R and a line that starts the agent from the board’s drive',
           startNeedsControl: 'Enable remote control to start the agent from here',
+          startNoDigest:
+            "The board does not name its agent's checksum, so it is not started from here",
           startWaiting: 'Typed; waiting for the agent to connect',
           startTimeout:
             'The agent did not connect within 20 s: check that the target is signed in with the English (US) layout in front, and start it again',

@@ -23,12 +23,15 @@ test("the Run box opens with Win+R", { skip }, () => {
   assert.deepEqual(start.runBoxSteps(), [{ modifier: 0x08, usage: 0x15 }]);
 });
 
+const DIGEST =
+  "5387551047879ddf4d2d3dac19f65f86ceaa01cb20bdc2fe6d7fe5e4f1eeb929";
+
 test(
   "every character of the line has a key, and Enter ends it",
   { skip },
   () => {
-    const command = start.AGENT_START_COMMAND;
-    const steps = start.commandSteps();
+    const command = start.agentStartCommand(DIGEST);
+    const steps = start.commandSteps(command);
     assert.equal(steps.length, [...command].length + 1);
     assert.deepEqual(steps.at(-1), { modifier: 0, usage: 0x28 });
     assert.ok(command.length < 260, "the Run box takes 259 characters");
@@ -40,5 +43,20 @@ test(
     assert.deepEqual(at("$"), { modifier: 0x02, usage: 0x21 });
     assert.deepEqual(at("|"), { modifier: 0x02, usage: 0x31 });
     assert.deepEqual(at("p"), { modifier: 0, usage: 0x13 });
+  },
+);
+
+test(
+  "only a file of the board's agent's digest is run, the first one found",
+  { skip },
+  () => {
+    const command = start.agentStartCommand(DIGEST);
+    assert.ok(command.includes(`(Get-FileHash $_).Hash -eq '${DIGEST}'`));
+    assert.ok(command.includes("|select -f 1|%{&$_}"));
+    // The digest's filter comes before anything is run.
+    assert.ok(command.indexOf("Get-FileHash") < command.indexOf("&$_"));
+    for (const wrong of ["", "x", DIGEST.slice(1), `${DIGEST.slice(1)}'`]) {
+      assert.throws(() => start.agentStartCommand(wrong), wrong);
+    }
   },
 );
