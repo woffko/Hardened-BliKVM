@@ -318,6 +318,15 @@ async fn upload_image_inner(
             Ok(())
         }
         .await;
+        // An empty file is no image, and renaming it would empty the one of
+        // its name before the catalog refused it.
+        let outcome = outcome.and_then(|()| {
+            if total == 0 {
+                Err(AppError::BadRequest("the file is empty".into()))
+            } else {
+                Ok(())
+            }
+        });
         match outcome {
             Ok(()) => {
                 let digest = hasher.finalize();

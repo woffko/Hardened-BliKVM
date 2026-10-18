@@ -4882,6 +4882,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_empty_upload_leaves_the_image_of_its_name() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().unwrap();
+        let images = directory.path().join("images");
+        fs::create_dir_all(&images).unwrap();
+        fs::set_permissions(&images, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(images.join("kubuntu.img"), b"the operator's image").unwrap();
+        let catalog = directory.path().join("catalog.json");
+        fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        fs::set_permissions(&catalog, fs::Permissions::from_mode(0o644)).unwrap();
+        let owner = serve_media_state(&directory.path().join("control.sock"), None);
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog.clone()),
+            media_directory: Some(images.clone()),
+            control_socket: Some(directory.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let boundary = "----blikvm-upload";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"kubuntu.img\"\r\nContent-Type: application/octet-stream\r\n\r\n\r\n--{boundary}--\r\n"
+        )
+        .into_bytes();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/download/file")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header(header::CONTENT_LENGTH, body.len())
+                    .header(header::COOKIE, cookie)
+                    .header("x-csrf-token", csrf)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(json_body(response).await["code"], 0);
+        assert_eq!(
+            fs::read(images.join("kubuntu.img")).unwrap(),
+            b"the operator's image"
+        );
+        assert_eq!(
+            fs::read_dir(&images).unwrap().count(),
+            1,
+            "a temporary file was left"
+        );
+        owner.abort();
+    }
+
+    #[tokio::test]
     async fn authenticated_image_upload_writes_the_file_and_the_catalog() {
         use std::os::unix::fs::PermissionsExt;
 
