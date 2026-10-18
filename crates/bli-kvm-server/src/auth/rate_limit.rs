@@ -30,34 +30,58 @@ impl LoginRateLimiter {
         }
     }
 
+    /// Whether a request from `source_ip` for `username` must wait: the
+    /// source itself is locked (failures under any name count against it),
+    /// or this name from this source is.
     pub fn is_locked(&mut self, source_ip: &str, username: &str) -> bool {
         self.prune();
         let now = Instant::now();
+        [source_key(source_ip), key(source_ip, username)]
+            .iter()
+            .any(|key| self.locked(key, now))
+    }
+
+    /// Counts a failed password for `username` from `source_ip`, against the
+    /// name from that source and against the source whatever the name.
+    /// Returns whether either is locked now.
+    pub fn record_failure(&mut self, source_ip: &str, username: &str) -> bool {
+        self.prune();
+        let now = Instant::now();
+        let source = source_key(source_ip);
+        // A locked source gains no new names: its own lockout already holds
+        // every request, and the table stays for other sources.
+        let pair = (!self.locked(&source, now)).then(|| key(source_ip, username));
+        let mut locked = false;
+        for key in [Some(source), pair].into_iter().flatten() {
+            locked |= self.count(key, now);
+        }
+        locked
+    }
+
+    pub fn record_success(&mut self, source_ip: &str, username: &str) {
+        self.attempts.remove(&key(source_ip, username));
+        self.attempts.remove(&source_key(source_ip));
+    }
+
+    fn locked(&self, key: &str, now: Instant) -> bool {
         self.attempts
-            .get(&key(source_ip, username))
+            .get(key)
             .and_then(|attempt| attempt.lockout_until)
             .is_some_and(|until| now < until)
     }
 
-    pub fn record_failure(&mut self, source_ip: &str, username: &str) -> bool {
-        self.prune();
-        let now = Instant::now();
-        let key = key(source_ip, username);
+    fn count(&mut self, key: String, now: Instant) -> bool {
         if !self.attempts.contains_key(&key) && self.attempts.len() >= MAX_TRACKED_KEYS {
-            // Full: make room by dropping the oldest entry that is not locked;
-            // a newcomer never evicts a lockout. With only lockouts left the
-            // newcomer is not tracked.
+            // Full: make room by dropping the oldest entry that is not locked,
+            // or the oldest lockout when only lockouts are left. Dropping the
+            // newcomer instead would leave it unlimited.
             let oldest = self
                 .attempts
                 .iter()
-                .filter(|(_, attempt)| attempt.lockout_until.is_none())
-                .min_by_key(|(_, attempt)| attempt.last_failure)
+                .min_by_key(|(_, attempt)| (attempt.lockout_until.is_some(), attempt.last_failure))
                 .map(|(key, _)| key.clone());
-            match oldest {
-                Some(oldest) => {
-                    self.attempts.remove(&oldest);
-                }
-                None => return false,
+            if let Some(oldest) = oldest {
+                self.attempts.remove(&oldest);
             }
         }
         let attempt = self.attempts.entry(key).or_insert(Attempt {
@@ -76,10 +100,6 @@ impl LoginRateLimiter {
             return true;
         }
         false
-    }
-
-    pub fn record_success(&mut self, source_ip: &str, username: &str) {
-        self.attempts.remove(&key(source_ip, username));
     }
 
     fn prune(&mut self) {
@@ -112,6 +132,19 @@ pub fn client_address(peer: std::net::SocketAddr, headers: &axum::http::HeaderMa
 
 fn key(source_ip: &str, username: &str) -> String {
     format!("{source_ip}:{username}")
+}
+
+/// The key a source's failures count under whatever the name: an IPv4
+/// address as it is, an IPv6 address by its /64, which one subscriber
+/// usually holds whole.
+fn source_key(source_ip: &str) -> String {
+    match source_ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(address)) => {
+            let prefix = u128::from(address) & !((1_u128 << 64) - 1);
+            format!("source {}/64", std::net::Ipv6Addr::from(prefix))
+        }
+        _ => format!("source {source_ip}"),
+    }
 }
 
 #[cfg(test)]
@@ -147,12 +180,55 @@ mod tests {
     }
 
     #[test]
-    fn lockout_is_scoped_to_source_and_username() {
+    fn failures_under_many_names_lock_their_source() {
+        let mut limiter = LoginRateLimiter::new(5, 600);
+        for index in 0..5 {
+            limiter.record_failure("192.0.2.9", &format!("guess{index}"));
+        }
+        assert!(limiter.is_locked("192.0.2.9", "operator"));
+        assert!(limiter.is_locked("192.0.2.9", "terminal:operator"));
+        assert!(!limiter.is_locked("192.0.2.10", "operator"));
+    }
+
+    #[test]
+    fn a_table_full_of_lockouts_still_locks_a_newcomer() {
+        let mut limiter = LoginRateLimiter::new(1, 600);
+        for index in 0..MAX_TRACKED_KEYS {
+            let source = format!("10.0.{}.{}", index / 256, index % 256);
+            limiter.record_failure(&source, &format!("guess{index}"));
+        }
+        assert!(limiter.attempts.len() <= MAX_TRACKED_KEYS);
+        limiter.record_failure("192.0.2.1", "operator");
+        assert!(limiter.is_locked("192.0.2.1", "operator"));
+    }
+
+    #[test]
+    fn an_ipv6_source_is_counted_by_its_64_bit_prefix() {
+        let mut limiter = LoginRateLimiter::new(2, 600);
+        limiter.record_failure("2001:db8:1:2::1", "a");
+        limiter.record_failure("2001:db8:1:2:ffff::9", "b");
+        assert!(limiter.is_locked("2001:db8:1:2::3", "c"));
+        assert!(!limiter.is_locked("2001:db8:1:3::1", "c"));
+    }
+
+    #[test]
+    fn the_terminals_password_check_counts_against_the_same_source() {
+        let mut limiter = LoginRateLimiter::new(3, 600);
+        for _ in 0..3 {
+            limiter.record_failure("192.0.2.5", "terminal:operator");
+        }
+        assert!(limiter.is_locked("192.0.2.5", "operator"));
+    }
+
+    #[test]
+    fn a_lockout_holds_its_source_and_no_other() {
         let mut limiter = LoginRateLimiter::new(2, 60);
         assert!(!limiter.record_failure("192.0.2.1", "admin"));
         assert!(limiter.record_failure("192.0.2.1", "admin"));
         assert!(limiter.is_locked("192.0.2.1", "admin"));
+        assert!(limiter.is_locked("192.0.2.1", "other"));
         assert!(!limiter.is_locked("192.0.2.2", "admin"));
+        limiter.record_success("192.0.2.1", "admin");
         assert!(!limiter.is_locked("192.0.2.1", "other"));
     }
 }
