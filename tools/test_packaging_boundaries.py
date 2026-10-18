@@ -1947,6 +1947,26 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, commands)
         self.assertNotIn(0x01, commands)
 
+    def test_every_program_names_one_media_catalog(self) -> None:
+        # The web server and the board owner take the catalog's path from
+        # their units, the image download helper from its own constant; a move
+        # of the catalog (security review of 2026-10-18, E5) changes them all
+        # at once, and every slot then follows its units.
+        named = set()
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            for line in unit.read_text().splitlines():
+                for variable in (
+                    "Environment=BLI_KVM_MEDIA_CATALOG=",
+                    "Environment=BLI_KVM_GADGET_MEDIA_CATALOG=",
+                ):
+                    if line.startswith(variable) and "hardened-blikvm-gadget" in line:
+                        named.add(line.removeprefix(variable))
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/download.rs").read_text()
+        constant = re.search(r'pub const MEDIA_CATALOG: &str = "([^"]+)";', helper)
+        self.assertIsNotNone(constant)
+        named.add(constant.group(1))
+        self.assertEqual(len(named), 1, named)
+
     def test_a_server_with_the_owners_socket_has_the_restricted_surface(self) -> None:
         # The server's handlers that reach the board owner check only that
         # its socket is configured (security review of 2026-10-18, LOW-03);
