@@ -1007,11 +1007,25 @@ async fn the_lock_caps_a_quic_pages_session_and_the_link_refuses_it_after() {
         assert_eq!(answer["status"], 200, "{answer}");
     }
     tokio::time::sleep(Duration::from_millis(2300).saturating_sub(set.elapsed())).await;
-    assert_eq!(
-        gateway.lease(20, &session, key_report(50, 4)).await["status"],
-        401,
-        "the link served a session past the lock"
-    );
+    // Past the lock the server ends the QUIC session of its own accord, or,
+    // when the request comes first, answers it 401.
+    gateway
+        .say(&GatewayToServer::Lease {
+            id: 20,
+            session: session.clone(),
+            request: key_report(50, 4),
+        })
+        .await;
+    match gateway.hear().await {
+        Some(ServerToGateway::End { session: ended, .. }) => assert_eq!(ended, session),
+        Some(ServerToGateway::LeaseAnswer { response, .. }) => {
+            assert_eq!(
+                response["status"], 401,
+                "the link served a session past the lock"
+            )
+        }
+        other => panic!("neither an end nor an answer: {other:?}"),
+    }
     let (status, _) = page.post("/api/hid/lease", key_report(51, 4)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _) = idle.post("/api/hid/lease", key_report(52, 4)).await;
