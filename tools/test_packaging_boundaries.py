@@ -841,7 +841,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("[Install]", unit)
         self.assertNotIn("bli-kvm-diagnostic-persistence-gate", builder)
         self.assertNotIn("hardened-blikvm-diagnostic-persistence-gate.service", builder)
-        self.assertIn("hardened-blikvm-diagnostic-persistence-gate.service", verifier)
+        # The verifier takes every unit of the directory.
+        self.assertIn("ls -1 -- *.service *.socket *.timer", verifier)
+        self.assertTrue((ROOT / "packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service").exists())
         for required in (
             "Starting from a freshly initialized encrypted generation one",
             "seven reads and three acknowledgement requests",
@@ -2016,7 +2018,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 words("IPAddressDeny=") & covering
             )
             self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
-        self.assertGreaterEqual(checked, 15)
+        self.assertGreaterEqual(checked, 14)
 
     def test_the_owners_files_are_not_writable_by_its_group(self) -> None:
         # The owner's drop-in gave its files group write (UMask=0007), so any
@@ -2355,6 +2357,87 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("WantedBy=multi-user.target", unit)
         self.assertNotIn("rm -", unit)
         self.assertNotIn("mkfs", unit)
+        # Sandboxed but in the host's mount namespace, where the remount
+        # must happen (security review of 2026-10-18, LOW-07).
+        lines = unit.splitlines()
+        for line in (
+            "CapabilityBoundingSet=CAP_SYS_ADMIN",
+            "NoNewPrivileges=yes",
+            "IPAddressDeny=any",
+            "RestrictAddressFamilies=AF_UNIX",
+            "SystemCallFilter=@system-service @mount",
+        ):
+            self.assertIn(line, lines)
+        for namespaced in (
+            "ProtectSystem=",
+            "ProtectHome=",
+            "PrivateTmp=",
+            "PrivateDevices=",
+            "PrivateNetwork=",
+            "PrivateMounts=",
+            "ProtectKernel",
+            "ProtectControlGroups=",
+            "ReadWritePaths=",
+            "ReadOnlyPaths=",
+            "InaccessiblePaths=",
+            "TemporaryFileSystem=",
+            "BindPaths=",
+        ):
+            self.assertFalse(
+                [line for line in lines if line.startswith(namespaced)], namespaced
+            )
+
+    def test_the_unit_check_covers_every_unit(self) -> None:
+        # scripts/verify-systemd-units.sh named its units, and six were never
+        # verified, eleven services never had their exposure checked
+        # (security review of 2026-10-18, LOW-07).
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.splitlines()
+        directory = ROOT / "packaging/systemd"
+        units = sorted(
+            path.name
+            for pattern in ("*.service", "*.socket", "*.timer")
+            for path in directory.glob(pattern)
+        )
+        services = sorted(
+            [path.name for path in directory.glob("*.service")]
+            + [f"native/{path.name}" for path in (directory / "native").glob("*.service")]
+        )
+        verified = sorted(line.split()[1] for line in listed if line.startswith("verify "))
+        exposed = {
+            line.split()[1]: int(line.split()[2]) for line in listed if line.startswith("exposure ")
+        }
+        self.assertEqual(verified, units)
+        self.assertEqual(sorted(exposed), services)
+        # The limits above the default are few and named.
+        self.assertEqual(
+            {name: limit for name, limit in exposed.items() if limit != 20},
+            {
+                "hardened-blikvm-update-exec@.service": 22,
+                "hardened-blikvm-nginx.service": 22,
+                "hardened-blikvm-msd-writable.service": 37,
+                "hardened-blikvm-admin@.service": 94,
+            },
+        )
+
+    def test_the_booted_check_reaches_only_the_boards_own_web_stack(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-system-update-booted.service"
+        ).read_text().splitlines()
+        for line in (
+            "IPAddressDeny=any",
+            "IPAddressAllow=127.0.0.1 ::1",
+            "CapabilityBoundingSet=",
+            "SystemCallFilter=@system-service",
+        ):
+            self.assertIn(line, unit)
+        source = (ROOT / "crates/bli-kvm-system-raw-update/src/main.rs").read_text()
+        self.assertIn('const DEFAULT_HEALTH_URL: &str = "https://127.0.0.1/api/health";', source)
 
     def test_the_board_owner_allows_exactly_the_network_write_surface(self) -> None:
         unit = (
@@ -2530,6 +2613,17 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
+        # TLS 1.2 with forward secrecy and AEAD only (security review of
+        # 2026-10-18, LOW-07).
+        ciphers = re.findall(r"^\s*ssl_ciphers\s+([^;]+);", config, re.MULTILINE)
+        self.assertEqual(len(ciphers), 1)
+        for suite in ciphers[0].split(":"):
+            self.assertTrue(suite.startswith("ECDHE-"), suite)
+            self.assertTrue(
+                suite.endswith(("-GCM-SHA256", "-GCM-SHA384", "-CHACHA20-POLY1305")), suite
+            )
+        quic = (ROOT / "docs/design/quic-transport-v1.md").read_text()
+        self.assertIn("the board's systemd 249 is built without\n  its BPF framework", quic)
         destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
         self.assertEqual(
             sorted(destinations),

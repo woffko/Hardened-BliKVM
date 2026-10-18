@@ -202,10 +202,13 @@ Tokens, their hashes, report contents and frame data never reach a log.
   (`packaging/sysusers.d/hardened-blikvm-quic.conf`, shipped with the
   package as an example and applied at installation), because the runtime's
   identities are a pinned set (`tools/runtime_provisioning_policy.py`).
-  `SocketBindDeny=any` with
-  `SocketBindAllow=udp:443` leaves it one port; 64 MiB and 16 tasks bound
-  what it can take; the sockets of the owner, the broker and the helpers are
-  out of its sight.
+  `SocketBindDeny=any` with `SocketBindAllow=udp:443` names its one port
+  for a systemd that enforces it: the board's systemd 249 is built without
+  its BPF framework and does not (security review of 2026-10-18, N6), so
+  there the gateway's own code binds that port alone, and what the unit
+  enforces are its address lists (`IPAddressDeny=`, cgroup programs that 249
+  applies), its address families, 64 MiB and 16 tasks; the sockets of the
+  owner, the broker and the helpers are out of its sight.
 - The serving units (`hardened-blikvm-server-current` and `-candidate`, in
   both profiles) create the link's runtime directory
   `/run/hardened-blikvm-quic-link` and name the socket and the user that may

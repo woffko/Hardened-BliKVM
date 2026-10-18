@@ -19,12 +19,27 @@ ProtectSystem=strict
 ReadWritePaths=/mnt/.hardened-system-update
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateDevices=yes
+# It asks the board's own web stack (https://127.0.0.1/api/health) and
+# nothing else; not "localhost", which would admit Janus's loopback address
+# (security review of 2026-10-18, LOW-07, MED-03).
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-# Janus's own loopback address (security review of 2026-10-18, MED-03).
-IPAddressDeny=127.0.0.2
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1 ::1
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

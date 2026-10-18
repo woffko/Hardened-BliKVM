@@ -2,6 +2,34 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Every unit of packaging/systemd is verified and every service has its
+# exposure checked: the lists come from the directory, so a unit added there
+# cannot pass unchecked (security review of 2026-10-18, LOW-07).
+units=$(cd "$project_root/packaging/systemd" && ls -1 -- *.service *.socket *.timer)
+services=$(cd "$project_root/packaging/systemd" && ls -1 -- *.service native/*.service)
+# The exposure a service may have (systemd-analyze security, tenths); 20
+# unless named here with its reason.
+exposure_limit() {
+  case "$1" in
+    # Root boundaries with required capabilities: public TLS termination and
+    # the native execution helper (systemd control, DAC and ptrace identity
+    # reads).
+    hardened-blikvm-update-exec@.service | hardened-blikvm-nginx.service) echo 22 ;;
+    # One remount, which must happen in the host's mount namespace: no file
+    # system sandbox.
+    hardened-blikvm-msd-writable.service) echo 37 ;;
+    # The operator's root session (the web terminal), a root shell by design.
+    hardened-blikvm-admin@.service) echo 94 ;;
+    *) echo 20 ;;
+  esac
+}
+if [ "${1:-}" = --list ]; then
+  for unit in $units; do printf 'verify %s\n' "$unit"; done
+  for service in $services; do
+    printf 'exposure %s %s\n' "$service" "$(exposure_limit "${service##*/}")"
+  done
+  exit 0
+fi
 test_root=$(mktemp -d /tmp/hardened-blikvm-systemd.XXXXXX)
 cleanup() {
   case "$test_root" in
@@ -46,6 +74,8 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-
 install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
 install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
 install -m 0755 /bin/true "$test_root/usr/bin/ustreamer"
+install -m 0755 /bin/true "$test_root/usr/bin/janus"
+install -m 0755 /bin/true "$test_root/bin/mount"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0755 /bin/true "$test_root/usr/bin/install"
 install -m 0755 /bin/true "$test_root/usr/sbin/nginx"
@@ -92,58 +122,13 @@ install -d -m 0755 \
   "$test_root/var/lib/hardened-blikvm-slots/current/share/web"
 install -m 0755 /bin/true \
   "$test_root/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server"
+# The HID gadget's unit runs the native slot's owner binary.
+install -d -m 0755 "$test_root/var/lib/hardened-blikvm-exec/current/libexec"
+install -m 0755 /bin/true \
+  "$test_root/var/lib/hardened-blikvm-exec/current/libexec/bli-kvm-control-broker"
 : > "$test_root/var/lib/hardened-blikvm-slots/current/share/web/index.html"
-systemd-analyze verify --root="$test_root" \
-  hardened-blikvm-platform-broker.service \
-  hardened-blikvm-control-broker.service \
-  hardened-blikvm-hid-transition.service \
-  hardened-blikvm-media-transition.service \
-  hardened-blikvm-gadget-owner.service \
-  hardened-blikvm-board-owner.service \
-  hardened-blikvm-board-server.service \
-  hardened-blikvm-board-video-proxy.service \
-  hardened-blikvm-ustreamer.service \
-  hardened-blikvm-boardd.service \
-  hardened-blikvm-hid-credential.service \
-  hardened-blikvm-video-proxy.service \
-  hardened-blikvm-server.service \
-  hardened-blikvm-nginx.service \
-  hardened-blikvm-update-watchdog.service \
-  hardened-blikvm-update-recover.service \
-  hardened-blikvm-update-status.socket \
-  hardened-blikvm-update-status@.service \
-  hardened-blikvm-update-upload.socket \
-  hardened-blikvm-update-upload@.service \
-  hardened-blikvm-update-activation.socket \
-  hardened-blikvm-update-activation@.service \
-  hardened-blikvm-update-watchdog.timer \
-  hardened-blikvm-update-confirm.socket \
-  hardened-blikvm-update-confirm@.service \
-  hardened-blikvm-update-activate@.service \
-  hardened-blikvm-update-apply-candidate.service \
-  hardened-blikvm-update-apply-confirmed.service \
-  hardened-blikvm-server-current.service \
-  hardened-blikvm-server-candidate.service \
-  hardened-blikvm-diagnostic-collector.service \
-  hardened-blikvm-diagnostic-store-init.service \
-  hardened-blikvm-diagnostic-store-inspect.service \
-  hardened-blikvm-diagnostic-persistence-gate.service \
-  hardened-blikvm-system-action-store-init.service \
-  hardened-blikvm-system-action-store-inspect.service \
-  hardened-blikvm-update-exec.socket \
-  hardened-blikvm-update-exec@.service \
-  hardened-blikvm-update-native-boot.service \
-  hardened-blikvm-admin.socket \
-  hardened-blikvm-admin@.service \
-  hardened-blikvm-image-download.socket \
-  hardened-blikvm-image-download@.service \
-  hardened-blikvm-picoclaw.service \
-  hardened-blikvm-picoclaw-api.socket \
-  hardened-blikvm-picoclaw-api@.service \
-  hardened-blikvm-system-update-booted.service \
-  hardened-blikvm-quic.service \
-  hardened-blikvm-ve.service \
-  hardened-blikvm-video-encoder-h264.service
+# shellcheck disable=SC2086 # the unit names are words
+systemd-analyze verify --root="$test_root" $units
 
 # Native profile: the rendered replacements override the managed base units
 # and must verify on their own, with no legacy recover/confirm dependency.
@@ -164,14 +149,12 @@ for binary in bin/bli-kvm-server libexec/bli-kvm-control-broker \
   install -m 0755 /bin/true "$native_root/var/lib/hardened-blikvm-exec/current/$binary"
 done
 : > "$native_root/var/lib/hardened-blikvm-exec/current/share/web/index.html"
-systemd-analyze verify --root="$native_root" \
-  hardened-blikvm-board-owner.service \
-  hardened-blikvm-board-video-proxy.service \
-  hardened-blikvm-boardd.service \
-  hardened-blikvm-server-current.service \
-  hardened-blikvm-server-candidate.service \
+# Every native replacement, with the base units the native profile starts
+# beside them.
+native_units=$(cd "$project_root/packaging/systemd/native" && ls -1 -- *.service)
+# shellcheck disable=SC2086 # the unit names are words
+systemd-analyze verify --root="$native_root" $native_units \
   hardened-blikvm-update-activation.socket \
-  hardened-blikvm-update-activation@.service \
   hardened-blikvm-update-exec.socket \
   hardened-blikvm-update-exec@.service \
   hardened-blikvm-update-native-boot.service \
@@ -182,51 +165,11 @@ for unit in "$project_root"/packaging/systemd/native/*.service; do
     exit 1
   fi
 done
-systemd-analyze security --offline=yes --threshold=20 --no-pager \
-  "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-hid-transition.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-media-transition.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-gadget-owner.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-board-owner.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-board-server.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-board-video-proxy.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-ustreamer.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-boardd.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-server.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-recover.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-status@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-upload@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-activation@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-apply-candidate.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-apply-confirmed.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-server-current.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-server-candidate.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-collector.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-store-init.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-store-inspect.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-update-native-boot.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-hid-gadget.service" \
-  >/dev/null
-# Root boundaries with required capabilities: public TLS termination and the
-# native execution helper (systemd control, DAC and ptrace identity reads).
-systemd-analyze security --offline=yes --threshold=22 --no-pager \
-  "$project_root/packaging/systemd/hardened-blikvm-update-exec@.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
-  >/dev/null
-# The encoder with its one device, and the root unit whose one capability
-# loads the encoder driver.
-systemd-analyze security --offline=yes --threshold=20 --no-pager \
-  "$project_root/packaging/systemd/hardened-blikvm-video-encoder-h264.service" \
-  >/dev/null
-systemd-analyze security --offline=yes --threshold=20 --no-pager \
-  "$project_root/packaging/systemd/hardened-blikvm-ve.service" \
-  >/dev/null
+for service in $services; do
+  if ! systemd-analyze security --offline=yes --no-pager \
+    --threshold="$(exposure_limit "${service##*/}")" \
+    "$project_root/packaging/systemd/$service" >/dev/null; then
+    echo "$service is exposed beyond its limit" >&2
+    exit 1
+  fi
+done
