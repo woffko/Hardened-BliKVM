@@ -324,9 +324,20 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_dev37_to_dev39_carry_the_files_of_dev36(self) -> None:
         # The QUIC gateway of the transport's protocol 2, then the fixes of the
-        # security review of 2026-10-18, and no file new.
+        # security review of 2026-10-18 with the download worker's account.
         self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev39")
-        for version in ("0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39"):
+        fragment = (
+            "usr/share/doc/hardened-blikvm-update-runtime/examples/"
+            "hardened-blikvm-download-sysusers.conf"
+        )
+        dev39 = dict(package.file_map("0.1.0~dev39"))
+        self.assertEqual(
+            [source for source, target in dev39.items() if target == fragment],
+            ["share/sysusers.d/hardened-blikvm-download.conf"],
+        )
+        del dev39["share/sysusers.d/hardened-blikvm-download.conf"]
+        self.assertEqual(dev39, package.file_map("0.1.0~dev36"))
+        for version in ("0.1.0~dev37", "0.1.0~dev38"):
             self.assertEqual(package.file_map(version), package.file_map("0.1.0~dev36"))
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:

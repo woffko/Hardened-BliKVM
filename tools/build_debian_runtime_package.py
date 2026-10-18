@@ -87,6 +87,7 @@ FORBIDDEN_PACKAGE_NAMES = {
     "bli-kvm-quic-gateway",
     "hardened-blikvm-quic.service",
     "hardened-blikvm-quic.conf",
+    "hardened-blikvm-download.conf",
     "hardened-blikvm-ve-enc.ko",
     "bli-kvm-ve-load",
     "hardened-blikvm-ve.service",

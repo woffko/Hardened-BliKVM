@@ -169,8 +169,9 @@ FILE_MAP.update({
     # enables it (docs/design/quic-transport-v1.md). Its user has a sysusers
     # fragment of its own: the runtime's identities are a pinned set. dev37
     # carries the gateway of the transport's protocol 2, and dev38 one that
-    # leaves a silent page unjudged; dev39 the fixes of the security review
-    # of 2026-10-18 in the same files. All have dev36's files.
+    # leaves a silent page unjudged; both have dev36's files. dev39 carries the
+    # fixes of the security review of 2026-10-18, and the download worker's
+    # sysusers fragment beside them.
     "libexec/bli-kvm-quic-gateway": (
         "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
     ),
@@ -179,6 +180,11 @@ FILE_MAP.update({
     ),
     "share/sysusers.d/hardened-blikvm-quic.conf": (
         "usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-quic-sysusers.conf"
+    ),
+    # dev39: the image download worker's own account, a fragment of its own
+    # beside the runtime's pinned identities, applied at installation.
+    "share/sysusers.d/hardened-blikvm-download.conf": (
+        "usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-download-sysusers.conf"
     ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
@@ -292,6 +298,8 @@ def file_map(version: str) -> dict[str, str]:
         "99-hardened-blikvm-ve.rules": 33,
         # The group's fragment and the modprobe line have one name.
         "hardened-blikvm-ve.conf": 33,
+        # dev39 is the 36th.
+        "hardened-blikvm-download.conf": 36,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

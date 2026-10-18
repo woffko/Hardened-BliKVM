@@ -2159,9 +2159,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "usr/lib/sysusers.d").mkdir(parents=True)
-            shutil.copy(
-                ROOT / "packaging/sysusers.d/hardened-blikvm.conf", root / "usr/lib/sysusers.d"
-            )
+            for fragment in ("hardened-blikvm.conf", "hardened-blikvm-download.conf"):
+                shutil.copy(ROOT / "packaging/sysusers.d" / fragment, root / "usr/lib/sysusers.d")
             subprocess.run(
                 ["systemd-sysusers", f"--root={root}"], check=True, capture_output=True
             )
@@ -2234,8 +2233,14 @@ class PackagingBoundaryTests(unittest.TestCase):
             [f"BindPaths=-/var/lib/hardened-blikvm-gadget/images/{name.group(1)}:{drop.group(1)}"],
         )
         # In no group another account shares but for the web server's
-        # membership in its own; the root admin helper admits only the server.
-        sysusers = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text().splitlines()
+        # membership in its own, in a fragment of its own beside the
+        # runtime's pinned identities; the root admin helper admits only the
+        # server.
+        pinned = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        self.assertNotIn("hardened-blikvm-download", pinned)
+        sysusers = (
+            (ROOT / "packaging/sysusers.d/hardened-blikvm-download.conf").read_text().splitlines()
+        )
         self.assertIn(
             'u hardened-blikvm-download - "Hardened BliKVM remote image download" '
             "/nonexistent /usr/sbin/nologin",

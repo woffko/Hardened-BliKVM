@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -47,7 +48,13 @@ class HidCredentialServiceTests(unittest.TestCase):
         self.assertIn(
             "usr/libexec/hardened-blikvm/bli-kvm-hid-credential-gate", verifier
         )
-        self.assertIn(SERVICE, verifier)
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertIn(f"verify {SERVICE}", listed)
         bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertIn("bli-kvm-hid-credential-gate", bundle)
         self.assertIn(UNIT, bundle)

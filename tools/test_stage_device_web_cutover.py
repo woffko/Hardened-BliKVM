@@ -213,13 +213,14 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         )
 
     def test_root_master_has_a_separate_bounded_security_threshold(self) -> None:
-        verifier = Path("scripts/verify-systemd-units.sh").read_text(encoding="utf-8")
-        self.assertIn("--threshold=20", verifier)
-        self.assertIn("--threshold=22", verifier)
-        self.assertIn(
-            '"$project_root/packaging/systemd/hardened-blikvm-nginx.service"',
-            verifier,
-        )
+        listed = subprocess.run(
+            ["sh", "scripts/verify-systemd-units.sh", "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertIn("exposure hardened-blikvm-nginx.service 22", listed)
+        self.assertIn("exposure hardened-blikvm-server.service 20", listed)
 
 
 if __name__ == "__main__":

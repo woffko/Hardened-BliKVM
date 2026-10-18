@@ -73,7 +73,10 @@ and are socket-activated per connection.
 - **Image download helper** (`hardened-blikvm-image-download@.service`, the
   same binary with `--download`, running with no capabilities as
   `hardened-blikvm-download`, an account of its own in no group another
-  account shares; the web server is the one other member of its group. It
+  account shares; the web server is the one other member of its group (a
+  sysusers fragment of its own, `packaging/sysusers.d/hardened-blikvm-download.conf`,
+  shipped with the update runtime as an example: the runtime's identities
+  are a pinned set). It
   ran as the web-server account until the security review of 2026-10-18,
   N1):
   - it is the only unit with outbound network access (the web server may

@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 
@@ -55,7 +56,13 @@ class HidTransitionServiceTests(unittest.TestCase):
 
     def test_verifier_covers_the_unit_and_tmpfiles(self) -> None:
         verifier = (ROOT / "scripts/verify-systemd-units.sh").read_text()
-        self.assertIn(UNIT_NAME, verifier)
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertIn(f"verify {UNIT_NAME}", listed)
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-hid.conf", verifier)
 
     def test_default_prototype_bundle_excludes_the_transition_profile(self) -> None:

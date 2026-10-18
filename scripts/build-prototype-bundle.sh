@@ -169,6 +169,7 @@ install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
   packaging/sysusers.d/hardened-blikvm-quic.conf \
   packaging/sysusers.d/hardened-blikvm-ve.conf \
+  packaging/sysusers.d/hardened-blikvm-download.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \

@@ -339,7 +339,7 @@ E16. Optional, at the operator's choice: MED-10's bounded queue; HIGH-07's
   operator's word. The card image is read from the board's root, whose
   accounts and `/etc/tmpfiles.d` fragments were staged by hand: before the
   image fetch, and with the runtime packages, the board gets E4's account
-  and membership (`packaging/sysusers.d/hardened-blikvm.conf`) and the
+  and membership (`packaging/sysusers.d/hardened-blikvm-download.conf`) and the
   gadget fragment with its ACL entry, and the image's root is checked for
   them; the same holds for the board's units in `/etc/systemd/system` and
   their drop-ins (E5's catalog path, E7's socket), and the video path is
