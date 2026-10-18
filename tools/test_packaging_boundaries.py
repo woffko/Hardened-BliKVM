@@ -2089,6 +2089,13 @@ class PackagingBoundaryTests(unittest.TestCase):
         addresses = re.findall(r'^\s*(?:ws_ip|videoiface) = "([^"]+)"$', configuration, re.M)
         self.assertEqual(set(addresses), {"127.0.0.2"})
         self.assertEqual(len(addresses), 3)
+        # Janus finds it only as an interface's own address, under a label
+        # (on lo alone it would bind 127.0.0.1; without it, every address).
+        self.assertIn(
+            "ExecStartPre=+/usr/sbin/ip address replace 127.0.0.2/8 dev lo label lo:janus",
+            unit.splitlines(),
+        )
+        self.assertLess(unit.index("ExecStartPre=+/usr/sbin/ip"), unit.index("ExecStart=/usr/bin/janus"))
         deploy = (ROOT / "tools/device/deploy_vp8.sh").read_text()
         self.assertIn("'Environment=BLI_KVM_JANUS_WS=127.0.0.2:8188'", deploy)
         encoder = (ROOT / "crates/bli-kvm-video-encoder/src/main.rs").read_text()

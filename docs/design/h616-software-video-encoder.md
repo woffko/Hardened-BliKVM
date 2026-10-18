@@ -98,7 +98,11 @@ Signaling and deployment (host-complete, not yet deployed):
   WebSocket transport, no admin API, host candidates only, RTP ports
   20000-20099 for media. Janus's WebSocket and its mountpoints' RTP inputs
   are on a loopback address of its own, `127.0.0.2` (the encoders send
-  there, `deploy_vp8.sh` gives the server `BLI_KVM_JANUS_WS=127.0.0.2:8188`),
+  there, `deploy_vp8.sh` gives the server `BLI_KVM_JANUS_WS=127.0.0.2:8188`;
+  Janus's unit gives `lo` that address under the label `lo:janus` before it
+  starts, as Janus binds only an interface's own address: on the test board
+  without it the mountpoints failed and the WebSockets server took every
+  address),
   and every unit that neither feeds nor asks Janus denies that address;
   allow lists name `127.0.0.1` rather than `localhost`, which would admit it
   (security review of 2026-10-18, MED-03). Its unit's bind list names each
