@@ -319,6 +319,15 @@ pub(crate) fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
 /// Replaces a state file in the owner's state directory: written beside it,
 /// synced, then renamed over it.
 fn write_state(path: &Path, text: &str) -> Result<(), String> {
+    replace_state_file(path, text)
+}
+
+/// Replaces one of the owner's state files: a temporary file beside it,
+/// created new (a stale one is removed first, a link at its name is not
+/// followed) and 0640 whatever the unit's umask, synced, then renamed over
+/// the file. Only root and the socket's group read the owner's state.
+pub(crate) fn replace_state_file(path: &Path, text: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
     let parent = path
         .parent()
         .ok_or_else(|| "the state file has no parent directory".to_string())?;
@@ -328,12 +337,22 @@ fn write_state(path: &Path, text: &str) -> Result<(), String> {
         return Err("the state directory must be a real directory".into());
     }
     let temporary = path.with_extension("env.new");
+    match std::fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("a stale temporary state file stays: {error}")),
+    }
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
+        .mode(0o640)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&temporary)
         .map_err(|error| format!("the temporary state file is unavailable: {error}"))?;
+    // The mode given at creation is narrowed by the umask only; this makes it
+    // exact either way.
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o640))
+        .map_err(|error| format!("the temporary state file could not be restricted: {error}"))?;
     file.write_all(text.as_bytes())
         .map_err(|error| format!("the temporary state file could not be written: {error}"))?;
     file.sync_all()
@@ -450,6 +469,25 @@ mod hid_only_tests {
         assert_eq!(state.handle(true), ControlResponse::Applied);
         assert_eq!(state.handle(false), ControlResponse::Applied);
         assert!(!state.enabled());
+    }
+
+    #[test]
+    fn the_state_file_is_readable_by_root_and_its_group_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("hid-only.env");
+        let mut state = HidOnlyState::open(&path, true);
+        assert_eq!(state.handle(true), ControlResponse::Applied);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "{mode:o}");
+        // A link planted where the temporary file goes is replaced, not
+        // written through.
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim");
+        std::fs::write(&victim, b"kept").unwrap();
+        std::os::unix::fs::symlink(&victim, path.with_extension("env.new")).unwrap();
+        assert_eq!(state.handle(false), ControlResponse::Applied);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"kept");
     }
 
     #[test]
