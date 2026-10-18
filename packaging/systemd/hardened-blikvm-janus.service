@@ -32,12 +32,14 @@ ProcSubset=pid
 ProtectSystem=strict
 # libwebsockets opens an IPv6 socket for its loopback listener.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-# Only the loopback signaling port and the WebRTC media range may be bound,
-# even if a configuration regression enabled another transport.
+# Only the loopback signaling port, the mountpoints' RTP ports and the WebRTC
+# media range may be bound, even if a configuration regression enabled another
+# transport. systemd 249 does not enforce these (N6); a later one does.
 SocketBindDeny=any
 SocketBindAllow=tcp:8188
 SocketBindAllow=udp:20000-20099
 SocketBindAllow=udp:5004
+SocketBindAllow=udp:5006
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

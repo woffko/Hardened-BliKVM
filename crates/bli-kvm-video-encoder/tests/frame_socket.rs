@@ -102,8 +102,8 @@ fn encoder_and_client_with(
     let upstream = directory.path().join("ustreamer.sock");
     let socket = directory.path().join("frames.sock");
     capture(&upstream, pictures);
-    // The RTP packets go to a port that takes them.
-    let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    // The RTP packets go to a port that takes them, on Janus's address.
+    let rtp = UdpSocket::bind("127.0.0.2:0").unwrap();
     let encoder = Encoder(
         Command::new(env!("CARGO_BIN_EXE_bli-kvm-video-encoder"))
             .env("BLI_KVM_USTREAMER_SOCKET", &upstream)
@@ -145,6 +145,20 @@ fn encoder_and_client_with(
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     (directory, rtp, encoder, client)
+}
+
+#[test]
+fn the_rtp_goes_to_the_loopback_address_of_janus() {
+    // Janus listens on 127.0.0.2, which the units that neither feed nor ask
+    // it cannot reach (security review of 2026-10-18, MED-03).
+    let (_directory, rtp, _encoder, _client) = encoder_and_client(&FRAMES);
+    rtp.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    let mut packet = [0_u8; 2048];
+    let length = rtp
+        .recv(&mut packet)
+        .expect("no RTP packet reached Janus's address");
+    assert!(length > 12, "{length}");
+    assert_eq!(packet[0] >> 6, 2, "RTP version 2");
 }
 
 #[test]

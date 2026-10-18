@@ -123,6 +123,9 @@ fn number(name: &str, default: u32, range: std::ops::RangeInclusive<u32>) -> Res
     }
 }
 
+/// Janus's loopback address, for its mountpoints' RTP and its signaling.
+const JANUS_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);
+
 fn settings() -> Result<Settings, String> {
     let upstream = PathBuf::from(
         env::var_os("BLI_KVM_USTREAMER_SOCKET")
@@ -141,7 +144,9 @@ fn settings() -> Result<Settings, String> {
         Err(_) if number("BLI_KVM_VP8_HALVE", 0, 0..=1)? == 1 => Scale::Half,
         Err(_) => Scale::Full,
     };
-    // RTP never leaves the host: Janus reads it from loopback.
+    // RTP never leaves the host: Janus reads it from its own loopback
+    // address, which the units that neither feed nor ask it cannot reach
+    // (security review of 2026-10-18, MED-03).
     let default_port = if codec == Codec::Vp8 { 5004 } else { 5006 };
     let port = match env::var("BLI_KVM_ENCODER_RTP_PORT") {
         Ok(_) => number("BLI_KVM_ENCODER_RTP_PORT", default_port, 1024..=65535)?,
@@ -150,7 +155,7 @@ fn settings() -> Result<Settings, String> {
     let max_fps = number("BLI_KVM_VP8_MAX_FPS", 30, 1..=60)?;
     Ok(Settings {
         upstream,
-        rtp: SocketAddr::from((Ipv4Addr::LOCALHOST, port as u16)),
+        rtp: SocketAddr::from((JANUS_ADDRESS, port as u16)),
         max_fps,
         engine: EngineSettings {
             codec,

@@ -47,6 +47,8 @@ ProtectProc=invisible
 ProtectSystem=strict
 ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Janus's own loopback address (security review of 2026-10-18, MED-03).
+IPAddressDeny=127.0.0.2
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

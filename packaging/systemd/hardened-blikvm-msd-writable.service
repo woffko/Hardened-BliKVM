@@ -11,6 +11,7 @@ After=local-fs.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/mount -o remount,rw /var/lib/hardened-blikvm-gadget/images
+IPAddressDeny=any
 
 [Install]
 WantedBy=multi-user.target

@@ -96,7 +96,13 @@ Signaling and deployment (host-complete, not yet deployed):
   preferred. The GUI offers "VP8 (WebRTC)".
 - `packaging/janus/` enables only the streaming plugin and the loopback
   WebSocket transport, no admin API, host candidates only, RTP ports
-  20000-20099 for media.
+  20000-20099 for media. Janus's WebSocket and its mountpoints' RTP inputs
+  are on a loopback address of its own, `127.0.0.2` (the encoders send
+  there, `deploy_vp8.sh` gives the server `BLI_KVM_JANUS_WS=127.0.0.2:8188`),
+  and every unit that neither feeds nor asks Janus denies that address;
+  allow lists name `127.0.0.1` rather than `localhost`, which would admit it
+  (security review of 2026-10-18, MED-03). Its unit's bind list names each
+  of its ports, for a systemd that enforces it (249 does not, N6).
 - `hardened-blikvm-janus.service` and `hardened-blikvm-video-encoder.service`
   run as dynamic users; the encoder has loopback-only networking and
   `CPUQuota=250%`.

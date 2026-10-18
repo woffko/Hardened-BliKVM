@@ -341,7 +341,9 @@ E16. Optional, at the operator's choice: MED-10's bounded queue; HIGH-07's
   image fetch, and with the runtime packages, the board gets E4's account
   and membership (`packaging/sysusers.d/hardened-blikvm.conf`) and the
   gadget fragment with its ACL entry, and the image's root is checked for
-  them.
+  them; the same holds for the board's units in `/etc/systemd/system` and
+  their drop-ins (E5's catalog path, E7's socket), and the video path is
+  deployed again with `tools/device/deploy_vp8.sh` for E8's addresses.
 
 ## Phase G: the record
 

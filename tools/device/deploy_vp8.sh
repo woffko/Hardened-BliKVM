@@ -63,7 +63,7 @@ install_vp8() {
   sysctl -q -p /etc/sysctl.d/60-hardened-blikvm-stream.conf
   for unit in $serving; do
     install -d -m 0755 "$units/$unit.service.d"
-    printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.1:8188' \
+    printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.2:8188' \
       'Environment=BLI_KVM_WEBRTC_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock' \
       'Environment=BLI_KVM_WEBRTC_H264_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock' \
       'Environment=BLI_KVM_H264_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder' \

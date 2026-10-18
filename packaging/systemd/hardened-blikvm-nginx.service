@@ -50,7 +50,8 @@ RemoveIPC=yes
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID
 AmbientCapabilities=
 DevicePolicy=closed
-IPAddressDeny=multicast
+# Janus's own loopback address (security review of 2026-10-18, MED-03).
+IPAddressDeny=multicast 127.0.0.2
 SocketBindDeny=any
 SocketBindAllow=tcp:80
 SocketBindAllow=tcp:443

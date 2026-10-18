@@ -51,5 +51,6 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # The model API is on the network; the local gateway and the KVM tools are
-# on loopback. Link-local and multicast addresses are not needed.
-IPAddressDeny=link-local multicast
+# on loopback. Link-local and multicast addresses are not needed, nor Janus's
+# own loopback address (security review of 2026-10-18, MED-03).
+IPAddressDeny=link-local multicast 127.0.0.2

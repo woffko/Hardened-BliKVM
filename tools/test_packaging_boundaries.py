@@ -1977,6 +1977,76 @@ class PackagingBoundaryTests(unittest.TestCase):
         for source in sorted((ROOT / "crates/bli-kvm-admin-helper/src").glob("*.rs")):
             self.assertNotIn("catalog.json", source.read_text(), source.name)
 
+    def test_only_the_units_that_feed_or_ask_janus_reach_its_address(self) -> None:
+        # Janus listens, signaling and RTP, on a loopback address of its own,
+        # which the units that neither feed nor ask it cannot reach (security
+        # review of 2026-10-18, MED-03, decision 7). An allowed address wins
+        # over a denied one in systemd, so "localhost" opens it again.
+        clients = {
+            "hardened-blikvm-server.service",
+            "hardened-blikvm-board-server.service",
+            "hardened-blikvm-server-current.service",
+            "hardened-blikvm-server-candidate.service",
+            "hardened-blikvm-video-encoder.service",
+            "hardened-blikvm-video-encoder-h264.service",
+        }
+        # Janus itself, and the operator's root session (the web terminal),
+        # which may reach anything on the board.
+        exempt = {"hardened-blikvm-janus.service", "hardened-blikvm-admin@.service"}
+        covering = {"any", "localhost", "127.0.0.0/8", "127.0.0.2"}
+        checked = 0
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            lines = unit.read_text().splitlines()
+
+            def words(directive: str) -> set[str]:
+                return {
+                    word
+                    for line in lines
+                    if line.startswith(directive)
+                    for word in line.removeprefix(directive).split()
+                }
+
+            families = words("RestrictAddressFamilies=")
+            if families and not families & {"AF_INET", "AF_INET6"}:
+                continue
+            if unit.name in exempt:
+                continue
+            checked += 1
+            reaches = bool(words("IPAddressAllow=") & covering) or not (
+                words("IPAddressDeny=") & covering
+            )
+            self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
+        self.assertGreaterEqual(checked, 15)
+
+    def test_every_janus_port_is_in_its_bind_list(self) -> None:
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-janus.service").read_text()
+        allowed = {
+            line.removeprefix("SocketBindAllow=")
+            for line in unit.splitlines()
+            if line.startswith("SocketBindAllow=")
+        }
+        configuration = "\n".join(
+            path.read_text() for path in sorted((ROOT / "packaging/janus").glob("*.jcfg"))
+        )
+        ports = [f"tcp:{port}" for port in re.findall(r"^\s*ws_port = (\d+)$", configuration, re.M)]
+        ports += [f"udp:{port}" for port in re.findall(r"^\s*videoport = (\d+)$", configuration, re.M)]
+        ports += [
+            f"udp:{ports}"
+            for ports in re.findall(r'^\s*rtp_port_range = "(\d+-\d+)"$', configuration, re.M)
+        ]
+        self.assertGreaterEqual(len(ports), 4)
+        for port in ports:
+            self.assertIn(port, allowed)
+        # On its own loopback address, where the server and the encoders
+        # find it.
+        addresses = re.findall(r'^\s*(?:ws_ip|videoiface) = "([^"]+)"$', configuration, re.M)
+        self.assertEqual(set(addresses), {"127.0.0.2"})
+        self.assertEqual(len(addresses), 3)
+        deploy = (ROOT / "tools/device/deploy_vp8.sh").read_text()
+        self.assertIn("'Environment=BLI_KVM_JANUS_WS=127.0.0.2:8188'", deploy)
+        encoder = (ROOT / "crates/bli-kvm-video-encoder/src/main.rs").read_text()
+        self.assertIn("const JANUS_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);", encoder)
+
     def test_the_image_store_is_sticky(self) -> None:
         # Every account of the hardened-blikvm group may write the image
         # store; only an image's owner, or root, may remove or replace it

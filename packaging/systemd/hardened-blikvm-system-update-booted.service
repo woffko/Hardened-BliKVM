@@ -21,6 +21,8 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Janus's own loopback address (security review of 2026-10-18, MED-03).
+IPAddressDeny=127.0.0.2
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 
