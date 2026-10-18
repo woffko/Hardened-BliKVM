@@ -379,12 +379,12 @@ assemble() {
   msd_sectors=$((IMAGE_BYTES / 512 - msd_start))
   fakeroot -- mke2fs -q -t ext4 -L MSD -U "$msd_uuid" -E root_owner=0:0 "$work/msd.ext4" $((msd_sectors / 2))k
   # The server stores uploads on this partition: its root carries the image
-  # store's mode and group (tmpfiles: 0770 root:hardened-blikvm).
+  # store's mode and group (tmpfiles: 1770 root:hardened-blikvm).
   store_gid=$(awk -F: '$1 == "hardened-blikvm" { print $3 }' "$staging/etc/group")
   case "$store_gid" in ''|*[!0-9]*) echo "the hardened-blikvm group is missing from the image" >&2; exit 1 ;; esac
-  debugfs -w -R "set_inode_field / mode 040770" "$work/msd.ext4" >/dev/null 2>&1
+  debugfs -w -R "set_inode_field / mode 041770" "$work/msd.ext4" >/dev/null 2>&1
   debugfs -w -R "set_inode_field / gid $store_gid" "$work/msd.ext4" >/dev/null 2>&1
-  debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -q "Mode:  0770" &&
+  debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -q "Mode:  01770" &&
     debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -Eq "Group: +$store_gid( |\$)" || {
       echo "the image store's owner could not be set" >&2
       exit 1

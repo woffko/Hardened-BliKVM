@@ -85,10 +85,10 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertIn('"$IMAGE_RELEASE" "$SYSTEM_SEQUENCE"', self.script)
 
     def test_the_image_store_root_takes_the_store_mode_and_group(self) -> None:
-        self.assertIn('set_inode_field / mode 040770" "$work/msd.ext4"', self.script)
+        self.assertIn('set_inode_field / mode 041770" "$work/msd.ext4"', self.script)
         self.assertIn('set_inode_field / gid $store_gid" "$work/msd.ext4"', self.script)
         # The result is checked, not assumed.
-        self.assertIn('grep -q "Mode:  0770"', self.script)
+        self.assertIn('grep -q "Mode:  01770"', self.script)
         self.assertIn("the image store's owner could not be set", self.script)
         self.assertIn('$1 == "hardened-blikvm" { print $3 }', self.script)
 

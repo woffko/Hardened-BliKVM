@@ -1977,6 +1977,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         for source in sorted((ROOT / "crates/bli-kvm-admin-helper/src").glob("*.rs")):
             self.assertNotIn("catalog.json", source.read_text(), source.name)
 
+    def test_the_image_store_is_sticky(self) -> None:
+        # Every account of the hardened-blikvm group may write the image
+        # store; only an image's owner, or root, may remove or replace it
+        # (security review of 2026-10-18, MED-12 item 3).
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "d /var/lib/hardened-blikvm-gadget/images 1770 root hardened-blikvm - -",
+            tmpfiles.splitlines(),
+        )
+        builder = (ROOT / "tools/image/build_sd_image.sh").read_text()
+        self.assertIn('set_inode_field / mode 041770" "$work/msd.ext4"', builder)
+        self.assertIn('grep -q "Mode:  01770"', builder)
+
     def test_no_root_unit_reads_a_configuration_another_account_may_write(self) -> None:
         # The root board owner read atx.env and system-action.env (the
         # commands it runs as root after a confirmed action), and root boardd

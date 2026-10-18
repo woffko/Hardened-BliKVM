@@ -14,7 +14,9 @@ the operator is told when an attach fails. Found and fixed in the audit of
   server prepares in `.downloads`, the one place of the store the helper can
   write (`docs/design/admin-features-v1.md`); the board owner (root)
   attaches them to the USB gadget. The directory is
-  `0770 root:hardened-blikvm`.
+  `1770 root:hardened-blikvm`: sticky since the security review of
+  2026-10-18 (MED-12), so the other accounts of the group may add files but
+  not remove or replace the server's.
 - The image builder gives the partition's root that mode and group when it
   creates p3 (checked after writing), and mounts it after
   `systemd-tmpfiles-setup.service` rather than before, so the tmpfiles rule for
