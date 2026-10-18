@@ -197,6 +197,9 @@ pub async fn run(
 
     loop {
         let (stream, _) = listener.accept().await?;
+        if !admitted(&config, &stream) {
+            continue;
+        }
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -254,6 +257,9 @@ where
 
     loop {
         let (stream, _) = listener.accept().await?;
+        if !admitted(&config, &stream) {
+            continue;
+        }
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -276,6 +282,21 @@ where
             )
             .await;
         });
+    }
+}
+
+/// Whether the socket serves this peer: root and the web server only.
+fn admitted(config: &BrokerConfig, stream: &tokio::net::UnixStream) -> bool {
+    match stream.peer_cred() {
+        Ok(peer) if config.admitted_uids.contains(&peer.uid()) => true,
+        Ok(peer) => {
+            eprintln!("broker: refused a peer with uid {}", peer.uid());
+            false
+        }
+        Err(error) => {
+            eprintln!("broker: refused a peer whose credentials are unknown: {error}");
+            false
+        }
     }
 }
 
@@ -869,6 +890,40 @@ mod tests {
                 assert_eq!(stream.read(&mut trailing).await.unwrap(), 0);
             }
         })
+    }
+
+    #[tokio::test]
+    async fn a_peer_the_broker_does_not_admit_is_closed_unanswered() {
+        // SAFETY: geteuid has no preconditions.
+        let own = unsafe { libc::geteuid() };
+        if own == 0 {
+            return; // root is always admitted
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let kvmd_socket = directory.path().join("kvmd.sock");
+        let broker_socket = directory.path().join("broker.sock");
+        let _backend = mock_kvmd(&kvmd_socket).await;
+        let mut config = BrokerConfig::new(&broker_socket, &kvmd_socket, directory.path()).unwrap();
+        config.admitted_uids = std::collections::BTreeSet::from([0, own + 1]);
+        let broker = tokio::spawn(run(
+            config,
+            KvmdCredentials::new("test-user", "not-a-real-password").unwrap(),
+        ));
+        for _ in 0..100 {
+            if broker_socket.exists() {
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        let payload = br#"{"schemaVersion":1,"requestId":42,"request":{"type":"inventory"}}"#;
+        let mut stream = UnixStream::connect(&broker_socket).await.unwrap();
+        let _ = stream.write_all(&encode_frame(payload).unwrap()).await;
+        let mut prefix = [0_u8; 4];
+        let answered = timeout(Duration::from_secs(5), stream.read_exact(&mut prefix))
+            .await
+            .unwrap();
+        assert!(answered.is_err(), "a peer not admitted was answered");
+        broker.abort();
     }
 
     #[tokio::test]

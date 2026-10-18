@@ -1,9 +1,11 @@
-use std::{env, ffi::OsString, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, env, ffi::OsString, path::PathBuf, time::Duration};
 
 use thiserror::Error;
 
 const DEFAULT_BROKER_SOCKET: &str = "/run/hardened-blikvm/platform-broker.sock";
 const DEFAULT_KVMD_SOCKET: &str = "/run/kvmd/kvmd.sock";
+/// The account besides root that may read through the broker: the web server.
+const DEFAULT_BROKER_PEER_USER: &str = "hardened-blikvm-server";
 
 #[derive(Debug, Clone)]
 pub struct BrokerConfig {
@@ -12,6 +14,9 @@ pub struct BrokerConfig {
     pub credential_directory: PathBuf,
     pub request_timeout: Duration,
     pub max_connections: usize,
+    /// The peers' user ids the socket serves; anyone else in its group is
+    /// closed unanswered (security review of 2026-10-18, MED-01).
+    pub admitted_uids: BTreeSet<u32>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -30,11 +35,16 @@ impl BrokerConfig {
     pub fn from_systemd_environment() -> Result<Self, BrokerConfigError> {
         let credential_directory = env::var_os("CREDENTIALS_DIRECTORY")
             .ok_or(BrokerConfigError::MissingCredentialDirectory)?;
-        Self::new(
+        let mut config = Self::new(
             DEFAULT_BROKER_SOCKET,
             DEFAULT_KVMD_SOCKET,
             credential_directory,
-        )
+        )?;
+        let user = env::var("BLI_KVM_BROKER_PEER_USER")
+            .unwrap_or_else(|_| DEFAULT_BROKER_PEER_USER.to_string());
+        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+        config.admitted_uids.extend(user_id(&passwd, &user));
+        Ok(config)
     }
 
     pub fn new(
@@ -48,6 +58,9 @@ impl BrokerConfig {
             credential_directory: PathBuf::from(credential_directory.into()),
             request_timeout: Duration::from_secs(8),
             max_connections: 8,
+            // Root and the process's own user.
+            // SAFETY: geteuid has no preconditions.
+            admitted_uids: BTreeSet::from([0, unsafe { libc::geteuid() }]),
         };
         config.validate()?;
         Ok(config)
@@ -69,6 +82,15 @@ impl BrokerConfig {
         }
         Ok(())
     }
+}
+
+/// `user`'s id in an `/etc/passwd` style file.
+fn user_id(passwd: &str, user: &str) -> Option<u32> {
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        (fields.next()? == user).then_some(())?;
+        fields.nth(1)?.parse::<u32>().ok()
+    })
 }
 
 #[cfg(test)]
