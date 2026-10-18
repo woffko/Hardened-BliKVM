@@ -1947,6 +1947,31 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, commands)
         self.assertNotIn(0x01, commands)
 
+    def test_a_server_with_the_owners_socket_has_the_restricted_surface(self) -> None:
+        # The server's handlers that reach the board owner check only that
+        # its socket is configured (security review of 2026-10-18, LOW-03);
+        # every unit that gives the web server that socket also turns the
+        # restricted control surface on, so the two never part.
+        units = sorted((ROOT / "packaging/systemd").rglob("*.service"))
+        checked = 0
+        for unit in units:
+            text = unit.read_text()
+            exec_start = [
+                line for line in text.splitlines() if line.startswith("ExecStart=")
+            ]
+            if not any("bli-kvm-server" in line for line in exec_start):
+                continue
+            if "BLI_KVM_CONTROL_SOCKET=" not in text:
+                continue
+            checked += 1
+            self.assertIn(
+                "Environment=BLI_KVM_RESTRICTED_CONTROLS=1",
+                text,
+                f"{unit.relative_to(ROOT)} gives the server the owner's socket "
+                "without the restricted surface",
+            )
+        self.assertGreaterEqual(checked, 3)
+
     def test_the_owner_unit_can_read_the_kernel_boot_identity(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"
