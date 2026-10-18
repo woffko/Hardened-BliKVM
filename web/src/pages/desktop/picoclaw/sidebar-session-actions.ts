@@ -12,7 +12,7 @@ import {
   sendStopMessage,
   type PicoclawSessionListItem
 } from '@/api/picoclaw.ts';
-import { generateUUIDv4 } from '@/lib/picoclaw-gateway.ts';
+import { generateUUIDv4 } from '@/lib/uuid.ts';
 import type {
   PicoclawChatMessage,
   PicoclawConfigState,

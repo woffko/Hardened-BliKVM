@@ -211,6 +211,8 @@ node --test tools/test_pointer_map.mjs
 node --test tools/test_screen_area.mjs
 node --test tools/test_agent_layout.mjs
 node --test tools/test_agent_start.mjs
+node --test tools/test_terminal_serial.mjs
+node --test tools/test_picoclaw_page_state.mjs
 node --test tools/test_agent_typing.mjs
 # The upscaling setting and when a frame is enlarged.
 node --test tools/test_upscale_settings.mjs

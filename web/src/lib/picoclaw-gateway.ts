@@ -1,5 +1,6 @@
 import { clearPicoclawSessionId, setPicoclawSessionId } from '@/lib/picoclaw-storage.ts';
 import { getBaseUrl } from '@/lib/service.ts';
+import { generateUUIDv4 } from '@/lib/uuid.ts';
 
 export type GatewayTransportState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -86,18 +87,6 @@ const CLOSE_ERRORS: Record<number, string> = {
   4004: 'AI_TAKEN_OVER',
   4005: 'UPSTREAM_CLOSED'
 };
-
-export function generateUUIDv4() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    const value = char === 'x' ? random : (random & 0x3) | 0x8;
-    return value.toString(16);
-  });
-}
 
 class PicoClawGateway {
   private ws: WebSocket | null = null;
