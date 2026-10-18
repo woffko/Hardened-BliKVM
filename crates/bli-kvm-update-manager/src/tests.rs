@@ -1674,12 +1674,58 @@ fn unsafe_journal_permissions_are_never_repaired_implicitly() {
 }
 
 #[test]
-fn operation_history_exhaustion_is_explicit_and_never_prunes_replay_evidence() {
+fn a_rollover_keeps_a_pending_record_however_old() {
+    use crate::model::{
+        JournalDocument, MAX_HISTORY_RECORDS, OperationOutcome, OperationRecord, SlotReference,
+    };
+    let reference = SlotReference {
+        slot_id: format!("app-{:020}-{}", 1, "a".repeat(64)),
+        sequence: 1,
+        manifest_sha256: "a".repeat(64),
+    };
+    let mut document = JournalDocument::initial(reference);
+    document.generation = 500;
+    let record = |index: usize, outcome: OperationOutcome| OperationRecord {
+        operation_id: format!("{:032x}", index + 1),
+        target_slot_id: "x".into(),
+        health_binding: "b".repeat(64),
+        outcome,
+        native_completion: None,
+    };
+    document.history.push(record(0, OperationOutcome::Pending));
+    for index in 1..MAX_HISTORY_RECORDS {
+        document.history.push(record(index, OperationOutcome::Noop));
+    }
+    document
+        .begin_operation("f".repeat(32), "x".into(), "c".repeat(64))
+        .unwrap();
+    assert!(document.history.len() <= MAX_HISTORY_RECORDS);
+    assert_eq!(document.history[0].outcome, OperationOutcome::Pending);
+    assert_eq!(
+        document.history.last().unwrap().operation_id,
+        "f".repeat(32)
+    );
+    // The newest finished ones stay, the oldest went.
+    assert!(
+        document
+            .find_record(&format!("{:032x}", MAX_HISTORY_RECORDS))
+            .is_some()
+    );
+    assert!(document.find_record(&format!("{:032x}", 2)).is_none());
+    assert_eq!(document.pruned_through_generation, 500);
+}
+
+#[test]
+fn the_operation_history_rolls_over_keeping_the_newest_records() {
     let fixture = Fixture::new();
     let slot1 = fixture.stage(1, 1, 1);
+    let slot2 = fixture.stage(2, 1, 1);
     let manager = fixture.manager(1);
     manager.initialize(&slot1.slot_id).unwrap();
-    for operation in 1..=128_u8 {
+    // More activations than the history holds (the test board had 80 of
+    // 128 on 2026-10-18): none is refused for the history's size.
+    // (192's health binding, 192 + 64, wraps to zero, which is refused.)
+    for operation in (1..=200_u8).filter(|operation| *operation != 192) {
         assert_eq!(
             manager
                 .activate(request(operation, &slot1, 7, u64::from(operation)))
@@ -1687,11 +1733,30 @@ fn operation_history_exhaustion_is_explicit_and_never_prunes_replay_evidence() {
             ActivationOutcome::AlreadyActive
         );
     }
-    assert!(matches!(
-        manager.activate(request(129, &slot1, 7, 129)),
-        Err(UpdateManagerError::HistoryFull)
-    ));
-    assert_eq!(manager.status().unwrap().active_slot_id, slot1.slot_id);
+    // The newest is still a deterministic retry.
+    assert_eq!(
+        manager.activate(request(200, &slot1, 7, 201)).unwrap(),
+        ActivationOutcome::AlreadyActive
+    );
+    // An update after the rollover goes through and is confirmed.
+    manager.activate(request(201, &slot2, 8, 300)).unwrap();
+    manager
+        .confirm_health([201; 16], [201_u8.wrapping_add(64); 32], clock(8, 301))
+        .unwrap();
+    assert_eq!(manager.status().unwrap().confirmed_slot_id, slot2.slot_id);
+    let journal: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture.state.path().join("application-state.json")).unwrap(),
+    )
+    .unwrap();
+    let history = journal["history"].as_array().unwrap();
+    assert!(history.len() <= 128, "{} records", history.len());
+    assert!(
+        history
+            .iter()
+            .any(|record| record["operationId"] == "c8".repeat(16)),
+        "the newest no-op was pruned"
+    );
+    assert!(journal["prunedThroughGeneration"].as_u64().unwrap() > 0);
 }
 
 #[test]
