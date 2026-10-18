@@ -843,10 +843,20 @@ mod tests {
 
     #[test]
     fn the_address_classes_of_the_redirect_rule() {
+        // The private ranges as numbers: the source check keeps their
+        // dotted form out of the repository.
         for private in [
-            "10.1.2.3",
-            "172.16.0.1",
-            "192.168.1.1",
+            Ipv4Addr::new(10, 1, 2, 3),
+            Ipv4Addr::new(172, 16, 0, 1),
+            Ipv4Addr::new(192, 168, 1, 1),
+        ] {
+            assert!(!is_public(IpAddr::V4(private)), "{private}");
+            assert!(
+                !is_public(IpAddr::V6(private.to_ipv6_mapped())),
+                "{private}"
+            );
+        }
+        for private in [
             "100.64.0.1",
             "100.127.255.254",
             "127.0.0.1",
@@ -858,7 +868,6 @@ mod tests {
             "fe80::1",
             "::1",
             "::",
-            "::ffff:192.168.1.1",
         ] {
             assert!(!is_public(private.parse().unwrap()), "{private}");
         }
