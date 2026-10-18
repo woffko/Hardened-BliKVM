@@ -559,7 +559,12 @@ mod tests {
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o644
         );
-        assert!(!path.with_file_name(".catalog.json.tmp").exists());
+        let left: Vec<_> = fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "catalog.json")
+            .collect();
+        assert!(left.is_empty(), "a temporary file was left: {left:?}");
     }
 
     #[test]
