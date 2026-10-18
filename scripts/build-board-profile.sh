@@ -119,7 +119,7 @@ cat > "$stage/share/atx.env.example" <<'EOF'
 # same directory and catalog the board owner serves. Without this the upload
 # endpoint answers 503.
 # BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
-# BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+# BLI_KVM_MEDIA_CATALOG=/var/lib/hardened-blikvm-gadget/catalog/catalog.json
 # BLI_KVM_MEDIA_CONTROLS=1
 EOF
 chmod 0644 "$stage/share/atx.env.example"

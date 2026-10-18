@@ -263,9 +263,14 @@ assemble() {
     # The board'"'"'s connection profiles are excluded, but the directory is part
     # of the board owner'"'"'s sandbox (ReadWritePaths) and must exist.
     install -d -m 0700 -o 0 -g 0 "$staging/etc/NetworkManager/system-connections"
-    # The image store starts empty on a new card, and so does its catalog.
+    # The image store starts empty on a new card, and so does its catalog:
+    # empty in its former place, which tmpfiles copies into the directory of
+    # the server at the first boot. A catalog in the new place would also be
+    # kept by a RAW update over a board whose catalog is still in the former
+    # place, and the catalog of that board would not be copied.
     printf "%s\n" "{" "  \"schemaVersion\": 1," "  \"entries\": []" "}" \
       > "$staging/etc/hardened-blikvm-gadget/catalog.json"
+    rm -rf "$staging/var/lib/hardened-blikvm-gadget/catalog"
     # Default credentials follow the Armbian convention: root/1234, expired, so
     # the first SSH login must set a new password. The blikvm user is locked.
     awk -F: -v OFS=: -v hash="$root_hash" '"'"'$1 == "root" { $2 = hash; $3 = 0 }

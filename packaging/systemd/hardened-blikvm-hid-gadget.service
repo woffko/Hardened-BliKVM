@@ -16,7 +16,7 @@ RemainAfterExit=yes
 User=root
 UMask=0077
 Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json
-Environment=BLI_KVM_GADGET_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_GADGET_MEDIA_CATALOG=/var/lib/hardened-blikvm-gadget/catalog/catalog.json
 Environment=BLI_KVM_GADGET_CONFIGFS=/sys/kernel/config/usb_gadget
 Environment=BLI_KVM_GADGET_IMAGES=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto

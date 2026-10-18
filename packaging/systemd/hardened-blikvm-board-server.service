@@ -24,7 +24,7 @@ Environment=BLI_KVM_RESTRICTED_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CONTROLS=1
 # The board owner applies the reviewed video-engine settings.
 Environment=BLI_KVM_VIDEO_CONTROLS=1
-Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_MEDIA_CATALOG=/var/lib/hardened-blikvm-gadget/catalog/catalog.json
 Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
@@ -52,8 +52,8 @@ ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
 # The server owns the media write path: uploaded images land in the images
-# directory and the catalog is rewritten in place.
-ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
+# directory and the catalog is rewritten in its own directory.
+ReadWritePaths=/var/lib/hardened-blikvm-gadget/images -/var/lib/hardened-blikvm-gadget/catalog
 ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes

@@ -246,6 +246,8 @@ class BuildSdImageTests(unittest.TestCase):
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)
         self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)
+        # Only in its former place, for tmpfiles to copy (CRIT-01).
+        self.assertIn('rm -rf "$staging/var/lib/hardened-blikvm-gadget/catalog"', self.script)
 
 
 if __name__ == "__main__":

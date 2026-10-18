@@ -1,6 +1,8 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 
 
@@ -1971,9 +1973,106 @@ class PackagingBoundaryTests(unittest.TestCase):
                 ):
                     if line.startswith(variable) and "hardened-blikvm-gadget" in line:
                         named.add(line.removeprefix(variable))
-        self.assertEqual(len(named), 1, named)
+        self.assertEqual(named, {"/var/lib/hardened-blikvm-gadget/catalog/catalog.json"})
         for source in sorted((ROOT / "crates/bli-kvm-admin-helper/src").glob("*.rs")):
             self.assertNotIn("catalog.json", source.read_text(), source.name)
+
+    def test_no_root_unit_reads_a_configuration_another_account_may_write(self) -> None:
+        # The root board owner read atx.env and system-action.env (the
+        # commands it runs as root after a confirmed action), and root boardd
+        # its configuration, from a directory of the web server's (security
+        # review of 2026-10-18, CRIT-01).
+        directories: dict[str, tuple[int, str]] = {}
+        for fragment in sorted((ROOT / "packaging/tmpfiles.d").glob("*.conf")):
+            for line in fragment.read_text().splitlines():
+                fields = line.split()
+                if len(fields) >= 4 and fields[0] in ("d", "D"):
+                    directories[fields[1]] = (int(fields[2], 8), fields[3])
+
+        def writable_by_others(path: str) -> list[str]:
+            found: list[str] = []
+            parent = PurePosixPath(path).parent
+            while str(parent) != "/":
+                entry = directories.get(str(parent))
+                if entry is not None and (entry[1] != "root" or entry[0] & 0o022):
+                    found.append(str(parent))
+                parent = parent.parent
+            return found
+
+        checked = 0
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            lines = unit.read_text().splitlines()
+            users = [line.removeprefix("User=") for line in lines if line.startswith("User=")]
+            if users and users[-1] != "root":
+                continue
+            configurations = [
+                line.removeprefix("EnvironmentFile=").removeprefix("-")
+                for line in lines
+                if line.startswith("EnvironmentFile=")
+            ]
+            for line in lines:
+                if line.startswith("ExecStart"):
+                    configurations += re.findall(r"--config (\S+)", line)
+            for path in configurations:
+                checked += 1
+                self.assertEqual(
+                    writable_by_others(path), [], f"{unit.relative_to(ROOT)} reads {path}"
+                )
+        self.assertGreaterEqual(checked, 6)
+
+    def test_the_catalog_is_copied_once_into_the_servers_directory(self) -> None:
+        # The board's catalog stays where it was until the system release's
+        # tmpfiles copy it into the server's directory; the copy is made
+        # once, and the former directory becomes root's (CRIT-01).
+        if shutil.which("fakeroot") is None or shutil.which("systemd-tmpfiles") is None:
+            self.skipTest("fakeroot and systemd-tmpfiles are needed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "usr/lib/sysusers.d").mkdir(parents=True)
+            shutil.copy(
+                ROOT / "packaging/sysusers.d/hardened-blikvm.conf", root / "usr/lib/sysusers.d"
+            )
+            subprocess.run(
+                ["systemd-sysusers", f"--root={root}"], check=True, capture_output=True
+            )
+            former = root / "etc/hardened-blikvm-gadget"
+            former.mkdir(parents=True)
+            catalog = '{"schemaVersion":1,"entries":[{"imageName":"kubuntu.iso"}]}\n'
+            (former / "catalog.json").write_text(catalog)
+            (former / "atx.env").write_text("BLI_KVM_ATX=1\n")
+            moved = root / "var/lib/hardened-blikvm-gadget/catalog"
+            fragment = ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf"
+            script = (
+                'systemd-tmpfiles --create --root="$1" "$2" && '
+                'stat -c "%n %u %g %a" "$1/etc/hardened-blikvm-gadget" '
+                '"$1/etc/hardened-blikvm-gadget/atx.env" "$1/var/lib/hardened-blikvm-gadget/catalog"'
+            )
+
+            def create() -> list[list[str]]:
+                done = subprocess.run(
+                    ["fakeroot", "sh", "-c", script, "sh", str(root), str(fragment)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return [line.split()[1:] for line in done.stdout.splitlines()]
+
+            def number(database: str, name: str) -> str:
+                for line in (root / "etc" / database).read_text().splitlines():
+                    if line.startswith(f"{name}:"):
+                        return line.split(":")[2]
+                raise AssertionError(name)
+
+            server = number("passwd", "hardened-blikvm-server")
+            group = number("group", "hardened-blikvm")
+            self.assertEqual(
+                create(),
+                [["0", group, "755"], ["0", group, "640"], [server, group, "750"]],
+            )
+            self.assertEqual((moved / "catalog.json").read_text(), catalog)
+            (former / "catalog.json").write_text('{"schemaVersion":1,"entries":[]}\n')
+            create()
+            self.assertEqual((moved / "catalog.json").read_text(), catalog)
 
     def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
         # The worker fetches remote data; it ran as the web server, could

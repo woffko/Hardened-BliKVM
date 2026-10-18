@@ -49,8 +49,19 @@ the operator is told when an attach fails. Found and fixed in the audit of
 
 ## Catalog
 
-- `/etc/hardened-blikvm-gadget/catalog.json` lists the images the dialog
-  offers, with an opaque ID each; the owner attaches only catalog entries.
+- `/var/lib/hardened-blikvm-gadget/catalog/catalog.json` lists the images
+  the dialog offers, with an opaque ID each; the owner attaches only catalog
+  entries. The directory is the web server's (0750, group
+  `hardened-blikvm`, which the board owner reads it through). Until the
+  security review of 2026-10-18 (CRIT-01) the catalog lived in
+  `/etc/hardened-blikvm-gadget`, a directory of the web server's from which
+  the root board owner and boardd also read their configuration; that
+  directory is now root's, its files root's and 0640. The system release's
+  tmpfiles copy the catalog from its former place once, when the new place
+  has none: a board updated by RAW keeps its images listed (the former
+  directory is carried state), and a new card's image keeps its empty
+  catalog in the former place for that copy. The units name the new place,
+  so an older application slot on the newer system follows them.
 - An image arrives in the catalog only through the Download menu (an upload,
   or a URL when the remote download is switched on). A file copied into the
   store by other means is not offered.

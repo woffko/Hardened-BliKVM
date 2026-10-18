@@ -34,7 +34,7 @@ Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
 Environment=BLI_KVM_RESTRICTED_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CONTROLS=1
-Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_MEDIA_CATALOG=/var/lib/hardened-blikvm-gadget/catalog/catalog.json
 Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 # nginx takes the MJPEG stream from this socket: its buffer stays small,
@@ -74,7 +74,7 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
-ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
+ReadWritePaths=/var/lib/hardened-blikvm-gadget/images -/var/lib/hardened-blikvm-gadget/catalog
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes
 RestrictRealtime=yes
