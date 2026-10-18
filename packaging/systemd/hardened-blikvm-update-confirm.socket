@@ -3,11 +3,14 @@ Description=Hardened BliKVM one-use update health confirmation socket
 Documentation=https://github.com/woffko/Hardened-BliKVM
 
 [Socket]
+# One client: the health reporter the candidate server runs as its own
+# account. The socket is that account's alone, and the confirmation checks
+# the peer's uid with SO_PEERCRED.
 ListenStream=/run/hardened-blikvm-update-confirm/confirm.sock
 Accept=yes
-SocketUser=hardened-blikvm-update
-SocketGroup=hardened-blikvm
-SocketMode=0620
+SocketUser=hardened-blikvm-server
+SocketGroup=root
+SocketMode=0600
 DirectoryMode=0750
 Backlog=4
 MaxConnections=4

@@ -3258,10 +3258,26 @@ class PackagingBoundaryTests(unittest.TestCase):
             watchdog,
         )
         self.assertIn("Accept=yes", socket)
-        self.assertIn("SocketMode=0620", socket)
-        self.assertIn("SocketGroup=hardened-blikvm", socket)
         self.assertNotIn("ListenStream=0.0.0.0", socket)
         self.assertIn("OnUnitActiveSec=2s", timer)
+        # One client, the health reporter that the candidate server runs as
+        # its own account: the socket is that account's alone, and the
+        # confirmation checks the peer's uid (security review of 2026-10-18,
+        # MED-01).
+        candidate = (ROOT / "packaging/systemd/hardened-blikvm-server-candidate.service").read_text()
+        reporter = [
+            line
+            for line in candidate.splitlines()
+            if line.startswith("ExecStartPost=") and "--confirm-socket" in line
+        ]
+        self.assertEqual(len(reporter), 1)
+        self.assertTrue(reporter[0].startswith("ExecStartPost=/"), reporter[0])
+        self.assertIn("User=hardened-blikvm-server", candidate.splitlines())
+        socket_lines = socket.splitlines()
+        self.assertIn("SocketUser=hardened-blikvm-server", socket_lines)
+        self.assertIn("SocketGroup=root", socket_lines)
+        self.assertIn("SocketMode=0600", socket_lines)
+        self.assertIn("confirm-stdin --peer-user hardened-blikvm-server", confirmation)
 
     def test_update_status_worker_has_no_write_or_apply_authority(self) -> None:
         worker = (ROOT / "packaging/systemd/hardened-blikvm-update-status@.service").read_text()
