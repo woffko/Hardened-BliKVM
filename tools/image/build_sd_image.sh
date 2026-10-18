@@ -151,6 +151,7 @@ assemble() {
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
       "$gadget_state/hid-only.env" "$gadget_state/display-sleep.env" \
       "$gadget_state/target-agent.env" "$gadget_state/system-switches.json" \
+      "$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json \
       "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
       "$staging/var/lib/hardened-blikvm/screen-area.json"
     # The system-action journal is the source board'"'"'s reboots under its boot
@@ -160,6 +161,13 @@ assemble() {
       "$staging/var/lib/hardened-blikvm-system-actions/journal-b.bin"
     if [ -n "$(find "$staging/var/lib/hardened-blikvm-system-actions" -type f 2>/dev/null | head -n 1)" ]; then
       echo "source board state remains: the system-action journal" >&2
+      exit 1
+    fi
+    # The mouse jiggler'"'"'s switch and a network change awaiting its
+    # confirmation are the source board'"'"'s too (security review of
+    # 2026-10-18, LOW-04).
+    if [ -n "$(find "$gadget_state" -maxdepth 1 \( -name mouse-jiggler.env -o -name "network-revert-*.json" \) 2>/dev/null | head -n 1)" ]; then
+      echo "source board state remains: the mouse jiggler or a network revert record" >&2
       exit 1
     fi
     # The QUIC switch is the enablement of the gateway unit, not a file of
@@ -242,10 +250,10 @@ assemble() {
         exit 1
       fi
     done
-    # nginx must use the TLS pair the first boot generates; the board'"'"'s
-    # own certificate (rendered into its nginx.conf) is excluded above.
-    sed -i -e "s#/etc/kvmd/nginx/ssl/server.crt;#/etc/hardened-blikvm/tls.crt;#" \
-      -e "s#/etc/kvmd/nginx/ssl/server.key;#/etc/hardened-blikvm/tls.key;#" \
+    # nginx.conf comes from packaging, not from the source board, whose copy
+    # may be an older rendering (security review of 2026-10-18, LOW-04); it
+    # uses the TLS pair the first boot generates.
+    install -m 0600 -o 0 -g 0 "$script_dir/../../packaging/nginx/hardened-blikvm.conf" \
       "$staging/etc/hardened-blikvm/nginx.conf"
     # The rendered nginx unit also starts only when that pair exists.
     for unit in "$staging"/etc/systemd/system/hardened-blikvm-nginx.service; do

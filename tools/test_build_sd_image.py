@@ -243,6 +243,23 @@ class BuildSdImageTests(unittest.TestCase):
         program = self.script[start:end].replace(QUOTE, "")
         self.assertNotIn("'", program)
 
+    def test_the_source_boards_jiggler_and_revert_records_stay_behind(self) -> None:
+        # LOW-04: both were kept in the image.
+        self.assertIn('"$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json', self.script)
+        self.assertIn(
+            '-name mouse-jiggler.env -o -name "network-revert-*.json"', self.script
+        )
+        self.assertIn("the mouse jiggler or a network revert record", self.script)
+
+    def test_nginx_conf_comes_from_packaging(self) -> None:
+        self.assertIn(
+            'install -m 0600 -o 0 -g 0 "$script_dir/../../packaging/nginx/hardened-blikvm.conf"',
+            self.script,
+        )
+        self.assertNotIn("s#/etc/kvmd/nginx/ssl/server.crt;#", self.script)
+        # The first-boot TLS pair is still checked.
+        self.assertIn('grep -q "ssl_certificate /etc/hardened-blikvm/tls.crt;"', self.script)
+
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)
         self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)
