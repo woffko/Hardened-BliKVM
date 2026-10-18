@@ -4626,6 +4626,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_oversized_hid_message_closes_the_socket() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{
+            Message as WsMessage, client::IntoClientRequest, http::HeaderValue,
+        };
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            control_socket: Some(root.path().join("absent.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let mut request = format!("ws://{address}/api/ws")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("origin", HeaderValue::from_static("http://kvm.test"));
+        request
+            .headers_mut()
+            .insert("host", HeaderValue::from_static("kvm.test"));
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut browser, _) = tokio_tungstenite::client_async(request, stream)
+            .await
+            .unwrap();
+        // A HID frame is at most 16 bytes; a kilobyte is not buffered and
+        // answered, it ends the socket.
+        browser
+            .send(WsMessage::Binary(vec![1_u8; 1024].into()))
+            .await
+            .unwrap();
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), browser.next())
+            .await
+            .unwrap();
+        assert!(
+            !matches!(next, Some(Ok(WsMessage::Text(_)))),
+            "the socket answered instead of closing: {next:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn first_setup_and_password_changes_set_root_through_the_helper() {
         use tokio::io::AsyncBufReadExt;
         let root = tempdir().unwrap();

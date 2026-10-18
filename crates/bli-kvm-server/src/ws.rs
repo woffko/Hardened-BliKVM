@@ -33,6 +33,10 @@ use crate::{
 /// Bounded frame size: tag plus the largest HID report (8 bytes).
 pub(crate) const MAX_FRAME_BYTES: usize = 16;
 
+/// The largest WebSocket message the socket takes: a frame with room to say
+/// it is malformed; anything larger ends the socket unread.
+const MAX_SOCKET_MESSAGE_BYTES: usize = 64;
+
 const HEARTBEAT_TAG: u8 = 0;
 const KEYBOARD_TAG: u8 = 1;
 const MOUSE_TAG: u8 = 2;
@@ -127,10 +131,13 @@ pub(crate) async fn hid_socket(
     let Some(guard) = state.options.shutdown.register_upgrade() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is stopping").into_response();
     };
-    ws.on_upgrade(move |socket| async move {
-        let _guard = guard;
-        handle_socket(state, session, socket).await;
-    })
+    // A frame is at most 16 bytes; nothing larger is buffered.
+    ws.max_message_size(MAX_SOCKET_MESSAGE_BYTES)
+        .max_frame_size(MAX_SOCKET_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            let _guard = guard;
+            handle_socket(state, session, socket).await;
+        })
 }
 
 async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket) {
