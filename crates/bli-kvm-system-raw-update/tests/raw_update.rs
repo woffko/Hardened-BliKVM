@@ -27,6 +27,7 @@ const IMAGE: usize = 8192;
 struct FakeTools {
     corrupt_write: bool,
     fail_finish: bool,
+    fail_archive: bool,
     calls: Vec<String>,
     restored: Vec<PathBuf>,
 }
@@ -71,6 +72,11 @@ impl Tools for FakeTools {
     }
 
     fn archive_state(&mut self, root: &Path, paths: &[&str], target: &Path) -> io::Result<()> {
+        if self.fail_archive {
+            // As the real tool fails: its unfinished archive is left.
+            fs::write(target.with_extension("tar.new"), b"half")?;
+            return Err(io::Error::other("the device state could not be archived"));
+        }
         let present: Vec<String> = paths
             .iter()
             .filter(|path| root.join(path).exists())
@@ -391,6 +397,28 @@ fn old_sequences_bad_bundles_and_cancellation() {
         BootAction::Continue
     );
     assert_eq!(fs::read(&fixture.device).unwrap(), vec![0x11; PARTITION]);
+}
+
+#[test]
+fn a_failed_stage_leaves_nothing_behind() {
+    // What a failed stage left (the payload, the unfinished archive) was
+    // counted by the next upload's space check and removed by nothing
+    // (security review of 2026-10-18, N4).
+    let fixture = fixture(3);
+    let mut tools = FakeTools {
+        fail_archive: true,
+        ..FakeTools::default()
+    };
+    assert!(stage_it(&fixture, &mut tools).is_err());
+    let left: Vec<String> = fs::read_dir(&fixture.staging)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "apply.json")
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+    // The next stage goes through.
+    let mut tools = FakeTools::default();
+    stage_it(&fixture, &mut tools).unwrap();
 }
 
 #[test]

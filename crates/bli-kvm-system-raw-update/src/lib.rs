@@ -295,72 +295,91 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
         .find(|component| component.content_type == SystemContentType::Ext4Zstd)
         .ok_or_else(|| UpdateError::Bundle("the bundle has no compressed root image".into()))?
         .clone();
-    // Copy the payload out of the verified archive and hash it again: the
-    // archive could change between the two reads.
-    let payload = request.staging.join(PAYLOAD_FILE);
-    let temporary = request.staging.join(".payload.img.zst.new");
-    let mut archive = tar::Archive::new(File::open(request.bundle)?);
-    let mut copied = None;
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        if entry.path_bytes().as_ref() != format!("payload/{}", component.path).as_bytes() {
-            continue;
-        }
-        let mut out = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0_u8; BUFFER];
-        let mut total = 0_u64;
-        loop {
-            let read = entry.read(&mut buffer)?;
-            if read == 0 {
-                break;
+    let staged = (|| -> Result<Record> {
+        // Copy the payload out of the verified archive and hash it again: the
+        // archive could change between the two reads.
+        let payload = request.staging.join(PAYLOAD_FILE);
+        let temporary = request.staging.join(".payload.img.zst.new");
+        let mut archive = tar::Archive::new(File::open(request.bundle)?);
+        let mut copied = None;
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            if entry.path_bytes().as_ref() != format!("payload/{}", component.path).as_bytes() {
+                continue;
             }
-            hasher.update(&buffer[..read]);
-            out.write_all(&buffer[..read])?;
-            total += read as u64;
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = vec![0_u8; BUFFER];
+            let mut total = 0_u64;
+            loop {
+                let read = entry.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+                out.write_all(&buffer[..read])?;
+                total += read as u64;
+            }
+            out.sync_all()?;
+            copied = Some((total, hex(&hasher.finalize())));
+            break;
         }
-        out.sync_all()?;
-        copied = Some((total, hex(&hasher.finalize())));
-        break;
+        if copied != Some((component.size, component.sha256.clone())) {
+            let _ = fs::remove_file(&temporary);
+            return Err(UpdateError::Bundle(
+                "the payload changed while staging".into(),
+            ));
+        }
+        fs::rename(&temporary, &payload)?;
+        tools.archive_state(
+            request.root,
+            CARRIED_STATE,
+            &request.staging.join(STATE_FILE),
+        )?;
+        fs::copy(request.fstab, request.staging.join(FSTAB_FILE))?;
+        copy_private(request.shadow, &request.staging.join(SHADOW_FILE))?;
+        let record = Record {
+            schema: RECORD_SCHEMA,
+            generation: previous_generation + 1,
+            phase: Phase::Staged,
+            version: manifest.version.clone(),
+            sequence: manifest.sequence,
+            manifest_sha256: verified.manifest_sha256,
+            payload_size: component.size,
+            payload_sha256: component.sha256,
+            image_size: component.image_size.unwrap_or(0),
+            image_sha256: component.image_sha256.unwrap_or_default(),
+            root_uuid: request.root_uuid.to_string(),
+            backup_size: 0,
+            backup_sha256: String::new(),
+            boot_attempts: 0,
+            message: "staged; reboot to write".into(),
+        };
+        write_record(request.staging, &record)?;
+        Ok(record)
+    })();
+    if staged.is_err() {
+        // Nothing of a failed stage stays to fill the data partition or to
+        // be taken for a staged update; a record that was staged before
+        // names files that are gone now (security review of 2026-10-18, N4).
+        discard(request.staging);
+        for leftover in [".payload.img.zst.new", "state.tar.new"] {
+            let _ = fs::remove_file(request.staging.join(leftover));
+        }
+        if let Ok(Some(mut earlier)) = read_record(request.staging)
+            && earlier.phase == Phase::Staged
+        {
+            earlier.phase = Phase::Failed;
+            earlier.message = "a later staging failed; nothing was written".into();
+            let _ = write_record(request.staging, &earlier);
+        }
     }
-    if copied != Some((component.size, component.sha256.clone())) {
-        let _ = fs::remove_file(&temporary);
-        return Err(UpdateError::Bundle(
-            "the payload changed while staging".into(),
-        ));
-    }
-    fs::rename(&temporary, &payload)?;
-    tools.archive_state(
-        request.root,
-        CARRIED_STATE,
-        &request.staging.join(STATE_FILE),
-    )?;
-    fs::copy(request.fstab, request.staging.join(FSTAB_FILE))?;
-    copy_private(request.shadow, &request.staging.join(SHADOW_FILE))?;
-    let record = Record {
-        schema: RECORD_SCHEMA,
-        generation: previous_generation + 1,
-        phase: Phase::Staged,
-        version: manifest.version.clone(),
-        sequence: manifest.sequence,
-        manifest_sha256: verified.manifest_sha256,
-        payload_size: component.size,
-        payload_sha256: component.sha256,
-        image_size: component.image_size.unwrap_or(0),
-        image_sha256: component.image_sha256.unwrap_or_default(),
-        root_uuid: request.root_uuid.to_string(),
-        backup_size: 0,
-        backup_sha256: String::new(),
-        boot_attempts: 0,
-        message: "staged; reboot to write".into(),
-    };
-    write_record(request.staging, &record)?;
-    Ok(record)
+    staged
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
