@@ -462,6 +462,50 @@ fn staging_keeps_the_boards_accounts_beside_its_shadow() {
 }
 
 #[test]
+fn the_root_uuid_must_be_a_uuid_at_stage_and_at_boot() {
+    // tune2fs takes "random", "time", "clear" and "null" as well, and the
+    // value goes into the boot configuration (security review of
+    // 2026-10-18, MED-08).
+    let fixture = fixture(3);
+    let mut tools = FakeTools::default();
+    for wrong in [
+        "random",
+        "time",
+        "a990fd36-0857-4856-b0b8-5c84a7df516",
+        "x990fd36-0857-4856-b0b8-5c84a7df516f",
+    ] {
+        let request = StageRequest {
+            bundle: &fixture.bundle,
+            staging: &fixture.staging,
+            trust: &fixture.trust,
+            policy: &fixture.policy,
+            minimum_sequence: 2,
+            root: &fixture.root,
+            root_uuid: wrong,
+            fstab: &fixture.fstab,
+            shadow: &fixture.shadow,
+            passwd: &fixture.passwd,
+            group: &fixture.group,
+        };
+        assert!(stage(&request, &mut tools).is_err(), "{wrong}");
+    }
+    // A record changed after staging is not written.
+    let mut record = stage_it(&fixture, &mut tools).unwrap();
+    record.root_uuid = "a990fd36-0857-4856-b0b8-5c84a7df516f\nextraargs=init=/bin/sh".into();
+    bli_kvm_system_raw_update::write_record(&fixture.staging, &record).unwrap();
+    let before = fs::read(&fixture.device).unwrap();
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Continue
+    );
+    assert_eq!(fs::read(&fixture.device).unwrap(), before);
+    let after = bli_kvm_system_raw_update::read_record(&fixture.staging)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.phase, bli_kvm_system_raw_update::Phase::Failed);
+}
+
+#[test]
 fn boot_configuration_follows_the_device() {
     assert_eq!(
         patch_armbian_env("verbosity=1\nrootdev=UUID=new\nrootfstype=ext4\n", "old"),

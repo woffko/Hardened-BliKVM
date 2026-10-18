@@ -284,6 +284,11 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
     {
         return Err(UpdateError::Busy);
     }
+    if !canonical_uuid(request.root_uuid) {
+        return Err(UpdateError::Check(
+            "the root file system's UUID is not a UUID".into(),
+        ));
+    }
     let previous_generation = read_record(request.staging)?
         .map(|record| record.generation)
         .unwrap_or(0);
@@ -493,6 +498,11 @@ fn apply(
 ) -> Result<BootAction> {
     let payload = staging.join(PAYLOAD_FILE);
     let checks = (|| -> io::Result<()> {
+        if !canonical_uuid(&record.root_uuid) {
+            return Err(io::Error::other(
+                "the root file system's UUID is not a UUID",
+            ));
+        }
         if digest(&payload, None)? != (record.payload_size, record.payload_sha256.clone()) {
             return Err(io::Error::other("the staged payload changed"));
         }
@@ -716,6 +726,18 @@ pub fn merge_fstab(new_fstab: &str, device_fstab: &str, root_uuid: &str) -> Stri
 /// Gives every account of `new_shadow` that the device also has the device's
 /// password hash and aging fields; accounts only the new image has keep its
 /// entry and accounts only the device had are dropped with it.
+/// A UUID in its canonical form (8-4-4-4-12 hexadecimal digits): the value
+/// goes into the boot configuration, the new fstab and `tune2fs -U`, which
+/// also takes words such as "random" (security review of 2026-10-18,
+/// MED-08).
+pub fn canonical_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
+}
+
 /// Whether the carried state's numeric owners mean the same accounts in the
 /// new image: root and every account of the project the board has keeps its
 /// id there, and no other account of the image takes one of those ids. The
