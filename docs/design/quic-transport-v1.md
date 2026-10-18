@@ -616,7 +616,9 @@ the lease like a client that vanished.
   gives (`a current focus confirmation is required`); what is no lease
   request gets 422; a session whose web session has ended gets 401.
 - **The web session** is checked for every request, and the request counts
-  as its activity for the idle lock, as a request over HTTPS does. The
+  as its activity for the idle lock, as a request over HTTPS does; neither
+  lengthens the session, which ends at the session lock's time from its
+  login or from the lock's last setting (security review of 2026-10-18). The
   confirmation of the target stays on HTTPS (`/api/hid/focus`).
 - **The lease** is the web session's, whichever transport took it. The
   server remembers which QUIC session acquired it and gives it back when
@@ -831,8 +833,9 @@ What is tested:
   the words HTTPS gives, for every kind of request; what is no lease request
   gets 422 and an unknown session 401; a session that ends gives its lease
   back (its connection closes, the link goes), gives nothing back twice and
-  nothing that HTTPS took; a request over the link keeps the idle lock away
-  while a login that does nothing is locked.
+  nothing that HTTPS took; setting the session lock caps the page's session
+  too, and the link refuses it once the lock's time has passed, as HTTPS
+  does for a login that does nothing.
 - **Gateway** (`src/input.rs`, `tests/sessions.rs`): the queue's rules by
   themselves (order, keys never merged, positions and relative movements
   merged, buttons, the wheel and another lease kept apart, the bounds), and

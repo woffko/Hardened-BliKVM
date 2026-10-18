@@ -985,40 +985,37 @@ async fn another_page(app: &Router) -> Page {
     }
 }
 
-/// A lease request over the link is the web session's activity, as a request
-/// over HTTPS is: it keeps the idle lock away, and a session that has ended
-/// is refused.
+/// Setting the session lock caps every session at it from now, the page with
+/// the QUIC session and a login that does nothing included (HIGH-06 of the
+/// security review of 2026-10-18): requests over the link pass within the
+/// lock, do not lengthen the session, as requests over HTTPS do not, and are
+/// refused once it has ended.
 #[tokio::test]
-async fn a_lease_request_over_the_link_counts_for_the_web_session() {
+async fn the_lock_caps_a_quic_pages_session_and_the_link_refuses_it_after() {
     let (_root, _socket, page, mut gateway, session, _seen) = board_with_input().await;
-    // The lock's time is also the lifetime of the session that sets it. Two
-    // other logins keep their lifetime and are judged by their activity
-    // alone: the page with the QUIC session, and one that does nothing.
     let idle = another_page(&page.app).await;
     let setter = another_page(&page.app).await;
     let (status, _) =
-        set_session_lock(&page.app, &setter.cookie, Some(&setter.csrf), 1, false).await;
+        set_session_lock(&page.app, &setter.cookie, Some(&setter.csrf), 2, false).await;
     assert_eq!(status, StatusCode::OK);
-    // Longer than the lock, with a request over the link every 300 ms and
-    // none over HTTPS.
-    for index in 0..6 {
+    let set = std::time::Instant::now();
+    for index in 0..3 {
         tokio::time::sleep(Duration::from_millis(300)).await;
         let answer = gateway
             .lease(10 + index, &session, key_report(index as u32, 4))
             .await;
         assert_eq!(answer["status"], 200, "{answer}");
     }
-    let (status, _) = page.post("/api/hid/lease", key_report(50, 4)).await;
-    assert_eq!(status, StatusCode::OK, "the session was locked meanwhile");
-    let (status, _) = idle.post("/api/hid/lease", key_report(51, 4)).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "the idle session lives");
-
-    page.call(Method::POST, "/api/auth/logout", Value::Null)
-        .await;
+    tokio::time::sleep(Duration::from_millis(2300).saturating_sub(set.elapsed())).await;
     assert_eq!(
-        gateway.lease(30, &session, key_report(52, 4)).await["status"],
-        401
+        gateway.lease(20, &session, key_report(50, 4)).await["status"],
+        401,
+        "the link served a session past the lock"
     );
+    let (status, _) = page.post("/api/hid/lease", key_report(51, 4)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = idle.post("/api/hid/lease", key_report(52, 4)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 impl Gateway {
