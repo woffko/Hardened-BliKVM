@@ -1,0 +1,129 @@
+# Verification of an external security audit (2026-10-18)
+
+The operator handed over a static security audit of the repository made by
+another assistant on 2026-10-18 (read only: the Rust crates, the kernel
+module, the native encoders, the Windows agent, the page, packaging and
+scripts; kept as `evidence/private/security-20261018/external-audit-report.md`)
+and asked for a fix plan for the findings that hold and that fit the
+device's model ("устройство, где пользователь имеет полные права доступа к
+устройству"). This note records what each finding turned out to be; the
+plan is `docs/baselines/work-plan-20261018-security-fixes.md`. Finding names
+(CRIT-01, HIGH-05, MED-09, LOW-04, ...) are the audit's; N1 to N10 were
+found while verifying it.
+
+## The model
+
+The board is the operator's. The single web account is the operator's, and
+through it the operator may by design become root (the admin helper's root
+terminal), change the root password, switch on SSH, Tailscale, scripts and
+RAW system updates. The operator also has physical access to the board and
+its card, and the board has no secure boot. So:
+
+- Out of model: whatever only the operator can do (an authenticated, unlocked
+  session, root, the card) and that gives nothing the operator does not
+  already have.
+- In model, direct: parties without the operator's rights: unauthenticated
+  clients on the network (LAN, Internet, Tailscale peers), other origins in
+  the operator's browser, the KVM target as a USB host (it must not reach
+  board files beyond the image presented to it), servers the board downloads
+  from, forged or replayed updates.
+- Session protection: the session lock after idle time and the terminal's
+  password check exist to protect an unattended browser; someone holding a
+  live session but not the password must not get past them.
+- Defense in depth: a compromised unprivileged component that does not hold
+  the operator's authority (the image download worker, the PicoClaw runtime,
+  the video encoders, the QUIC gateway, Janus) must not reach root or that
+  authority. The web server brokers the operator's authority by design, so
+  an escalation that starts from the web server's own account gains nothing
+  in this model, unless another component shares that account (N1) or the
+  path is silent and survives reboots where the brokered one is visible.
+- Bugs that cost function or availability are in model as bugs.
+
+## Method
+
+Four verifications ran side by side, one per area (the board's privilege
+boundary; the RAW system update and the update stores; the web server and
+sessions; the kernel module, the QUIC gateway, the agent and the units).
+Each claim was checked against the code at `89bc1e8`; the audit's line
+references were often stale. Small experiments settled what reading could
+not: GNU tar 1.35 with the RAW update's own flags (links, setuid bits,
+`security.*` attributes), `tune2fs -U` with malformed values, and the import
+table and load configuration of the published agent (0.1.0-beta.8). The
+board was read once, read only (`evidence/private/security-20261018/board-facts-20261018.txt`):
+
+- systemd 249 without the BPF framework: `SocketBindAllow`/`SocketBindDeny`
+  are not enforced there; `IPAddressDeny`/`IPAddressAllow` work through the
+  kernel's cgroup BPF (`CONFIG_CGROUP_BPF=y`, no "not supported" in the
+  journal);
+- `fs.protected_hardlinks=1`, `fs.protected_symlinks=1`;
+- the application journal holds 80 history records of its 128;
+- the slot roots hold nothing but slots and `current`;
+- the virtual media partition (1.3 GB used) is mounted inside
+  `/var/lib/hardened-blikvm-gadget`, a path the RAW update carries.
+
+## Findings
+
+| Finding | What holds | Class | Severity | Plan |
+| --- | --- | --- | --- | --- |
+| CRIT-01 | `/etc/hardened-blikvm-gadget` is the web server's; the root board owner reads `atx.env` and `system-action.env` from it (the reboot and shutdown commands it runs as root after a confirmed action), and root boardd reads `boardd.json` without an owner check. LD_PRELOAD refuted: the owner is a static binary. | Defense in depth: silent and lasting root, reachable from the download worker (N1) | medium | E5 |
+| CRIT-02 | `validate_image_path` follows a symlink (`metadata`, not `symlink_metadata`); the path goes to `lun.N/file` and the kernel opens it as root, so a link planted in the image store presents any root file, writable if the catalog allows, to the target. Hardlinks: blocked by `protected_hardlinks` and the separate partition. | Defense in depth (planting needs the web server's account, N1); crosses the target's boundary | medium | C2 |
+| HIGH-01 | The switches change through `control.sock` without a presence check; the root password, Tailscale and SSH have no switch. | Out of model: the operator's own powers, brokered by design. The switches stop a client that skips the server's routes, not the server. Other group members can flip a switch but cannot use the feature (the admin helper admits only the server's uid): MED-01. | none | record |
+| HIGH-02 | The boot step trusts `apply.json`; `state.tar`, `fstab` and `shadow` have no digests. | Out of model: only root writes the staging directory (0700, root units), and whoever holds the card can rewrite the root anyway | none | E3 (digests, against a damaged card) |
+| HIGH-03 | The carried state is archived and restored as root with owners, modes, ACLs and attributes. Escalation refuted: links are stored as links, absolute ones restored last, `security.*` attributes not restored, hardlinks protected on the board, and every planted file comes back with the owner it had. Residual: N5, and tar's exit 1 for a file that changes while read stops the staging. | Defense in depth | low | E3 |
+| HIGH-04 | Not carried: `-update`, and the live `-update-v2`, `-slots-v2` and `-exec-ledger`. After a RAW update the board starts the image's confirmed application, silently, with the image's floor; documented, and the release procedure installs the release's application first. | Functional (only the operator installs) | medium | E3 |
+| HIGH-05 | The login limiter keeps at most 1024 keys and admits a new one only by evicting an unlocked key; a table full of lockouts records nothing more, and a key it does not hold is never locked. Wider than reported (N9): one table for every account and source, shared with the terminal's password check. | In model, direct: unlimited password guessing from one address, at Argon2's speed | high | B1 |
+| HIGH-06 | With the lock on, a session's fixed deadline is never later than its idle lock, so its own streams cannot outlive it (that part refuted). Holds: tightening the lock retimes only the caller; other sessions keep their old deadline, up to 24 h, for their open streams. | Session protection | low | B3 |
+| HIGH-07 | The lab module is built beside the encoder. Shipped or autoloaded: refuted (the bundle, the runtime package and the image take only the encoder module, and nothing loads a module on a device match). Its whole-memory DMA is a documented lab property (root only); the use-after-free is refuted (release runs at the last reference, which every mapping holds); its reset ioctl does not mask the interrupt. | Out of model (root-only lab tool) | none | E16 (optional) |
+| HIGH-08 | `hid.dll` is imported statically and the load configuration sets no `DependentLoadFlags`, so the folder the agent runs from is searched first; `wtsapi32.dll` refuted (not imported). The agent serves clipboard and layout calls while Windows is locked (it checks only the console session). | In model, low: planting needs a folder others write to (a downloads folder, never the board's read-only drive or the user's own copy); the locked clipboard gives the KVM's operator what Windows' lock withholds (medium where that operator is not the Windows user) | low | D1, D2 |
+| MED-01 | `control.sock` checks no peer: every `hardened-blikvm` member (the encoders included) can drive the root owner (ATX, reboot, network, media, switches). The platform broker checks no peer either (reads). The update confirmation runs without `--peer-user` on a group-writable socket. boardd refuted: its socket directory is root's. | Defense in depth | medium (owner), low (others) | C1, C5, E7 |
+| MED-02 | `serve_picoclaw` checks no switch; the workspace path from `config.json` is not confined. Contained by the sandbox (its own dynamic user, a read-only system, `O_NOFOLLOW`); the runtime's binary owned by the server is deliberate. | Defense in depth | low | E16 (optional) |
+| MED-03 | The Janus unit lacks `udp:5006`, which the board's systemd does not enforce (N6), so H.264 works there: latent. PicoClaw's runtime shares the host's network and reaches Janus's API (no secret) and RTP ports: it could watch the screen or inject RTP, which its profile withholds. | Functional (latent); defense in depth | low; medium-low | E8 |
+| MED-04 | The password route asks for no current password and sets root's password before the account's. | Session protection: a live session without the password (a stolen cookie with its CSRF token, or XSS) sets a new one and then passes the terminal's password check | medium | B2 |
+| MED-05 | Private ranges are reachable (the unit denies only localhost, link-local, multicast); `curl` runs without `--globoff`, and glob characters pass outside the file name. Query strings refuted (cut before the `.iso` check). Wider (N8): redirects are followed into private ranges. | In model through a redirect (a remote server makes the board send GET requests into the operator's network), low; the operator's own URL is out of model, its globbing a correctness bug | low | E9 |
+| MED-06 | A zero-byte upload is renamed over an image of the same name before the catalog refuses size 0: the image is lost. A remote download replaces a file attached meanwhile. The catalog's temporary name is fixed, without lock or `O_NOFOLLOW`. Scripts refuted (`O_NOFOLLOW` is set). | Functional | low-medium | B5, B6, E10 |
+| MED-07 | A missing or unreadable system floor reads as 1 (root or the card only); a fresh card accepts any signed system bundle, also one older than its own system. The "application sequence 1" refuted: those arguments are the recovery and boot-control sequences, 1 in every bundle. | Functional anti-rollback gap (only the operator uploads) | low | E3 |
+| MED-08 | `root_uuid` is not validated. Injection refuted: the value is root's, and `tune2fs` refuses a non-UUID before anything else is written, which restores the backup. tune2fs's keywords (`random`, `time`, `clear`, `null`) pass. | Out of model; robustness | low | E3 |
+| MED-09 | Temporary files land in the slot roots and cleanup ignores them, so an interrupted copy stops every later upload. Worse (N2): the protected exec store uses the same stager, and every boot prepares the confirmed slot through its garbage collection, which refuses any unknown name: one leftover stops the board owner, video proxy, boardd and web server from starting at every boot. | Functional (a power loss or a timeout during an update) | high | E1 |
+| MED-10 | The frame channel is unbounded and the page's `Received` value unchecked; unbounded memory refuted (a group is dropped when the transport has not taken it, key frames come every 2 s, 8 connections, `MemoryMax=64M`); only a page of an authenticated session can send it. | Out of model | none | E16 (optional) |
+| MED-11 | `/api/ws` keeps the 64 MiB message default (a HID frame is 16 bytes). The PicoClaw gateway takes its lock before connecting upstream, so manual input is blocked up to two 10 s timeouts when the runtime is down. | Session protection, low; functional | low | B4 |
+| MED-12 | 1: the owner's state files come out 0660 under `UMask=0007`, latent (their directory is root's 0750). 2: `/mnt` files without `O_NOFOLLOW`, out of model (root-only directory). 3: the image store has no sticky bit, which lets the server's account swap a root file for a link (CRIT-02). 4: a damaged status image makes boardd abort on every start (fan, LEDs, OLED lost). | 1, 3: defense in depth; 2: out of model; 4: functional | low | C3, E6, E12, C4 |
+| MED-13 | `ioctl` refuted (declared variadic). `frames.sock` 0666 refuted (each peer's uid is checked). One thread per connection: holds, bounded by `TasksMax`; `demand.sock` checks no peer. The agent opens the HID device shared: another process of the same user gains nothing, another Windows user little. Calls before Hello: out of model. | Defense in depth; low | low | E11, D3 |
+| LOW-01 | Activations are refused at 128 history records (the journal stays valid). The test board has 80; a card written from an image starts with the source board's history. | Functional | medium | E2 |
+| LOW-02 | `umount` skipped: refuted. `e2fsck -p`'s status is ignored. | Robustness | low | E3 |
+| LOW-03 | Some handlers check only for a control socket, not the restricted-surface flag; `normalize_interface` accepts `all`, `default`, `lo`, `.`, `..` (no traversal: the last component is fixed). | Out of model; consistency | low | B7, C6 |
+| LOW-04 | The image keeps `mouse-jiggler.env` and the board's `nginx.conf`; network revert records partly; `firewall-revert.json` refuted (on tmpfs). | Image hygiene | low | E14 |
+| LOW-05 | The serial path's character range is wrong and missing picocom options become "null" (not exploitable: shell characters are refused first); a `Math.random` fallback off HTTPS; logout leaves PicoClaw's keys. | Functional, hygiene | low | B8 |
+| LOW-06 | The interrupt handler claim refuted (no such code); `memset` and alignment refuted; the header bits are checked by the kernel. | none | none | record |
+| LOW-07 | `msd-writable` has no sandbox, `system-update-booted` no address filter, `verify-systemd-units.sh` misses five units and most exposure thresholds, nginx sets no TLS 1.2 cipher list. | Hardening | low | E13 |
+
+## Found while verifying
+
+- N1. The image download worker runs as the web server's account. It is the
+  one unit that fetches remote data, so its compromise holds the operator's
+  authority: the admin helper admits its uid, it reaches `control.sock`,
+  and it can write the gadget directory (CRIT-01) and the image store
+  (CRIT-02). Defense in depth, medium (E4).
+- N2. The exec store's leftovers stop the application at every boot
+  (MED-09). Functional, high (E1).
+- N3. RAW staging archives the virtual media store: `tar` runs without
+  `--one-file-system` while the media partition is mounted inside a carried
+  path. With images larger than the data partition the update fails; the
+  restored copies hide under the mount point and take root space.
+  Functional, medium (E3).
+- N4. A failed RAW stage leaves its payload and `.new` files, which the next
+  upload's space check counts and nothing removes. Functional, low (E3).
+- N5. The carried state keeps numeric owners while users are allocated per
+  image: an image whose allocation differs gives one service's files to
+  another. Defense in depth, low (E3).
+- N6. The board's systemd does not enforce `SocketBind*`, so the Janus and
+  QUIC units' port lists do nothing there, and the QUIC design's "one port"
+  holds only where systemd has its BPF framework. Hardening and a document
+  correction, low (E8, E13).
+- N7. "Start the agent" runs `hardened-blikvm-agent.exe` from every ready
+  volume labelled `BLIKVMAGENT`, so an image on LUN 0 with that label, for
+  example one downloaded from the Internet, is run as well. In model,
+  low (D4).
+- N8. Remote downloads follow redirects into private ranges (MED-05).
+- N9. The login limiter is one table for the whole device and the terminal's
+  password check (HIGH-05).
+- N10. The audit's list of strengths names scrypt; the passwords are Argon2.
