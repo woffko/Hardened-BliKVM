@@ -133,7 +133,16 @@ pub struct Record {
     pub boot_attempts: u32,
     #[serde(default)]
     pub message: String,
+    /// The SHA-256 of each file staged beside the payload (the carried state,
+    /// fstab, shadow, the accounts), checked as the payload is before
+    /// anything is written; empty in a record of an older stage.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub staged_sha256: std::collections::BTreeMap<String, String>,
 }
+
+/// The files staged beside the payload, by their names in the staging
+/// directory.
+const STAGED_FILES: [&str; 5] = [STATE_FILE, FSTAB_FILE, SHADOW_FILE, PASSWD_FILE, GROUP_FILE];
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateError {
@@ -377,6 +386,15 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
             backup_sha256: String::new(),
             boot_attempts: 0,
             message: "staged; reboot to write".into(),
+            staged_sha256: STAGED_FILES
+                .iter()
+                .map(|name| {
+                    Ok((
+                        (*name).to_string(),
+                        digest(&request.staging.join(name), None)?.1,
+                    ))
+                })
+                .collect::<io::Result<_>>()?,
         };
         write_record(request.staging, &record)?;
         Ok(record)
@@ -509,6 +527,13 @@ fn apply(
         }
         if digest(&payload, None)? != (record.payload_size, record.payload_sha256.clone()) {
             return Err(io::Error::other("the staged payload changed"));
+        }
+        for (name, sha256) in &record.staged_sha256 {
+            if !STAGED_FILES.contains(&name.as_str())
+                || digest(&staging.join(name), None)?.1 != *sha256
+            {
+                return Err(io::Error::other(format!("the staged {name} changed")));
+            }
         }
         if record.image_size > size_of(device)? {
             return Err(io::Error::other("the image does not fit the partition"));

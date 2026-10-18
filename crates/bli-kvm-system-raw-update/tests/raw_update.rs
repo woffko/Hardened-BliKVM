@@ -506,6 +506,37 @@ fn the_root_uuid_must_be_a_uuid_at_stage_and_at_boot() {
 }
 
 #[test]
+fn a_staged_file_that_changed_is_not_written() {
+    // The carried state, fstab, shadow and the accounts are checked as the
+    // payload is, against a damaged card (security review of 2026-10-18,
+    // HIGH-02).
+    for file in ["state.tar", "fstab", "shadow", "passwd", "group"] {
+        let fixture = fixture(3);
+        let mut tools = FakeTools::default();
+        stage_it(&fixture, &mut tools).unwrap();
+        let path = fixture.staging.join(file);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.push(b'#');
+        fs::write(&path, bytes).unwrap();
+        let before = fs::read(&fixture.device).unwrap();
+        assert_eq!(
+            boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+            BootAction::Continue,
+            "{file}"
+        );
+        assert_eq!(fs::read(&fixture.device).unwrap(), before, "{file}");
+        let record = bli_kvm_system_raw_update::read_record(&fixture.staging)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.phase,
+            bli_kvm_system_raw_update::Phase::Failed,
+            "{file}"
+        );
+    }
+}
+
+#[test]
 fn boot_configuration_follows_the_device() {
     assert_eq!(
         patch_armbian_env("verbosity=1\nrootdev=UUID=new\nrootfstype=ext4\n", "old"),
@@ -717,6 +748,8 @@ fn real_tools_write_grow_and_relabel_an_ext4_image() {
         backup_sha256: String::new(),
         boot_attempts: 0,
         message: String::new(),
+        // A record of an older stage, without the staged files' digests.
+        staged_sha256: Default::default(),
     };
     bli_kvm_system_raw_update::write_record(&staging, &record).unwrap();
     let mut tools = RealExceptMount(bli_kvm_system_raw_update::SystemTools);
@@ -802,6 +835,7 @@ fn the_bundle_builder_output_stages_and_writes() {
         "mke2fs",
         "e2fsck",
         "resize2fs",
+        "debugfs",
         "tar",
     ]
     .iter()
@@ -857,6 +891,11 @@ fn the_bundle_builder_output_stages_and_writes() {
     let content = dir.path().join("content");
     fs::create_dir_all(content.join("etc")).unwrap();
     fs::write(content.join("etc/marker"), "built root\n").unwrap();
+    // The image builder names the system sequence in the root, and the
+    // bundle builder refuses a root that does not name its own.
+    let sequence_file = content.join(bli_kvm_system_raw_update::SYSTEM_SEQUENCE_FILE);
+    fs::create_dir_all(sequence_file.parent().unwrap()).unwrap();
+    fs::write(&sequence_file, "5\n").unwrap();
     let rootfs = dir.path().join("root.ext4");
     run(
         "mke2fs",
