@@ -193,7 +193,9 @@ Tokens, their hashes, report contents and frame data never reach a log.
   application slot does not carry them: its closed set of executables is part
   of the update trust path, and the slot's package refuses both by name.
   `0.1.0~dev37` carries the gateway of protocol 2 and dev36's files, and
-  `0.1.0~dev38` one that leaves a silent page unjudged. The server and the
+  `0.1.0~dev38` one that leaves a silent page unjudged; `0.1.0~dev39` the
+  fixes of the security review of 2026-10-18 (its certificate follows the
+  clock, `rustls` 0.23.46) in the same files. The server and the
   gateway say the same protocol number on the link, so a slot of protocol 2
   and such a package go onto a board together: between the two the server
   refuses the older gateway, and pages use the standard transport.
