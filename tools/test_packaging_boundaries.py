@@ -1952,7 +1952,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         # their units, the image download helper from its own constant; a move
         # of the catalog (security review of 2026-10-18, E5) changes them all
         # at once, and every slot then follows its units.
-        named = set()
+        named: set[str] = set()
         for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
             for line in unit.read_text().splitlines():
                 for variable in (
@@ -1963,7 +1963,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                         named.add(line.removeprefix(variable))
         helper = (ROOT / "crates/bli-kvm-admin-helper/src/download.rs").read_text()
         constant = re.search(r'pub const MEDIA_CATALOG: &str = "([^"]+)";', helper)
-        self.assertIsNotNone(constant)
+        assert constant is not None
         named.add(constant.group(1))
         self.assertEqual(len(named), 1, named)
 

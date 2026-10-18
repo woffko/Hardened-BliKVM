@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import struct
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+
+Section = tuple[int, int, int]
 
 # Windows 10 and 11's KnownDLLs that the agent may import statically; the
 # loader takes them from the system folder whatever the program's folder holds.
@@ -44,17 +47,16 @@ class PeError(Exception):
     pass
 
 
-def _sections(data: bytes, header: int, count: int, optional_size: int):
+def _sections(data: bytes, header: int, count: int, optional_size: int) -> Iterator[Section]:
     first = header + 24 + optional_size
     for index in range(count):
         offset = first + index * 40
-        virtual_size, virtual_address, raw_size, raw_pointer = struct.unpack_from(
-            "<IIII", data, offset + 8
-        )
+        fields: tuple[int, int, int, int] = struct.unpack_from("<IIII", data, offset + 8)
+        virtual_size, virtual_address, raw_size, raw_pointer = fields
         yield virtual_address, max(virtual_size, raw_size), raw_pointer
 
 
-def _file_offset(sections, rva: int) -> int:
+def _file_offset(sections: list[Section], rva: int) -> int:
     for virtual_address, size, raw_pointer in sections:
         if virtual_address <= rva < virtual_address + size:
             return raw_pointer + rva - virtual_address
@@ -82,10 +84,11 @@ def inspect(path: Path) -> tuple[list[str], list[str], int | None]:
     sections = list(_sections(data, header, count, optional_size))
 
     def directory(index: int) -> tuple[int, int]:
-        return struct.unpack_from("<II", data, directories + index * 8)
+        fields: tuple[int, int] = struct.unpack_from("<II", data, directories + index * 8)
+        return fields
 
-    imports = []
-    rva, size = directory(1)
+    imports: list[str] = []
+    rva, _ = directory(1)
     if rva:
         descriptor = _file_offset(sections, rva)
         while True:
@@ -94,8 +97,8 @@ def inspect(path: Path) -> tuple[list[str], list[str], int | None]:
                 break
             imports.append(_name(data, _file_offset(sections, fields[3])).lower())
             descriptor += 20
-    delayed = []
-    rva, size = directory(13)
+    delayed: list[str] = []
+    rva, _ = directory(13)
     if rva:
         descriptor = _file_offset(sections, rva)
         while True:
@@ -104,18 +107,19 @@ def inspect(path: Path) -> tuple[list[str], list[str], int | None]:
                 break
             delayed.append(_name(data, _file_offset(sections, fields[1])).lower())
             descriptor += 32
-    flags = None
-    rva, size = directory(10)
+    flags: int | None = None
+    rva, _ = directory(10)
     if rva:
         config = _file_offset(sections, rva)
-        config_size = struct.unpack_from("<I", data, config)[0]
+        config_size: int = struct.unpack_from("<I", data, config)[0]
         if config_size >= 80:
-            flags = struct.unpack_from("<H", data, config + 78)[0]
+            value: int = struct.unpack_from("<H", data, config + 78)[0]
+            flags = value
     return imports, delayed, flags
 
 
 def problems(imports: list[str], delayed: list[str], flags: int | None) -> list[str]:
-    found = []
+    found: list[str] = []
     for name in imports + delayed:
         if name in KNOWN_DLLS or name == "ntdll.dll" or name.startswith(("api-ms-win-", "ext-ms-win-")):
             continue
@@ -127,7 +131,7 @@ def problems(imports: list[str], delayed: list[str], flags: int | None) -> list[
 
 def main(arguments: list[str]) -> int:
     if not arguments:
-        print(__doc__.strip().splitlines()[-1], file=sys.stderr)
+        print("usage: check_agent_imports.py AGENT.EXE [...]", file=sys.stderr)
         return 2
     failed = False
     for argument in arguments:

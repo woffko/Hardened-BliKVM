@@ -848,6 +848,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/build_system_image_test_fixture.py \
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
+    tools/check_agent_imports.py \
+    tools/test_check_agent_imports.py \
     tools/test_packaging_boundaries.py \
     tools/test_hid_credential_service.py \
     tools/test_hid_transition_service.py \
