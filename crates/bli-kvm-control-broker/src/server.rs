@@ -1112,6 +1112,19 @@ where
             Ok(value) => value,
             Err(error) => break Err(ControlBrokerError::Io(error)),
         };
+        // The socket's group holds every service account; only root and the
+        // web server are served.
+        match stream.peer_cred() {
+            Ok(peer) if config.admitted_uids.contains(&peer.uid()) => {}
+            Ok(peer) => {
+                eprintln!("control: refused a peer with uid {}", peer.uid());
+                continue;
+            }
+            Err(error) => {
+                eprintln!("control: refused a peer whose credentials are unknown: {error}");
+                continue;
+            }
+        }
         let request_timeout = config.request_timeout;
         let diagnostics = diagnostics.clone();
         let v2 = v2.clone();
@@ -1701,6 +1714,35 @@ mod tests {
             .unwrap()
             .unwrap();
         response
+    }
+
+    #[tokio::test]
+    async fn a_peer_the_owner_does_not_admit_is_closed_unanswered() {
+        // SAFETY: geteuid has no preconditions.
+        let own = unsafe { libc::geteuid() };
+        if own == 0 {
+            return; // root is always admitted
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let mut config = ControlBrokerConfig::new(&socket).unwrap();
+        config.admitted_uids = std::collections::BTreeSet::from([0, own + 1]);
+        let mut broker = tokio::spawn(run(config));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let answer = client
+            .execute(
+                format!("{value:032x}", value = 1),
+                PlatformControlRequest::Atx {
+                    action: AtxControlAction::PowerShort,
+                },
+            )
+            .await;
+        assert!(
+            answer.is_err(),
+            "a peer not admitted was served: {answer:?}"
+        );
+        stop_broker(broker).await;
     }
 
     #[tokio::test]
