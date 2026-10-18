@@ -253,10 +253,15 @@ impl HidLink {
         // SAFETY: `path` is zero-ended; what is created is closed by Drop or
         // here when a later step fails.
         unsafe {
+            // Not shared: no other process of the session, or of another
+            // user, gets a copy of the board's reports or writes its own
+            // while the agent holds the channel (security review of
+            // 2026-10-18, MED-13). An open for no access, as `matches`
+            // makes, still finds the device.
             let handle = CreateFileW(
                 path.as_ptr(),
                 GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                0,
                 null(),
                 OPEN_EXISTING,
                 FILE_FLAG_OVERLAPPED,
