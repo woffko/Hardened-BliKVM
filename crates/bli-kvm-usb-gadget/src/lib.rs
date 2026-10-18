@@ -171,6 +171,13 @@ pub enum Step {
     RemoveDir {
         path: PathBuf,
     },
+    /// Present an image on a LUN: its file is opened without following a
+    /// link and checked, and the LUN's `file` gets what `presented_value`
+    /// says.
+    PresentImage {
+        path: PathBuf,
+        image: PathBuf,
+    },
 }
 
 fn gadget_path() -> PathBuf {
@@ -217,6 +224,23 @@ fn validate_udc(udc: &str) -> Result<(), GadgetError> {
     Ok(())
 }
 
+/// What is written into a LUN's `file` for an image whose checked file is
+/// open as `descriptor`: on configfs that descriptor's own path, so the
+/// kernel, which opens the name it is given as root, opens the very file
+/// that was checked and no link swapped in meanwhile; elsewhere (the host
+/// tests' configfs of plain files) the image's path.
+fn presented_value(descriptor: i32, image: &Path, configfs: bool) -> String {
+    if configfs {
+        format!("/proc/self/fd/{descriptor}")
+    } else {
+        image.to_string_lossy().into_owned()
+    }
+}
+
+/// An image the owner may present: an absolute path whose file is a regular
+/// file with one link, not itself a link. Another account that can write the
+/// image store must not give the target root's files through a link or a
+/// second name (security review of 2026-10-18, CRIT-02).
 fn validate_image_path(file: &Path) -> Result<(), GadgetError> {
     if !file.is_absolute()
         || file
@@ -225,11 +249,52 @@ fn validate_image_path(file: &Path) -> Result<(), GadgetError> {
     {
         return Err(GadgetError::InvalidImagePath);
     }
-    let metadata = std::fs::metadata(file).map_err(|_| GadgetError::ImageMissing)?;
+    let metadata = std::fs::symlink_metadata(file).map_err(|_| GadgetError::ImageMissing)?;
+    checked_image(&metadata)
+}
+
+fn checked_image(metadata: &std::fs::Metadata) -> Result<(), GadgetError> {
+    use std::os::unix::fs::MetadataExt;
+    if metadata.file_type().is_symlink() || metadata.nlink() > 1 {
+        return Err(GadgetError::InvalidImagePath);
+    }
     if !metadata.is_file() {
         return Err(GadgetError::ImageMissing);
     }
     Ok(())
+}
+
+/// Opens `image` without following a link at its name and checks the file
+/// it got, for `Step::PresentImage`.
+fn open_image(image: &Path) -> Result<std::fs::File, GadgetError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(image)
+        .map_err(|error| match error.raw_os_error() {
+            Some(libc::ELOOP) => GadgetError::InvalidImagePath,
+            _ => GadgetError::ImageMissing,
+        })?;
+    checked_image(&file.metadata().map_err(io_error)?)?;
+    Ok(file)
+}
+
+/// Whether `path` lies on configfs.
+fn on_configfs(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    const CONFIGFS_MAGIC: i64 = 0x6265_6570;
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: statfs only writes into the zeroed structure.
+    let mut stats: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(name.as_ptr(), &mut stats) } != 0 {
+        return false;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    let kind = stats.f_type as i64;
+    kind == CONFIGFS_MAGIC
 }
 
 /// The kernel's mass-storage function refuses a CD-ROM image shorter than
@@ -317,9 +382,9 @@ fn lun_steps(steps: &mut Vec<Step>, lun: &Path, flags: [bool; 3], file: &Path) {
             path: lun.join("file"),
         });
     } else {
-        steps.push(Step::WriteFile {
+        steps.push(Step::PresentImage {
             path: lun.join("file"),
-            value: file.to_string_lossy().into_owned(),
+            image: file.to_path_buf(),
         });
     }
 }
@@ -538,6 +603,20 @@ fn run_steps(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
             Step::ClearAttribute { path } => {
                 let full = root.join(path);
                 std::fs::write(&full, "\n").map_err(|error| step_error(path, error))?;
+            }
+            Step::PresentImage { path, image } => {
+                use std::os::fd::AsRawFd;
+                let full = root.join(path);
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| step_error(path, error))?;
+                }
+                let checked = open_image(image)?;
+                let configfs = full.parent().is_some_and(on_configfs);
+                let value = presented_value(checked.as_raw_fd(), image, configfs);
+                // The kernel opens the file during this write; the descriptor
+                // is closed after it.
+                std::fs::write(&full, value).map_err(|error| step_error(path, error))?;
+                drop(checked);
             }
             Step::RemoveEmptyDir { path } => {
                 let full = root.join(path);
@@ -816,9 +895,9 @@ pub fn set_lun_file(root: &Path, file: &Path) -> Result<(), GadgetError> {
     validate_image_path(file)?;
     execute(
         root,
-        &[Step::WriteFile {
+        &[Step::PresentImage {
             path: function_path(MSD_FUNCTION).join("lun.0").join("file"),
-            value: file.to_string_lossy().into_owned(),
+            image: file.to_path_buf(),
         }],
     )
 }
@@ -1066,6 +1145,67 @@ mod tests {
     }
 
     #[test]
+    fn a_link_in_the_image_store_is_not_presented() {
+        let directory = root_with_image();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("shadow");
+        std::fs::write(&secret, b"root's file").unwrap();
+        let link = directory.path().join("linked.img");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        let root = directory.path().join("configfs");
+        assert_eq!(
+            apply(&root, &spec(&link)),
+            Err(GadgetError::InvalidImagePath)
+        );
+        assert!(
+            !root
+                .join("hardened/functions/mass_storage.usb0/lun.0/file")
+                .exists(),
+            "the link reached the LUN"
+        );
+    }
+
+    #[test]
+    fn a_hard_linked_image_is_not_presented() {
+        let directory = root_with_image();
+        let image = directory.path().join(IMAGE_NAME);
+        std::fs::hard_link(&image, directory.path().join("again.img")).unwrap();
+        let root = directory.path().join("configfs");
+        assert_eq!(
+            apply(&root, &spec(&image)),
+            Err(GadgetError::InvalidImagePath)
+        );
+    }
+
+    #[test]
+    fn a_link_is_not_set_on_a_lun_either() {
+        let directory = root_with_image();
+        let image = directory.path().join(IMAGE_NAME);
+        let root = directory.path().join("configfs");
+        assert_eq!(apply(&root, &spec(&image)), Ok(()));
+        let link = directory.path().join("linked.img");
+        std::os::unix::fs::symlink(&image, &link).unwrap();
+        assert_eq!(
+            set_lun_file(&root, &link),
+            Err(GadgetError::InvalidImagePath)
+        );
+        assert_eq!(
+            read(&root, "hardened/functions/mass_storage.usb0/lun.0/file"),
+            image.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn configfs_gets_the_descriptor_of_the_file_checked() {
+        let image = Path::new("/var/lib/hardened-blikvm-gadget/images/kubuntu.img");
+        assert_eq!(presented_value(7, image, true), "/proc/self/fd/7");
+        assert_eq!(
+            presented_value(7, image, false),
+            "/var/lib/hardened-blikvm-gadget/images/kubuntu.img"
+        );
+    }
+
+    #[test]
     fn a_storage_change_that_fails_binds_the_gadget_again() {
         let directory = root_with_image();
         let image = directory.path().join(IMAGE_NAME);
@@ -1221,7 +1361,9 @@ mod tests {
         let order: Vec<&Path> = steps
             .iter()
             .filter_map(|step| match step {
-                Step::WriteFile { path, .. } => Some(path.as_path()),
+                Step::WriteFile { path, .. } | Step::PresentImage { path, .. } => {
+                    Some(path.as_path())
+                }
                 _ => None,
             })
             .collect();
@@ -1741,9 +1883,9 @@ mod tests {
             steps
                 .iter()
                 .position(|step| match step {
-                    Step::WriteFile { path, .. } | Step::Symlink { link: path, .. } => {
-                        path.ends_with(wanted)
-                    }
+                    Step::WriteFile { path, .. }
+                    | Step::PresentImage { path, .. }
+                    | Step::Symlink { link: path, .. } => path.ends_with(wanted),
                     _ => false,
                 })
                 .unwrap()
