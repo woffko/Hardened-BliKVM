@@ -320,6 +320,12 @@ E14. (LOW-04) The image builder removes and checks `mouse-jiggler.env` and
     `tools/test_build_sd_image.py`. Effort S.
 E15. The QUIC gateway's `rustls` 0.23.46 and `time` 0.3.47 (the RustSec
     record of 0.1.0-beta.8); `cargo audit` clean. Effort S.
+E17. (N11) The QUIC gateway's certificate follows the network time: the
+    unit starts after the time is synchronised, and the gateway makes a new
+    certificate whenever the clock lies outside the one it has. Tests: a
+    certificate made by a clock months behind is replaced once the clock
+    has moved (today it is kept for 7 days); the unit orders itself after
+    time-sync.target. Effort S.
 E16. Optional, at the operator's choice: MED-10's bounded queue; HIGH-07's
     lab module refused anywhere in an image tree, without its device table,
     its reset masking the interrupt; MED-02's workspace kept under the

@@ -127,3 +127,9 @@ board was read once, read only (`evidence/private/security-20261018/board-facts-
 - N9. The login limiter is one table for the whole device and the terminal's
   password check (HIGH-05).
 - N10. The audit's list of strengths names scrypt; the passwords are Argon2.
+- N11. Found at gate B–D on the board: the board has no clock that keeps
+  time while off, and the QUIC gateway starts at boot before the network
+  time is synchronised, so its 13-day certificate is made by the clock of
+  boot (on 2026-10-18 dated 2026-07-29) and replaced only after 7 days of
+  running; until then the server refuses every QUIC session ("clock") and
+  the page uses the standard transport. Functional, medium (E17).
