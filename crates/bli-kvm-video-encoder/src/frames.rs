@@ -22,7 +22,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -98,7 +98,8 @@ impl FrameHub {
         };
         let hub = Self::new();
         let accepting = Arc::clone(&hub);
-        thread::spawn(move || {
+        let open = Arc::new(AtomicUsize::new(0));
+        thread::Builder::new().spawn(move || {
             for connection in listener.incoming().flatten() {
                 match peer_uid(&connection) {
                     Ok(uid) if uid == admitted => {}
@@ -108,10 +109,22 @@ impl FrameHub {
                     }
                     Err(_) => continue,
                 }
+                // Counted from here, so a flood of connections is refused
+                // rather than spawning a thread each (security review of
+                // 2026-10-18, MED-13).
+                let Some(slot) = Slot::take(&open, MAX_CLIENTS) else {
+                    continue;
+                };
                 let hub = Arc::clone(&accepting);
-                thread::spawn(move || hub.serve(connection));
+                let served = thread::Builder::new().spawn(move || {
+                    let _slot = slot;
+                    hub.serve(connection);
+                });
+                if served.is_err() {
+                    eprintln!("frame socket: a connection could not be served");
+                }
             }
-        });
+        })?;
         Ok(hub)
     }
 
@@ -206,9 +219,6 @@ impl FrameHub {
         let client = Arc::new(Client::default());
         {
             let mut clients = self.clients.lock().expect("frame clients lock");
-            if clients.len() >= MAX_CLIENTS {
-                return;
-            }
             client.queue.lock().expect("frame queue lock").awaiting_key = true;
             clients.push(Arc::clone(&client));
         }
@@ -216,9 +226,10 @@ impl FrameHub {
         self.want_key();
 
         // What the client writes: a byte for every key frame it asks for.
-        if let Ok(mut requests) = connection.try_clone() {
+        // Without its reader the client is not served.
+        let reader = connection.try_clone().and_then(|mut requests| {
             let (hub, reading) = (Arc::clone(&self), Arc::clone(&client));
-            thread::spawn(move || {
+            thread::Builder::new().spawn(move || {
                 let mut byte = [0u8; 1];
                 loop {
                     match requests.read(&mut byte) {
@@ -228,7 +239,10 @@ impl FrameHub {
                     }
                 }
                 reading.leave();
-            });
+            })
+        });
+        if reader.is_err() {
+            client.leave();
         }
 
         let mut connection = connection;
@@ -291,8 +305,28 @@ const SOL_SOCKET: i32 = 1;
 const SO_PEERCRED: i32 = 17;
 const CLOCK_MONOTONIC: i32 = 1;
 
+/// One of a listener's connections, counted from its accept to its end.
+pub(crate) struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    /// A slot while fewer than `cap` connections are open.
+    pub(crate) fn take(open: &Arc<AtomicUsize>, cap: usize) -> Option<Self> {
+        open.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            (count < cap).then_some(count + 1)
+        })
+        .ok()?;
+        Some(Self(Arc::clone(open)))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// The user of the process at the other end of a Unix socket.
-fn peer_uid(connection: &UnixStream) -> io::Result<u32> {
+pub(crate) fn peer_uid(connection: &UnixStream) -> io::Result<u32> {
     let mut credentials = PeerCredentials {
         pid: 0,
         uid: u32::MAX,

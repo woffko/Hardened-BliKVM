@@ -134,7 +134,10 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   viewer's signaling lasts and names the codec on its first line. Without a
   connection the encoder leaves the capture stream two seconds later; a new
   viewer makes it reconnect and start from a key frame. Without the socket
-  setting the encoder runs always, as before.
+  setting the encoder runs always, as before. Of the socket's group only
+  the user `BLI_KVM_VP8_DEMAND_USER` names (the web server) is served, by
+  its connection's peer credentials, and at most eight connections at once
+  (security review of 2026-10-18, MED-13).
 - MJPEG: the server reads the capture's multipart stream continuously and
   keeps only the newest complete part (`mjpeg_latest.rs`); the response
   sends a part only when the connection takes one, so a slow viewer skips
@@ -344,8 +347,9 @@ side).
   carries every encoded frame as a record: a 32-byte header (stream, frame
   and reference ids, size, picture size, capture time on the board's
   monotonic clock) and the access unit in Annex B form. Only the user named
-  by `BLI_KVM_ENCODER_FRAME_USER` is served; the VP8 unit has no such
-  socket. Janus keeps its RTP: one encoder serves both kinds of viewer, and
+  by `BLI_KVM_ENCODER_FRAME_USER` is served, four clients at most: a
+  connection beyond them is closed as it is accepted rather than given a
+  thread (MED-13); the VP8 unit has no such socket. Janus keeps its RTP: one encoder serves both kinds of viewer, and
   the server holds its demand for either.
 - A client asks for a key frame by writing a byte; one is made at most
   every 250 ms. The capture loop lets its next frame through for a request

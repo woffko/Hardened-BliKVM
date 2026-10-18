@@ -78,6 +78,9 @@ struct Settings {
     scale: Scale,
     demand: Option<PathBuf>,
     demand_group: String,
+    /// The one user that may signal demand (the web server's); this
+    /// process's own without it.
+    demand_user: Option<String>,
     /// The frame socket, and the only user it serves.
     frames: Option<PathBuf>,
     frame_user: Option<String>,
@@ -172,6 +175,7 @@ fn settings() -> Result<Settings, String> {
         },
         demand_group: env::var("BLI_KVM_VP8_DEMAND_GROUP")
             .unwrap_or_else(|_| "hardened-blikvm".into()),
+        demand_user: env::var("BLI_KVM_VP8_DEMAND_USER").ok(),
         frames: match env::var_os("BLI_KVM_ENCODER_FRAME_SOCKET").map(PathBuf::from) {
             Some(path) if !path.is_absolute() => {
                 return Err("BLI_KVM_ENCODER_FRAME_SOCKET must be absolute".into());
@@ -937,7 +941,22 @@ fn main() -> ExitCode {
             let group = std::fs::read_to_string("/etc/group")
                 .ok()
                 .and_then(|groups| group_id(&groups, &settings.demand_group));
-            match Demand::listen(path, group) {
+            let admitted = match &settings.demand_user {
+                Some(name) => {
+                    let found = std::fs::read_to_string("/etc/passwd")
+                        .ok()
+                        .and_then(|users| user_id(&users, name));
+                    if found.is_none() {
+                        eprintln!(
+                            "bli-kvm-video-encoder: demand socket: user {name} does not exist"
+                        );
+                        return ExitCode::from(2);
+                    }
+                    found
+                }
+                None => None,
+            };
+            match Demand::listen(path, group, admitted) {
                 Ok(demand) => demand,
                 Err(error) => {
                     eprintln!("bli-kvm-video-encoder: demand socket: {error}");

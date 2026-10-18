@@ -2018,6 +2018,17 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
         self.assertGreaterEqual(checked, 15)
 
+    def test_only_the_web_server_signals_the_encoders_demand(self) -> None:
+        # The demand socket is its group's; of that group only the web server
+        # may keep an encoder working (security review of 2026-10-18, MED-13).
+        for name in ("video-encoder", "video-encoder-h264"):
+            unit = (ROOT / f"packaging/systemd/hardened-blikvm-{name}.service").read_text()
+            lines = unit.splitlines()
+            self.assertIn("Environment=BLI_KVM_VP8_DEMAND_USER=hardened-blikvm-server", lines)
+            self.assertTrue(
+                any(line.startswith("Environment=BLI_KVM_VP8_DEMAND_SOCKET=") for line in lines)
+            )
+
     def test_every_janus_port_is_in_its_bind_list(self) -> None:
         unit = (ROOT / "packaging/systemd/hardened-blikvm-janus.service").read_text()
         allowed = {

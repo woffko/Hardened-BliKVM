@@ -19,6 +19,8 @@ UMask=0077
 RuntimeDirectory=hardened-blikvm-vp8
 RuntimeDirectoryMode=0755
 Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock
+# Of the socket's group, only the web server signals demand.
+Environment=BLI_KVM_VP8_DEMAND_USER=hardened-blikvm-server
 # What encodes and how it goes, once a second while a viewer watches, for
 # the web server's quality monitor
 # (docs/design/h264-engine-choice-and-quality-monitor-v1.md).

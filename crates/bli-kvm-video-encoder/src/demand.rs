@@ -20,7 +20,7 @@ use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -33,6 +33,9 @@ const MAX_LINE_BYTES: u64 = 32;
 /// its newline included: a client that sends more without one loses its
 /// connection, and is not read to the end of a line that has none.
 const MAX_SKIPPED_BYTES: u64 = 4096;
+/// Connections served at once: the web server holds one per WebRTC viewer
+/// (two at most), and a second server runs beside it during an update.
+const MAX_CONNECTIONS: usize = 8;
 /// Bitrates the encoders accept, in kbit/s.
 pub const KBPS_RANGE: std::ops::RangeInclusive<u32> = 64..=20_000;
 
@@ -82,9 +85,11 @@ impl Demand {
         })
     }
 
-    /// Listens on `path`; the socket is given `group` and mode 0660, so only
-    /// that group (the web server's) can signal demand.
-    pub fn listen(path: &Path, group: Option<u32>) -> io::Result<Arc<Self>> {
+    /// Listens on `path`; the socket is given `group` and mode 0660, and of
+    /// that group (the web server's) only the `admitted` user may signal
+    /// demand, this process's own without it (security review of
+    /// 2026-10-18, MED-13).
+    pub fn listen(path: &Path, group: Option<u32>, admitted: Option<u32>) -> io::Result<Arc<Self>> {
         match std::fs::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -100,6 +105,10 @@ impl Demand {
             std::os::unix::fs::chown(path, None, Some(group))?;
         }
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;
+        let admitted = match admitted {
+            Some(uid) => uid,
+            None => std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(path)?),
+        };
         let demand = Arc::new(Self {
             always: false,
             viewers: Mutex::new(0),
@@ -110,12 +119,31 @@ impl Demand {
             engine_lines: AtomicU64::new(0),
         });
         let accepting = Arc::clone(&demand);
-        thread::spawn(move || {
+        let open = Arc::new(AtomicUsize::new(0));
+        thread::Builder::new().spawn(move || {
             for connection in listener.incoming().flatten() {
+                match crate::frames::peer_uid(&connection) {
+                    Ok(uid) if uid == admitted => {}
+                    Ok(uid) => {
+                        eprintln!("demand socket: a connection of user {uid} was refused");
+                        continue;
+                    }
+                    Err(_) => continue,
+                }
+                // Counted from here: a flood is refused, not a thread each.
+                let Some(slot) = crate::frames::Slot::take(&open, MAX_CONNECTIONS) else {
+                    continue;
+                };
                 let viewer = Arc::clone(&accepting);
-                thread::spawn(move || viewer.serve(connection));
+                let served = thread::Builder::new().spawn(move || {
+                    let _slot = slot;
+                    viewer.serve(connection);
+                });
+                if served.is_err() {
+                    eprintln!("demand socket: a connection could not be served");
+                }
             }
-        });
+        })?;
         Ok(demand)
     }
 
@@ -281,7 +309,7 @@ mod tests {
     fn viewers_start_and_stop_the_work() {
         let directory = tempfile_dir();
         let path = directory.join("demand.sock");
-        let demand = Demand::listen(&path, None).unwrap();
+        let demand = Demand::listen(&path, None, None).unwrap();
         assert!(!demand.active());
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o660);
@@ -304,10 +332,61 @@ mod tests {
     }
 
     #[test]
+    fn only_the_admitted_user_signals_demand() {
+        // Every account of the socket's group could keep the encoder busy
+        // (security review of 2026-10-18, MED-13).
+        let directory = tempfile_dir();
+        let path = directory.join("demand.sock");
+        let own = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&directory).unwrap());
+        let demand = Demand::listen(&path, None, Some(own.wrapping_add(1))).unwrap();
+        let mut stranger = UnixStream::connect(&path).unwrap();
+        stranger
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut byte = [0_u8; 1];
+        assert_eq!(
+            io::Read::read(&mut stranger, &mut byte).unwrap(),
+            0,
+            "it was not closed"
+        );
+        assert!(!demand.active());
+        assert_eq!(demand.generation(), 0);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn connections_beyond_the_cap_are_closed() {
+        let directory = tempfile_dir();
+        let path = directory.join("demand.sock");
+        let demand = Demand::listen(&path, None, None).unwrap();
+        let viewers: Vec<UnixStream> = (0..MAX_CONNECTIONS)
+            .map(|_| UnixStream::connect(&path).unwrap())
+            .collect();
+        wait_until(|| demand.generation() == MAX_CONNECTIONS as u64);
+        let mut beyond = UnixStream::connect(&path).unwrap();
+        beyond
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut byte = [0_u8; 1];
+        assert_eq!(
+            io::Read::read(&mut beyond, &mut byte).unwrap(),
+            0,
+            "it was served"
+        );
+        assert_eq!(demand.generation(), MAX_CONNECTIONS as u64);
+        // A place that frees takes the next one.
+        drop(viewers);
+        wait_until(|| !demand.active());
+        let _next = UnixStream::connect(&path).unwrap();
+        wait_until(|| demand.generation() == MAX_CONNECTIONS as u64 + 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn the_server_sets_the_bitrate_after_the_codec() {
         let directory = tempfile_dir();
         let path = directory.join("demand.sock");
-        let demand = Demand::listen(&path, None).unwrap();
+        let demand = Demand::listen(&path, None, None).unwrap();
         assert_eq!(demand.kbps(), None);
         let mut viewer = UnixStream::connect(&path).unwrap();
         viewer.write_all(b"h264\nkbps 2500\n").unwrap();
@@ -331,7 +410,7 @@ mod tests {
     fn the_server_chooses_the_engine_and_a_choice_made_again_counts() {
         let directory = tempfile_dir();
         let path = directory.join("demand.sock");
-        let demand = Demand::listen(&path, None).unwrap();
+        let demand = Demand::listen(&path, None, None).unwrap();
         assert_eq!(demand.engine(), None);
         assert_eq!(demand.engine_lines(), 0);
         let mut viewer = UnixStream::connect(&path).unwrap();
@@ -388,7 +467,7 @@ mod tests {
         const BOUND: usize = 4096;
         let directory = tempfile_dir();
         let path = directory.join("demand.sock");
-        let demand = Demand::listen(&path, None).unwrap();
+        let demand = Demand::listen(&path, None, None).unwrap();
 
         // A line of the bound's length, its newline included, is skipped and
         // the connection goes on.

@@ -19,6 +19,8 @@ UMask=0077
 RuntimeDirectory=hardened-blikvm-h264
 RuntimeDirectoryMode=0755
 Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock
+# Of the socket's group, only the web server signals demand.
+Environment=BLI_KVM_VP8_DEMAND_USER=hardened-blikvm-server
 # The QUIC gateway reads the encoded frames from this socket, and only its
 # user is served (docs/design/quic-transport-v1.md). On a board without that
 # user the socket stays closed and nothing else changes.
