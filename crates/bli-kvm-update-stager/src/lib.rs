@@ -434,6 +434,21 @@ impl ApplicationSlotStager {
                 .to_str()
                 .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?
                 .to_string();
+            if left_temporary_name(&name) {
+                // A snapshot or a marker an older stager was writing when it
+                // was stopped: one of its own regular files, removed.
+                let metadata = fs::symlink_metadata(entry.path())?;
+                if metadata.is_file()
+                    && metadata.uid() == self.identity.owner
+                    && metadata.dev() == self.identity.device
+                    && metadata.nlink() == 1
+                {
+                    fs::remove_file(entry.path())?;
+                    self.root_directory.sync_all()?;
+                    removed = removed.saturating_add(1);
+                }
+                continue;
+            }
             if !name.starts_with(".staging-") {
                 continue;
             }
@@ -666,14 +681,14 @@ impl ApplicationSlotStager {
         }
         let content =
             serde_json::to_vec(marker).map_err(|_| ApplicationStageError::Serialization)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
-        temporary.write_all(&content)?;
-        temporary.flush()?;
-        temporary.as_file().sync_all()?;
-        temporary
-            .persist_noclobber(destination)
-            .map_err(|error| ApplicationStageError::Io(error.error))?;
+        // Written unnamed and given its name whole, so no temporary name is
+        // left in the root by an interruption.
+        let mut marker_file = anonymous_file(&self.root)?;
+        marker_file.set_permissions(Permissions::from_mode(0o600))?;
+        marker_file.write_all(&content)?;
+        marker_file.flush()?;
+        marker_file.sync_all()?;
+        link_anonymous(&marker_file, &destination)?;
         self.root_directory.sync_all()?;
         Ok(())
     }
@@ -758,46 +773,36 @@ impl ApplicationSlotStager {
         }
 
         self.validate_root()?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
-        let temporary_metadata = temporary.as_file().metadata()?;
-        if !temporary_metadata.is_file()
-            || temporary_metadata.dev() != self.identity.device
-            || temporary_metadata.uid() != self.identity.owner
-            || temporary_metadata.nlink() != 1
+        // An unnamed file of the root's file system (O_TMPFILE): nothing an
+        // interrupted copy leaves behind can stop a later listing of the
+        // root (security review of 2026-10-18, MED-09).
+        let mut snapshot = anonymous_file(&self.root)?;
+        let snapshot_metadata = snapshot.metadata()?;
+        if !snapshot_metadata.is_file()
+            || snapshot_metadata.dev() != self.identity.device
+            || snapshot_metadata.uid() != self.identity.owner
+            || snapshot_metadata.nlink() != 0
         {
             return Err(ApplicationStageError::UnsafeRoot);
         }
 
         let mut limited = source.take(expected_size + 1);
-        let copied = io::copy(&mut limited, temporary.as_file_mut())?;
+        let copied = io::copy(&mut limited, &mut snapshot)?;
         if copied > MAX_ARCHIVE_BYTES {
             return Err(ApplicationStageError::ArchiveTooLarge);
         }
         if copied != expected_size {
             return Err(ApplicationStageError::SourceChanged);
         }
-        temporary.as_file_mut().flush()?;
-        temporary.as_file().sync_all()?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o400))?;
-        temporary.as_file().sync_all()?;
-
-        let copied_metadata = temporary.as_file().metadata()?;
-        let mut snapshot = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(temporary.path())?;
-        let snapshot_metadata = snapshot.metadata()?;
-        if copied_metadata.dev() != snapshot_metadata.dev()
-            || copied_metadata.ino() != snapshot_metadata.ino()
-            || copied_metadata.len() != snapshot_metadata.len()
-            || snapshot_metadata.len() != copied
-            || snapshot_metadata.permissions().mode() & 0o7777 != 0o400
+        snapshot.flush()?;
+        snapshot.sync_all()?;
+        snapshot.set_permissions(Permissions::from_mode(0o400))?;
+        snapshot.sync_all()?;
+        let copied_metadata = snapshot.metadata()?;
+        if copied_metadata.len() != copied
+            || copied_metadata.nlink() != 0
+            || copied_metadata.permissions().mode() & 0o7777 != 0o400
         {
-            return Err(ApplicationStageError::UnsafeRoot);
-        }
-        temporary.close()?;
-        if snapshot.metadata()?.nlink() != 0 {
             return Err(ApplicationStageError::UnsafeRoot);
         }
         snapshot.seek(SeekFrom::Start(0))?;
@@ -1456,6 +1461,48 @@ fn validate_deleting_tree(
     let mut bytes = 0_u64;
     inspect_abandoned_directory(root, root, identity, &mut entries, &mut bytes)
         .map_err(|_| ApplicationStageError::UnsafeDeletionState)
+}
+
+/// A name `tempfile` gave the stager's own temporary files before they were
+/// made unnamed: ".tmp" and six letters or digits.
+fn left_temporary_name(value: &str) -> bool {
+    value.strip_prefix(".tmp").is_some_and(|suffix| {
+        suffix.len() == 6 && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
+/// An unnamed file in `directory`'s file system, 0600.
+fn anonymous_file(directory: &Path) -> Result<File, ApplicationStageError> {
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_TMPFILE | libc::O_CLOEXEC)
+        .open(directory)?)
+}
+
+/// Gives an unnamed file `destination` as its name, never replacing one.
+fn link_anonymous(file: &File, destination: &Path) -> Result<(), ApplicationStageError> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map_err(|_| ApplicationStageError::UnsafeRoot)?;
+    let target = std::ffi::CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| ApplicationStageError::UnsafeRoot)?;
+    // SAFETY: two zero-ended paths; linkat follows only the descriptor's
+    // own /proc link to the open file.
+    let linked = unsafe {
+        libc::linkat(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::AT_SYMLINK_FOLLOW,
+        )
+    };
+    if linked != 0 {
+        return Err(ApplicationStageError::Io(io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 fn valid_staging_name(value: &str) -> bool {

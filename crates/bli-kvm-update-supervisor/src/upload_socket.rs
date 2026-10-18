@@ -38,6 +38,9 @@ pub(crate) fn serve_stdin(
     archive.rewind()?;
     let staged = (|| {
         let stager = ApplicationSlotStager::open(&config.slot_root)?;
+        // What an interrupted earlier upload left is removed first, or the
+        // quota's listing would refuse every upload from now on.
+        stager.cleanup_abandoned_staging()?;
         // The slot lock is acquired only after complete upload/EOF. The spool
         // remains accounted in f_bavail if both directories share a filesystem.
         check_staging_capacity(&config.slot_root, archive_bytes)

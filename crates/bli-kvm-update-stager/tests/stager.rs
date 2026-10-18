@@ -545,6 +545,77 @@ fn upload_quota_refuses_unknown_root_content_without_removing_it() {
 }
 
 #[test]
+fn a_temporary_file_left_by_an_interrupted_copy_is_cleaned_before_staging() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    // What a power loss leaves while an older stager copies a snapshot.
+    let leftover = slots.path().join(".tmpAbC123");
+    fs::write(&leftover, b"half a copy").unwrap();
+    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o600)).unwrap();
+    let cleanup = stager.cleanup_abandoned_staging().unwrap();
+    assert_eq!(cleanup.removed, 1);
+    assert!(!leftover.exists());
+    stager
+        .stage_reader_with_quota(
+            archive.as_slice(),
+            archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 2,
+                max_payload_bytes: 1024,
+            },
+        )
+        .unwrap();
+    // Other names stay refused and kept.
+    fs::write(slots.path().join(".tmp-not-ours"), b"keep").unwrap();
+    assert!(stager.cleanup_abandoned_staging().is_ok());
+    assert!(slots.path().join(".tmp-not-ours").exists());
+}
+
+#[test]
+fn the_snapshot_is_never_a_named_file_in_the_root() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    // A source that looks at the root while it is copied.
+    struct Watching<'a> {
+        archive: &'a [u8],
+        offset: usize,
+        root: PathBuf,
+        seen: Vec<String>,
+    }
+    impl std::io::Read for Watching<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.seen.extend(root_entries(&self.root));
+            let rest = &self.archive[self.offset..];
+            let count = rest.len().min(buffer.len()).min(512);
+            buffer[..count].copy_from_slice(&rest[..count]);
+            self.offset += count;
+            Ok(count)
+        }
+    }
+    let mut source = Watching {
+        archive: &archive,
+        offset: 0,
+        root: slots.path().to_path_buf(),
+        seen: Vec::new(),
+    };
+    stager
+        .stage_reader(&mut source, archive.len() as u64, &trust)
+        .unwrap();
+    assert!(
+        source.seen.iter().all(|name| !name.starts_with(".tmp")),
+        "the snapshot was named in the root: {:?}",
+        source.seen
+    );
+}
+
+#[test]
 fn upload_quota_rejects_invalid_policy_before_consuming_source() {
     let (_, trust) = keys();
     let slots = tempfile::tempdir().unwrap();
