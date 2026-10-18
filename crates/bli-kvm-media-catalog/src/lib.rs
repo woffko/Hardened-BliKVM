@@ -2,7 +2,10 @@ use std::{
     collections::BTreeSet,
     fs,
     io::Write,
-    os::unix::fs::{FileTypeExt, PermissionsExt},
+    os::unix::{
+        fs::{FileTypeExt, OpenOptionsExt, PermissionsExt},
+        io::AsRawFd,
+    },
     path::{Path, PathBuf},
 };
 
@@ -161,6 +164,7 @@ impl MediaCatalog {
         if !valid_image_name(image_name) {
             return Err(MediaCatalogError::InvalidEntry);
         }
+        let _lock = CatalogLock::take(path)?;
         let catalog = Self::open(path)?;
         let mut entries = catalog.entries;
         let Some(index) = entries
@@ -201,6 +205,7 @@ impl MediaCatalog {
         {
             return Err(MediaCatalogError::InvalidEntry);
         }
+        let _lock = CatalogLock::take(path)?;
         let catalog = Self::open(path)?;
         let mut entries = catalog.entries;
         let summary = if let Some(existing) = entries
@@ -284,6 +289,61 @@ impl MediaCatalog {
     }
 }
 
+/// Serialises the catalog's writers: the server, the board owner and the
+/// image download worker each read, change and replace it under one lock on
+/// its directory, so no writer's change is lost to another's. The lock goes
+/// with the descriptor when it is dropped.
+struct CatalogLock {
+    _descriptor: fs::File,
+}
+
+impl CatalogLock {
+    fn take(path: &Path) -> Result<Self, MediaCatalogError> {
+        let directory = path.parent().ok_or(MediaCatalogError::InvalidPath)?;
+        validate_directory(directory)?;
+        let handle = fs::File::open(directory).map_err(|_| MediaCatalogError::Io)?;
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(handle.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(MediaCatalogError::Io);
+        }
+        Ok(Self {
+            _descriptor: handle,
+        })
+    }
+}
+
+/// A temporary file of its own beside the catalog: created new, so neither a
+/// file nor a link left at its name is written through.
+fn create_temporary(
+    directory: &Path,
+    file_name: &str,
+) -> Result<(PathBuf, fs::File), MediaCatalogError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    for _ in 0..16 {
+        let temporary = directory.join(format!(
+            ".{file_name}.{}-{nanos}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(MediaCatalogError::Io),
+        }
+    }
+    Err(MediaCatalogError::Io)
+}
+
 fn write_document(path: &Path, document: &CatalogDocument) -> Result<(), MediaCatalogError> {
     let directory = path.parent().ok_or(MediaCatalogError::InvalidPath)?;
     let file_name = path
@@ -296,14 +356,8 @@ fn write_document(path: &Path, document: &CatalogDocument) -> Result<(), MediaCa
     if bytes.len() as u64 > MAX_CATALOG_BYTES {
         return Err(MediaCatalogError::TooLarge);
     }
-    let temporary = directory.join(format!(".{file_name}.tmp"));
+    let (temporary, mut file) = create_temporary(directory, &file_name)?;
     let result = (|| -> Result<(), MediaCatalogError> {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&temporary)
-            .map_err(|_| MediaCatalogError::Io)?;
         file.write_all(&bytes).map_err(|_| MediaCatalogError::Io)?;
         file.sync_all().map_err(|_| MediaCatalogError::Io)?;
         Ok(())
@@ -549,5 +603,43 @@ mod tests {
             MediaCatalog::upsert_image(&path, &nothing_allowed),
             Err(MediaCatalogError::InvalidEntry)
         );
+    }
+
+    #[test]
+    fn writers_at_once_keep_every_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(&path, "");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        std::thread::scope(|scope| {
+            for writer in 0..8 {
+                let path = &path;
+                scope.spawn(move || {
+                    for index in 0..10 {
+                        let name = format!("w{writer}-{index}.img");
+                        MediaCatalog::upsert_image(path, &image(&name, 1, 'e', false)).unwrap();
+                    }
+                });
+            }
+        });
+        let catalog = MediaCatalog::open(&path).unwrap();
+        assert_eq!(catalog.summaries().len(), 80, "an entry was lost");
+    }
+
+    #[test]
+    fn a_link_where_the_temporary_file_was_is_not_followed() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim");
+        fs::write(&victim, b"root's file").unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(&path, "");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&victim, directory.path().join(".catalog.json.tmp")).unwrap();
+        MediaCatalog::upsert_image(&path, &image("one.img", 1, 'f', false)).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"root's file");
+        assert_eq!(MediaCatalog::open(&path).unwrap().summaries().len(), 1);
     }
 }

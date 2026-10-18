@@ -704,6 +704,7 @@ name = "bli-kvm-media-catalog"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-core",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
