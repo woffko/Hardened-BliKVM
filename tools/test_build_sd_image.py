@@ -72,6 +72,18 @@ class BuildSdImageTests(unittest.TestCase):
             ],
         )
 
+    def test_the_root_names_its_system_sequence(self) -> None:
+        # A card written from the image refuses older system bundles by it
+        # (security review of 2026-10-18, MED-07); the RAW bundle builder
+        # checks it against its own sequence.
+        self.assertIn("SYSTEM_SEQUENCE=${BLI_KVM_IMAGE_SYSTEM_SEQUENCE:-}", self.script)
+        self.assertIn('*[!0-9]*) echo "BLI_KVM_IMAGE_SYSTEM_SEQUENCE is invalid"', self.script)
+        self.assertIn(
+            '> "$staging/usr/share/hardened-blikvm/system-update/system-sequence"',
+            self.script,
+        )
+        self.assertIn('"$IMAGE_RELEASE" "$SYSTEM_SEQUENCE"', self.script)
+
     def test_the_image_store_root_takes_the_store_mode_and_group(self) -> None:
         self.assertIn('set_inode_field / mode 040770" "$work/msd.ext4"', self.script)
         self.assertIn('set_inode_field / gid $store_gid" "$work/msd.ext4"', self.script)

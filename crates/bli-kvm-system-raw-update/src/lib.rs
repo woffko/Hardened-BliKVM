@@ -36,6 +36,10 @@ pub const PASSWD_FILE: &str = "passwd";
 pub const GROUP_FILE: &str = "group";
 /// The sequence of the last confirmed system bundle; older ones are refused.
 pub const CONFIRMED_FILE: &str = "confirmed-sequence";
+/// The system sequence of the root that carries it, relative to `/`, written
+/// by the image builder and checked by the RAW bundle builder; not carried,
+/// so it always names the root it is on.
+pub const SYSTEM_SEQUENCE_FILE: &str = "usr/share/hardened-blikvm/system-update/system-sequence";
 /// A new root that has not reported itself booted after this many boots is
 /// replaced by the backup.
 pub const MAX_BOOT_ATTEMPTS: u32 = 2;
@@ -669,6 +673,33 @@ pub fn minimum_sequence(staging: &Path) -> u64 {
         .ok()
         .and_then(|text| text.trim().parse::<u64>().ok())
         .map_or(1, |sequence| sequence.saturating_add(1))
+}
+
+/// The lowest system sequence `stage` may take on the device whose root is
+/// `root`: one above the last confirmed, and never below the running
+/// system's own, so a fresh card takes no older bundle either. A file that
+/// is there but cannot be read refuses, rather than counting as no floor
+/// (security review of 2026-10-18, MED-07).
+pub fn accepted_minimum(staging: &Path, root: &Path) -> Result<u64> {
+    let number = |path: &Path, what: &str| -> Result<Option<u64>> {
+        match fs::read_to_string(path) {
+            Ok(text) => text
+                .trim()
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|_| UpdateError::Check(format!("{what} cannot be read"))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    };
+    let confirmed = number(&staging.join(CONFIRMED_FILE), "the confirmed sequence")?;
+    let running = number(
+        &root.join(SYSTEM_SEQUENCE_FILE),
+        "the running system's sequence",
+    )?;
+    Ok(confirmed
+        .map_or(1, |sequence| sequence.saturating_add(1))
+        .max(running.unwrap_or(0)))
 }
 
 /// Drops a staged update that has not been written yet.

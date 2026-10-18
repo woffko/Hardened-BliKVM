@@ -565,6 +565,29 @@ fn the_operator_can_roll_back_and_confirmed_sequences_are_the_floor() {
     assert!(!fixture.staging.join("shadow").exists());
 }
 
+#[test]
+fn the_floor_counts_the_running_systems_own_sequence() {
+    use bli_kvm_system_raw_update::{SYSTEM_SEQUENCE_FILE, accepted_minimum};
+    // A fresh card has no confirmed sequence; its root says which system it
+    // is, so an older signed bundle is refused (security review of
+    // 2026-10-18, MED-07).
+    let staging = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 1);
+    let file = root.path().join(SYSTEM_SEQUENCE_FILE);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "6\n").unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 6);
+    fs::write(staging.path().join("confirmed-sequence"), "7\n").unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 8);
+    // A floor or a sequence that cannot be read is no floor of 1.
+    fs::write(staging.path().join("confirmed-sequence"), "seven\n").unwrap();
+    assert!(accepted_minimum(staging.path(), root.path()).is_err());
+    fs::remove_file(staging.path().join("confirmed-sequence")).unwrap();
+    fs::write(&file, "x\n").unwrap();
+    assert!(accepted_minimum(staging.path(), root.path()).is_err());
+}
+
 /// The real zstd, e2fsprogs and tar on image files; only mounting (which
 /// needs root) is replaced.
 struct RealExceptMount(bli_kvm_system_raw_update::SystemTools);

@@ -22,7 +22,7 @@ if not __package__:
 from tools import build_system_raw_bundle as builder
 
 
-TOOLS = ("openssl", "zstd", "mke2fs", "e2fsck", "resize2fs", "dumpe2fs")
+TOOLS = ("openssl", "zstd", "mke2fs", "e2fsck", "resize2fs", "dumpe2fs", "debugfs")
 
 
 @unittest.skipUnless(all(shutil.which(tool) for tool in TOOLS), "image tools missing")
@@ -45,12 +45,24 @@ class BuildSystemRawBundleTest(unittest.TestCase):
                 }
             )
         )
-        self.rootfs = self.work / "root.ext4"
+        self.rootfs = self.make_root("2\n")
+
+    def make_root(self, sequence: str | None, name: str = "root.ext4") -> Path:
+        """An ext4 root whose system sequence file says `sequence`."""
+        source = self.work / f"{name}.d"
+        if sequence is not None:
+            directory = source / "usr/share/hardened-blikvm/system-update"
+            directory.mkdir(parents=True)
+            (directory / "system-sequence").write_text(sequence)
+        else:
+            source.mkdir()
+        rootfs = self.work / name
         subprocess.run(
-            ["mke2fs", "-q", "-t", "ext4", "-b", "4096", str(self.rootfs), "16M"],
+            ["mke2fs", "-q", "-t", "ext4", "-b", "4096", "-d", str(source), str(rootfs), "16M"],
             check=True,
             capture_output=True,
         )
+        return rootfs
 
     def tearDown(self) -> None:
         shutil.rmtree(self.work)
@@ -130,6 +142,14 @@ class BuildSystemRawBundleTest(unittest.TestCase):
         )
         with self.assertRaises(builder.BuildError):
             self.build(private_key=other)
+
+    def test_the_root_must_name_the_bundles_sequence(self) -> None:
+        # The root says which system it is, so a card written from its image
+        # takes no older bundle (security review of 2026-10-18, MED-07).
+        for sequence, name in (("3\n", "other.ext4"), (None, "none.ext4"), ("x\n", "junk.ext4")):
+            with self.subTest(sequence=sequence), self.assertRaises(builder.BuildError):
+                self.build(rootfs=self.make_root(sequence, name))
+        self.assertTrue(self.build().exists())
 
     def test_invalid_versions_commits_and_sequences_are_refused(self) -> None:
         for overrides in (

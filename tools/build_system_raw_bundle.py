@@ -76,6 +76,25 @@ def public_key_hex(private_key: Path) -> str:
     return der.stdout[len(ED25519_SPKI_PREFIX):].hex()
 
 
+SYSTEM_SEQUENCE_FILE = "/usr/share/hardened-blikvm/system-update/system-sequence"
+
+
+def root_sequence(rootfs: Path) -> int | None:
+    """The system sequence the root names (the image builder writes it), if any."""
+    read = subprocess.run(
+        ["debugfs", "-R", f"cat {SYSTEM_SEQUENCE_FILE}", str(rootfs)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    text = read.stdout.strip()
+    if read.returncode != 0 or not text:
+        return None
+    if not text.isdigit():
+        raise BuildError("the root's system sequence cannot be read")
+    return int(text)
+
+
 def shrink_image(source: Path, target: Path) -> int:
     """Copies the ext4 image, shrinks it to its content and returns its size."""
     shutil.copyfile(source, target)
@@ -202,6 +221,14 @@ def build(
         raise BuildError("the trust file is invalid")
     if public_key_hex(private_key) != trust_root["publicKey"]:
         raise BuildError("the signing key does not match the trust file")
+    # A card written from the image knows which system it runs only from this
+    # file, and refuses older bundles by it.
+    named = root_sequence(rootfs)
+    if named != sequence:
+        raise BuildError(
+            f"the root names system sequence {named}, not {sequence}: build its image "
+            "with BLI_KVM_IMAGE_SYSTEM_SEQUENCE"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / f"hardened-blikvm-system-{version}-seq{sequence}.tar"
     with tempfile.TemporaryDirectory(prefix="hardened-system-bundle.") as temporary:

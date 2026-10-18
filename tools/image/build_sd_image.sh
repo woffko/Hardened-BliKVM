@@ -24,6 +24,12 @@ ENDPOINT_HOST=${BLI_KVM_DEVICE_HOST:?set BLI_KVM_DEVICE_HOST to the board addres
 # The release the image belongs to, shown on the About page.
 IMAGE_RELEASE=${BLI_KVM_IMAGE_RELEASE:-development}
 case "$IMAGE_RELEASE" in *[!A-Za-z0-9.+-]*|"") echo "BLI_KVM_IMAGE_RELEASE is invalid" >&2; exit 2 ;; esac
+# The system sequence of the RAW bundle built from this image's root. The root
+# keeps it, so a card written from the image refuses older system bundles, and
+# the bundle builder checks it against its own (empty: none, a development
+# image).
+SYSTEM_SEQUENCE=${BLI_KVM_IMAGE_SYSTEM_SEQUENCE:-}
+case "$SYSTEM_SEQUENCE" in *[!0-9]*) echo "BLI_KVM_IMAGE_SYSTEM_SEQUENCE is invalid" >&2; exit 2 ;; esac
 KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
 IMAGE_BYTES=$((28 * 1024 * 1024 * 1024))
 ROOT_START=8192
@@ -98,7 +104,7 @@ assemble() {
   # A fresh random salt per build; the password itself is the documented default.
   root_hash=$(openssl passwd -6 1234)
   fakeroot -s "$work/fakeroot.state" -- sh -eu -c '
-    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8
+    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8 system_sequence=$9
     # ACLs (journal directories) and xattrs are not reproduced; systemd
     # recreates the journal ACLs on the device.
     tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
@@ -289,7 +295,12 @@ assemble() {
     # The About page shows this as the system image version.
     printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"
-  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash" "$IMAGE_RELEASE"
+    if [ -n "$system_sequence" ]; then
+      install -d -m 0755 -o 0 -g 0 "$staging/usr/share/hardened-blikvm/system-update"
+      printf "%s\n" "$system_sequence" > "$staging/usr/share/hardened-blikvm/system-update/system-sequence"
+      chmod 0644 "$staging/usr/share/hardened-blikvm/system-update/system-sequence"
+    fi
+  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash" "$IMAGE_RELEASE" "$SYSTEM_SEQUENCE"
 
   # The image's initramfs must carry the RAW system update step.
   for initrd in "$staging"/boot/initrd.img-*; do

@@ -14,8 +14,8 @@ use std::process::{Command, Stdio};
 use bli_kvm_admin_helper::{FRAME_DATA, MAX_SYSTEM_BUNDLE_BYTES, SystemUpdateState, read_frame};
 use bli_kvm_system_image_verifier::SystemVerificationPolicy;
 use bli_kvm_system_raw_update::{
-    Phase, Record, StageRequest, SystemTools, UpdateError, cancel, confirm, load_trust,
-    minimum_sequence, read_record, request_rollback, stage, staging_path,
+    Phase, Record, StageRequest, SystemTools, UpdateError, accepted_minimum, cancel, confirm,
+    load_trust, minimum_sequence, read_record, request_rollback, stage, staging_path,
 };
 
 pub const TRUST_FILE: &str = "/usr/share/hardened-blikvm/system-update/system-trust.json";
@@ -36,7 +36,9 @@ fn error(error: UpdateError) -> io::Error {
 }
 
 fn view(staging: &Path, record: Option<Record>) -> SystemUpdateState {
-    let minimum_sequence = minimum_sequence(staging);
+    // Shown as the floor; staging refuses when it cannot be read.
+    let minimum_sequence =
+        accepted_minimum(staging, Path::new("/")).unwrap_or_else(|_| minimum_sequence(staging));
     match record {
         Some(record) => SystemUpdateState {
             phase: serde_json::to_value(record.phase)
@@ -210,7 +212,7 @@ pub fn stage_upload(upload: &Path) -> io::Result<SystemUpdateState> {
                 staging: &staging,
                 trust: &trust,
                 policy: &policy,
-                minimum_sequence: minimum_sequence(&staging),
+                minimum_sequence: accepted_minimum(&staging, Path::new("/")).map_err(error)?,
                 root: Path::new("/"),
                 root_uuid: &uuid,
                 fstab: Path::new("/etc/fstab"),
