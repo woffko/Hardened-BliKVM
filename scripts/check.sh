@@ -115,6 +115,10 @@ CARGO_TARGET_DIR="$agent_out/target" sh scripts/build-target-agent.sh "$agent_ou
 for program in hardened-blikvm-agent.exe hardened-blikvm-agent-test.exe; do
   cmp "$agent_out/first/$program" "$agent_out/second/$program"
 done
+# Every DLL the programs import is one Windows takes from its own folder,
+# and their DLL loads are limited to it.
+python3 tools/check_agent_imports.py "$agent_out/first/hardened-blikvm-agent.exe" \
+  "$agent_out/first/hardened-blikvm-agent-test.exe"
 # The agent's drive: the same bytes twice, a fixed disk's one FAT12
 # partition from 1 MiB labelled BLIKVMAGENT, with the agent, its README and
 # its sums.
@@ -301,6 +305,7 @@ node --check tools/playwright/video_frame_timing_probe.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
+  tools/test_check_agent_imports.py \
   tools/test_packaging_boundaries.py \
   tools/test_build_sd_image.py \
   tools/test_build_scripts_guard.py \

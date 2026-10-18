@@ -20,6 +20,13 @@ mod reads;
 
 #[cfg(windows)]
 fn main() {
+    // As the agent: DLLs loaded later come from the system folder only.
+    // SAFETY: a process-wide setting with a documented flag.
+    unsafe {
+        windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+            windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32,
+        );
+    }
     std::process::exit(windows::run());
 }
 

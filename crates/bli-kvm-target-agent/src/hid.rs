@@ -16,12 +16,11 @@ use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiGetClassDevsW, SetupDiGetDeviceInterfaceDetailW,
 };
 use windows_sys::Win32::Devices::HumanInterfaceDevice::{
-    HIDD_ATTRIBUTES, HIDP_CAPS, HIDP_STATUS_SUCCESS, HidD_FreePreparsedData, HidD_GetAttributes,
-    HidD_GetHidGuid, HidD_GetPreparsedData, HidP_GetCaps,
+    HIDD_ATTRIBUTES, HIDP_CAPS, HIDP_STATUS_SUCCESS, PHIDP_PREPARSED_DATA,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, GetLastError,
-    HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+    HANDLE, INVALID_HANDLE_VALUE, NTSTATUS, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, ReadFile,
@@ -29,6 +28,9 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::{
     CancelIoEx, GetOverlappedResult, GetOverlappedResultEx, OVERLAPPED,
+};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent};
 use windows_sys::core::GUID;
@@ -45,6 +47,68 @@ const REPORT_LENGTH: u16 = bli_kvm_agent_protocol::REPORT_BYTES as u16;
 /// How long one report may wait for the board.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// hid.dll's five functions, loaded from the system folder only: imported
+/// statically they would be looked for in the agent's own folder first,
+/// which may be a downloads folder others write to (security review of
+/// 2026-10-18, HIGH-08).
+struct HidApi {
+    get_hid_guid: unsafe extern "system" fn(*mut GUID),
+    get_attributes: unsafe extern "system" fn(HANDLE, *mut HIDD_ATTRIBUTES) -> bool,
+    get_preparsed_data: unsafe extern "system" fn(HANDLE, *mut PHIDP_PREPARSED_DATA) -> bool,
+    free_preparsed_data: unsafe extern "system" fn(PHIDP_PREPARSED_DATA) -> bool,
+    get_caps: unsafe extern "system" fn(PHIDP_PREPARSED_DATA, *mut HIDP_CAPS) -> NTSTATUS,
+}
+
+fn hid_api() -> io::Result<&'static HidApi> {
+    static API: std::sync::OnceLock<Option<HidApi>> = std::sync::OnceLock::new();
+    // SAFETY: `load` only asks Windows for the system folder's hid.dll and
+    // its functions by their documented names and signatures.
+    API.get_or_init(|| unsafe { load_hid_api() })
+        .as_ref()
+        .ok_or_else(|| io::Error::other("hid.dll could not be loaded from the system folder"))
+}
+
+/// Loads hid.dll from the system folder and takes its functions.
+///
+/// # Safety
+/// Each pointer is cast to the signature hid.dll documents for its name.
+unsafe fn load_hid_api() -> Option<HidApi> {
+    let name: Vec<u16> = "hid.dll\0".encode_utf16().collect();
+    // SAFETY: a zero-ended name; the module stays loaded for the process.
+    let module = unsafe { LoadLibraryExW(name.as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32) };
+    if module.is_null() {
+        return None;
+    }
+    // SAFETY: zero-ended names of functions of the module just loaded.
+    let symbol = |name: &[u8]| unsafe { GetProcAddress(module, name.as_ptr()) };
+    // SAFETY: each address is the function of that name, whose signature
+    // is the one given.
+    unsafe {
+        Some(HidApi {
+            get_hid_guid: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(*mut GUID),
+            >(symbol(b"HidD_GetHidGuid\0")?),
+            get_attributes: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(HANDLE, *mut HIDD_ATTRIBUTES) -> bool,
+            >(symbol(b"HidD_GetAttributes\0")?),
+            get_preparsed_data: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(HANDLE, *mut PHIDP_PREPARSED_DATA) -> bool,
+            >(symbol(b"HidD_GetPreparsedData\0")?),
+            free_preparsed_data: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(PHIDP_PREPARSED_DATA) -> bool,
+            >(symbol(b"HidD_FreePreparsedData\0")?),
+            get_caps: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(PHIDP_PREPARSED_DATA, *mut HIDP_CAPS) -> NTSTATUS,
+            >(symbol(b"HidP_GetCaps\0")?),
+        })
+    }
+}
+
 fn last_error() -> io::Error {
     // SAFETY: reads the calling thread's last error.
     io::Error::from_raw_os_error(unsafe { GetLastError() } as i32)
@@ -57,13 +121,14 @@ fn milliseconds(duration: Duration) -> u32 {
 /// The device path of the board's agent collection, zero-ended, if one is
 /// present.
 pub fn find() -> io::Result<Option<Vec<u16>>> {
+    let api = hid_api()?;
     // SAFETY: each call gets what Windows documents for it: the class GUID
     // it filled, structures with their size set, and a detail buffer of the
     // size the first call asked for, aligned for the structure; the set is
     // destroyed once.
     unsafe {
         let mut guid: GUID = zeroed();
-        HidD_GetHidGuid(&mut guid);
+        (api.get_hid_guid)(&mut guid);
         let set = SetupDiGetClassDevsW(
             &guid,
             null(),
@@ -142,20 +207,24 @@ fn is_agent_collection(path: &[u16]) -> bool {
         }
         let mut attributes: HIDD_ATTRIBUTES = zeroed();
         attributes.Size = size_of::<HIDD_ATTRIBUTES>() as u32;
-        let mut matches = HidD_GetAttributes(handle, &mut attributes)
+        let Ok(api) = hid_api() else {
+            CloseHandle(handle);
+            return false;
+        };
+        let mut matches = (api.get_attributes)(handle, &mut attributes)
             && attributes.VendorID == VENDOR_ID
             && attributes.ProductID == PRODUCT_ID;
         if matches {
             let mut preparsed = 0;
-            matches = HidD_GetPreparsedData(handle, &mut preparsed);
+            matches = (api.get_preparsed_data)(handle, &mut preparsed);
             if matches {
                 let mut caps: HIDP_CAPS = zeroed();
-                matches = HidP_GetCaps(preparsed, &mut caps) == HIDP_STATUS_SUCCESS
+                matches = (api.get_caps)(preparsed, &mut caps) == HIDP_STATUS_SUCCESS
                     && caps.UsagePage == USAGE_PAGE
                     && caps.Usage == USAGE
                     && caps.InputReportByteLength == REPORT_LENGTH
                     && caps.OutputReportByteLength == REPORT_LENGTH;
-                HidD_FreePreparsedData(preparsed);
+                (api.free_preparsed_data)(preparsed);
             }
         }
         CloseHandle(handle);

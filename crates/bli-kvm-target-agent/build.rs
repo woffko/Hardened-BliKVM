@@ -90,4 +90,8 @@ END
         "no resource compiler: install llvm-rc or set BLI_KVM_RC"
     );
     println!("cargo:rustc-link-arg-bins={}", res.display());
+    // The DLLs the programs import are searched in the system folder only
+    // (LOAD_LIBRARY_SEARCH_SYSTEM32), not in the folder they run from;
+    // tools/check_agent_imports.py checks the built programs.
+    println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
 }
