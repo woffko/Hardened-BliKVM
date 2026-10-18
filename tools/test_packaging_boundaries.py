@@ -2018,6 +2018,27 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
         self.assertGreaterEqual(checked, 15)
 
+    def test_the_owners_files_are_not_writable_by_its_group(self) -> None:
+        # The owner's drop-in gave its files group write (UMask=0007), so any
+        # account of the shared group could change the owner's state
+        # (security review of 2026-10-18, MED-12 item 1). Its control socket
+        # takes its mode explicitly.
+        dropin = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf"
+        ).read_text()
+        umasks = [line for line in dropin.splitlines() if line.startswith("UMask=")]
+        self.assertEqual(umasks, ["UMask=0027"])
+        server = (ROOT / "crates/bli-kvm-control-broker/src/server.rs").read_text()
+        self.assertIn(
+            "fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;", server
+        )
+        # And the files an older umask left so.
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "z /var/lib/hardened-blikvm-gadget/*.env 0640 root hardened-blikvm - -",
+            tmpfiles.splitlines(),
+        )
+
     def test_only_the_web_server_signals_the_encoders_demand(self) -> None:
         # The demand socket is its group's; of that group only the web server
         # may keep an encoder working (security review of 2026-10-18, MED-13).
