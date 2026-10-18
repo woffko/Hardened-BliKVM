@@ -132,6 +132,8 @@ struct Fixture {
     root: PathBuf,
     fstab: PathBuf,
     shadow: PathBuf,
+    passwd: PathBuf,
+    group: PathBuf,
     trust: SystemTrustRoot,
     policy: SystemVerificationPolicy,
     image: Vec<u8>,
@@ -185,6 +187,10 @@ fn fixture(sequence: u64) -> Fixture {
     fs::write(&fstab, "UUID=data /mnt ext4 defaults 0 2\n").unwrap();
     let shadow = dir.path().join("shadow");
     fs::write(&shadow, "root:$6$device:20000:0:99999:7:::\n").unwrap();
+    let passwd = dir.path().join("passwd");
+    fs::write(&passwd, "root:x:0:0::/root:/bin/sh\n").unwrap();
+    let group = dir.path().join("group");
+    fs::write(&group, "root:x:0:\n").unwrap();
     Fixture {
         _dir: dir,
         bundle,
@@ -193,6 +199,8 @@ fn fixture(sequence: u64) -> Fixture {
         root,
         fstab,
         shadow,
+        passwd,
+        group,
         trust,
         policy,
         image: payload,
@@ -214,6 +222,8 @@ fn stage_it(
             root_uuid: "a990fd36-0857-4856-b0b8-5c84a7df516f",
             fstab: &fixture.fstab,
             shadow: &fixture.shadow,
+            passwd: &fixture.passwd,
+            group: &fixture.group,
         },
         tools,
     )
@@ -419,6 +429,36 @@ fn a_failed_stage_leaves_nothing_behind() {
     // The next stage goes through.
     let mut tools = FakeTools::default();
     stage_it(&fixture, &mut tools).unwrap();
+}
+
+#[test]
+fn carried_owners_must_name_the_same_accounts_in_the_new_image() {
+    use bli_kvm_system_raw_update::owners_agree;
+    let board = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\noperator-tool:x:1500:1500::/:/bin/sh\n";
+    // The same allocation: the state's owners mean the same accounts.
+    assert_eq!(owners_agree(board, board), Ok(()));
+    // Another board-only account does not matter.
+    let image = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
+    assert_eq!(owners_agree(board, image), Ok(()));
+    // The image gives the server's id to another account: refused.
+    let swapped = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-quic:x:997:997::/:/usr/sbin/nologin\nhardened-blikvm-server:x:995:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, swapped).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-server"), "{refused}");
+}
+
+#[test]
+fn staging_keeps_the_boards_accounts_beside_its_shadow() {
+    let fixture = fixture(3);
+    let mut tools = FakeTools::default();
+    stage_it(&fixture, &mut tools).unwrap();
+    assert_eq!(
+        fs::read_to_string(fixture.staging.join("passwd")).unwrap(),
+        fs::read_to_string(&fixture.passwd).unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.staging.join("group")).unwrap(),
+        fs::read_to_string(&fixture.group).unwrap()
+    );
 }
 
 #[test]
@@ -816,6 +856,10 @@ fn the_bundle_builder_output_stages_and_writes() {
     fs::write(&fstab, "").unwrap();
     let shadow = dir.path().join("shadow");
     fs::write(&shadow, "root:!:1::::::\n").unwrap();
+    let passwd = dir.path().join("passwd");
+    fs::write(&passwd, "root:x:0:0::/root:/bin/sh\n").unwrap();
+    let group = dir.path().join("group");
+    fs::write(&group, "root:x:0:\n").unwrap();
     let mut tools = RealExceptMount(bli_kvm_system_raw_update::SystemTools);
     let request = StageRequest {
         bundle: &bundle,
@@ -827,6 +871,8 @@ fn the_bundle_builder_output_stages_and_writes() {
         root_uuid: "a990fd36-0857-4856-b0b8-5c84a7df516f",
         fstab: &fstab,
         shadow: &shadow,
+        passwd: &passwd,
+        group: &group,
     };
     let record = stage(&request, &mut tools).unwrap();
     assert_eq!((record.version.as_str(), record.sequence), ("1.4.0", 5));

@@ -30,6 +30,10 @@ pub const FSTAB_FILE: &str = "fstab";
 /// The device's `/etc/shadow`, merged into the new root per user so the
 /// image's default passwords never replace the operator's.
 pub const SHADOW_FILE: &str = "shadow";
+/// The board's accounts and groups, kept at stage to check the new image's
+/// against before the carried state is restored with its numeric owners.
+pub const PASSWD_FILE: &str = "passwd";
+pub const GROUP_FILE: &str = "group";
 /// The sequence of the last confirmed system bundle; older ones are refused.
 pub const CONFIRMED_FILE: &str = "confirmed-sequence";
 /// A new root that has not reported itself booted after this many boots is
@@ -265,6 +269,9 @@ pub struct StageRequest<'a> {
     pub fstab: &'a Path,
     /// The current `/etc/shadow`.
     pub shadow: &'a Path,
+    /// The current `/etc/passwd` and `/etc/group`.
+    pub passwd: &'a Path,
+    pub group: &'a Path,
 }
 
 /// Verifies the bundle and prepares the next boot's write.
@@ -343,6 +350,8 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
         )?;
         fs::copy(request.fstab, request.staging.join(FSTAB_FILE))?;
         copy_private(request.shadow, &request.staging.join(SHADOW_FILE))?;
+        fs::copy(request.passwd, request.staging.join(PASSWD_FILE))?;
+        fs::copy(request.group, request.staging.join(GROUP_FILE))?;
         let record = Record {
             schema: RECORD_SCHEMA,
             generation: previous_generation + 1,
@@ -578,6 +587,8 @@ fn discard(staging: &Path) {
         STATE_FILE,
         FSTAB_FILE,
         SHADOW_FILE,
+        PASSWD_FILE,
+        GROUP_FILE,
     ] {
         let _ = fs::remove_file(staging.join(file));
     }
@@ -705,6 +716,45 @@ pub fn merge_fstab(new_fstab: &str, device_fstab: &str, root_uuid: &str) -> Stri
 /// Gives every account of `new_shadow` that the device also has the device's
 /// password hash and aging fields; accounts only the new image has keep its
 /// entry and accounts only the device had are dropped with it.
+/// Whether the carried state's numeric owners mean the same accounts in the
+/// new image: root and every account of the project the board has keeps its
+/// id there, and no other account of the image takes one of those ids. The
+/// state is restored by number while the image allocates its own users, so a
+/// different allocation would give one service's files to another (security
+/// review of 2026-10-18, N5). Works for `/etc/group` as for `/etc/passwd`.
+pub fn owners_agree(device: &str, image: &str) -> std::result::Result<(), String> {
+    let entries = |text: &str| -> Vec<(String, String)> {
+        text.lines()
+            .filter_map(|line| {
+                let mut fields = line.split(':');
+                let name = fields.next()?.to_string();
+                let id = fields.nth(1)?.to_string();
+                (!name.is_empty()).then_some((name, id))
+            })
+            .collect()
+    };
+    let (device, image) = (entries(device), entries(image));
+    for (name, id) in &device {
+        if name != "root" && !name.starts_with("hardened-blikvm") {
+            continue;
+        }
+        if let Some((_, other_id)) = image.iter().find(|(other, _)| other == name)
+            && other_id != id
+        {
+            return Err(format!(
+                "{name} is {id} on the board and {other_id} in the new image"
+            ));
+        }
+        if let Some((other, _)) = image
+            .iter()
+            .find(|(other, other_id)| other_id == id && other != name)
+        {
+            return Err(format!("{name}'s {id} is {other} in the new image"));
+        }
+    }
+    Ok(())
+}
+
 pub fn merge_shadow(new_shadow: &str, device_shadow: &str) -> String {
     let name = |line: &str| line.split(':').next().unwrap_or_default().to_string();
     let mut out = String::new();
@@ -846,6 +896,15 @@ impl Tools for SystemTools {
             .ok_or_else(|| io::Error::other("mount path"))?;
         run("/bin/mount", &["-t", "ext4", device_str, mount_str])?;
         let result = (|| -> io::Result<()> {
+            // Before anything is changed: the carried owners must mean the
+            // same accounts. A stage of an older runtime kept no copies.
+            for (kept, image) in [(PASSWD_FILE, "etc/passwd"), (GROUP_FILE, "etc/group")] {
+                if let Ok(device) = fs::read_to_string(staging.join(kept)) {
+                    owners_agree(&device, &fs::read_to_string(mount.join(image))?).map_err(
+                        |conflict| io::Error::other(format!("the accounts differ: {conflict}")),
+                    )?;
+                }
+            }
             let env = mount.join("boot/armbianEnv.txt");
             let text = fs::read_to_string(&env)?;
             fs::write(&env, patch_armbian_env(&text, uuid))?;

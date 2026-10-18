@@ -215,6 +215,8 @@ pub fn stage_upload(upload: &Path) -> io::Result<SystemUpdateState> {
                 root_uuid: &uuid,
                 fstab: Path::new("/etc/fstab"),
                 shadow: Path::new("/etc/shadow"),
+                passwd: Path::new("/etc/passwd"),
+                group: Path::new("/etc/group"),
             },
             &mut SystemTools,
         )
