@@ -642,9 +642,10 @@ try {
     () => document.title === "Change Password - Hardened BliKVM",
   );
   inputs = page.locator("input");
-  assert.equal(await inputs.count(), 3);
-  await inputs.nth(1).fill(changedPassword);
+  assert.equal(await inputs.count(), 4);
+  await inputs.nth(1).fill(password);
   await inputs.nth(2).fill(changedPassword);
+  await inputs.nth(3).fill(changedPassword);
   phase = "password-change";
   const passwordResponse = page.waitForResponse(
     (response) =>

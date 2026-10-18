@@ -4473,6 +4473,158 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    /// An admin helper that answers root password requests with `replies`
+    /// in turn and hands back the passwords it was asked to set.
+    fn recording_admin_helper(
+        listener: tokio::net::UnixListener,
+        replies: Vec<&'static str>,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        use tokio::io::AsyncBufReadExt;
+        tokio::spawn(async move {
+            let mut passwords = Vec::new();
+            for reply in replies {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let request: bli_kvm_admin_helper::AdminRequest =
+                    serde_json::from_str(&line).unwrap();
+                let bli_kvm_admin_helper::AdminRequest::RootPassword { password } = request else {
+                    panic!("unexpected helper request");
+                };
+                passwords.push(password);
+                let mut stream = reader.into_inner();
+                stream
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            passwords
+        })
+    }
+
+    fn password_change(cookie: &str, csrf: &str, body: Value) -> Request<Body> {
+        let mut change = json_request(Method::POST, "/api/auth/password", body);
+        change
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        change
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        change
+    }
+
+    async fn logs_in_with(app: &Router, password: &str) -> bool {
+        let login = json_body(
+            app.clone()
+                .oneshot(json_request(
+                    Method::POST,
+                    "/api/auth/login",
+                    serde_json::json!({ "username": "operator", "password": password }),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        login["code"] == 0
+    }
+
+    #[tokio::test]
+    async fn the_password_changes_only_with_the_current_password() {
+        let root = tempdir().unwrap();
+        let socket = root.path().join("admin.sock");
+        let helper = recording_admin_helper(
+            tokio::net::UnixListener::bind(&socket).unwrap(),
+            vec![r#"{"status":"done"}"#, r#"{"status":"done"}"#],
+        );
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            admin_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        for body in [
+            serde_json::json!({ "username": "operator", "password": "second password" }),
+            serde_json::json!({
+                "username": "operator",
+                "password": "second password",
+                "currentPassword": "not the password"
+            }),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(password_change(&cookie, &csrf, body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        assert!(logs_in_with(&app, "initial password").await);
+        let changed = json_body(
+            app.clone()
+                .oneshot(password_change(
+                    &cookie,
+                    &csrf,
+                    serde_json::json!({
+                        "username": "operator",
+                        "password": "second password",
+                        "currentPassword": "initial password"
+                    }),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(changed["code"], 0);
+        assert!(logs_in_with(&app, "second password").await);
+        let passwords = tokio::time::timeout(std::time::Duration::from_secs(5), helper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(passwords, ["initial password", "second password"]);
+    }
+
+    #[tokio::test]
+    async fn a_root_password_the_helper_refuses_puts_the_account_back() {
+        let root = tempdir().unwrap();
+        let socket = root.path().join("admin.sock");
+        let helper = recording_admin_helper(
+            tokio::net::UnixListener::bind(&socket).unwrap(),
+            vec![
+                r#"{"status":"done"}"#,
+                r#"{"status":"refused","reason":"fixture"}"#,
+            ],
+        );
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            admin_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let refused = json_body(
+            app.clone()
+                .oneshot(password_change(
+                    &cookie,
+                    &csrf,
+                    serde_json::json!({
+                        "username": "operator",
+                        "password": "second password",
+                        "currentPassword": "initial password"
+                    }),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(refused["code"], 0);
+        let passwords = tokio::time::timeout(std::time::Duration::from_secs(5), helper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(passwords, ["initial password", "second password"]);
+        assert!(logs_in_with(&app, "initial password").await);
+        assert!(!logs_in_with(&app, "second password").await);
+    }
+
     #[tokio::test]
     async fn first_setup_and_password_changes_set_root_through_the_helper() {
         use tokio::io::AsyncBufReadExt;
@@ -4543,7 +4695,11 @@ mod tests {
         let mut change = json_request(
             Method::POST,
             "/api/auth/password",
-            serde_json::json!({ "username": "operator", "password": "second password" }),
+            serde_json::json!({
+                "username": "operator",
+                "password": "second password",
+                "currentPassword": "initial password"
+            }),
         );
         change
             .headers_mut()

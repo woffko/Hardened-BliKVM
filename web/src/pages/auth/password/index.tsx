@@ -48,20 +48,30 @@ export const Password = () => {
 
     const username = values.username;
     const password = encrypt(values.password);
+    const currentPassword = encrypt(values.currentPassword);
 
     api
-      .changePassword(username, password)
+      .changePassword(username, password, currentPassword)
       .then((rsp: any) => {
         if (rsp.code !== 0) {
-          setMsg(t('auth.error'));
+          setMsg(t(rsp.code === -403 ? 'auth.wrongCurrentPassword' : 'auth.error'));
           return;
         }
 
         removeToken();
         navigate('/auth/login', { replace: true });
       })
-      .catch(() => {
-        setMsg(t('auth.error'));
+      .catch((error: any) => {
+        const status = error?.response?.status;
+        setMsg(
+          t(
+            status === 403
+              ? 'auth.wrongCurrentPassword'
+              : status === 429
+                ? 'auth.locked'
+                : 'auth.error'
+          )
+        );
       });
   }
 
@@ -87,6 +97,18 @@ export const Password = () => {
             rules={[{ required: true, message: t('auth.noEmptyUsername'), min: 1 }]}
           >
             <Input disabled prefix={<UserOutlined />} placeholder={t('auth.placeholderUsername')} />
+          </Form.Item>
+
+          <Form.Item
+            name="currentPassword"
+            rules={[{ required: true, message: t('auth.noEmptyPassword') }]}
+          >
+            <Input
+              prefix={<LockOutlined />}
+              type="password"
+              autoComplete="current-password"
+              placeholder={t('auth.placeholderCurrentPassword')}
+            />
           </Form.Item>
 
           <Form.Item

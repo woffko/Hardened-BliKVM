@@ -263,6 +263,7 @@ node --check tools/playwright/agent_typing_contract.mjs
 node --check tools/build_agent_icon.mjs
 node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
+node --check tools/playwright/password_change_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
 node --check tools/playwright/on_screen_keyboard_contract.mjs
@@ -959,6 +960,7 @@ node tools/playwright/agent_typing_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs
+node tools/playwright/password_change_contract.mjs
 node tools/playwright/mobile_keys_contract.mjs
 node tools/playwright/touch_screen_reach_contract.mjs
 node tools/playwright/on_screen_keyboard_contract.mjs

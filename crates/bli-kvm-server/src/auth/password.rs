@@ -125,6 +125,11 @@ impl AccountStore {
         self.write_account(&account, false)
     }
 
+    /// Writes back an account read before a change that has to be undone.
+    pub fn put_back(&self, account: &Account) -> AppResult<()> {
+        self.write_account(account, false)
+    }
+
     /// Checks a login. An unknown or absent account is verified against a
     /// dummy hash of the same cost, so the time does not tell a right user name
     /// from a wrong one.
