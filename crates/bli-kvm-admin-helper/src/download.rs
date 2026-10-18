@@ -10,6 +10,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -18,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bli_kvm_admin_helper::{DownloadStatus, MAX_IMAGE_BYTES, PicoclawInstallStatus, RemoteIso};
+use bli_kvm_admin_helper::{
+    DownloadStatus, MAX_IMAGE_BYTES, PicoclawInstallStatus, RemoteIso, remote_authority,
+};
 use sha2::{Digest, Sha256};
 
 pub const CURL: &str = "/usr/bin/curl";
@@ -146,14 +149,81 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
         .collect())
 }
 
-/// One curl transfer with the reference limits, reporting progress and
-/// stopping when `still_enabled` turns false.
+/// How a download finds its hosts: the system's resolver and the address
+/// classes the redirect rule names; the tests stand in their own.
+#[derive(Clone, Copy)]
+pub struct Network {
+    pub resolve: fn(&str, u16) -> io::Result<Vec<IpAddr>>,
+    pub public: fn(IpAddr) -> bool,
+}
+
+impl Network {
+    pub const SYSTEM: Self = Self {
+        resolve: system_resolve,
+        public: is_public,
+    };
+}
+
+fn system_resolve(host: &str, port: u16) -> io::Result<Vec<IpAddr>> {
+    Ok((host, port)
+        .to_socket_addrs()?
+        .map(|address| address.ip())
+        .collect())
+}
+
+/// Whether an address is on the public internet: not private, CGNAT,
+/// unique-local, loopback, link-local or otherwise special.
+pub fn is_public(address: IpAddr) -> bool {
+    fn public_v4(address: Ipv4Addr) -> bool {
+        let [first, second, ..] = address.octets();
+        !(address.is_private()
+            || address.is_loopback()
+            || address.is_link_local()
+            || address.is_unspecified()
+            || address.is_broadcast()
+            || address.is_multicast()
+            || first == 0
+            || first >= 240
+            || (first == 100 && (64..128).contains(&second)))
+    }
+    match address {
+        IpAddr::V4(address) => public_v4(address),
+        IpAddr::V6(address) => match address.to_ipv4_mapped() {
+            Some(mapped) => public_v4(mapped),
+            None => {
+                let first = address.segments()[0];
+                !(address.is_loopback()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+                    || first & 0xfe00 == 0xfc00
+                    || first & 0xffc0 == 0xfe80)
+            }
+        },
+    }
+}
+
+/// The redirects one download may follow, as curl's own limit was.
+const MAX_REDIRECTS: usize = 5;
+
+/// One download with the reference limits, reporting progress and stopping
+/// when `still_enabled` turns false. The helper follows redirects itself:
+/// each hop's host is resolved first and curl is pinned to those addresses,
+/// and once a hop was on a public address a hop into a private, CGNAT or
+/// unique-local one is refused before anything is sent to it (security
+/// review of 2026-10-18, N8, decision 6). The operator's own URL may be
+/// private.
 pub struct Fetch<'a> {
     pub curl: &'a Path,
     pub url: &'a str,
     pub output: &'a Path,
     pub max_bytes: u64,
     pub max_seconds: u32,
+    pub network: Network,
+}
+
+enum Hop {
+    Done,
+    Redirect(String),
 }
 
 impl Fetch<'_> {
@@ -162,39 +232,115 @@ impl Fetch<'_> {
         still_enabled: impl Fn() -> bool,
         mut on_progress: impl FnMut(&str),
     ) -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(u64::from(self.max_seconds));
+        let mut url = self.url.to_string();
+        let mut public = false;
+        for _ in 0..=MAX_REDIRECTS {
+            let (host, port) = remote_authority(&url)
+                .ok_or_else(|| io::Error::other("the redirect leads to an invalid URL"))?;
+            let addresses = (self.network.resolve)(&host, port)?;
+            if addresses.is_empty() {
+                return Err(io::Error::other("the host has no address"));
+            }
+            if public
+                && !addresses
+                    .iter()
+                    .all(|address| (self.network.public)(*address))
+            {
+                return Err(io::Error::other(
+                    "a redirect from a public address into a private one was refused",
+                ));
+            }
+            public |= addresses
+                .iter()
+                .any(|address| (self.network.public)(*address));
+            let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
+            if remaining == 0 {
+                return Err(io::Error::other("the download took too long"));
+            }
+            let pinned = Pinned {
+                url: &url,
+                host: &host,
+                port,
+                addresses: &addresses,
+                max_seconds: remaining,
+            };
+            match self.transfer(&pinned, &still_enabled, &mut on_progress)? {
+                Hop::Done => return Ok(()),
+                Hop::Redirect(next) => url = next,
+            }
+        }
+        Err(io::Error::other("too many redirects"))
+    }
+
+    /// The curl arguments of one hop, which follows no redirect itself.
+    fn arguments(&self, hop: &Pinned) -> Vec<String> {
+        let addresses: Vec<String> = hop
+            .addresses
+            .iter()
+            .map(|address| match address {
+                IpAddr::V4(address) => address.to_string(),
+                IpAddr::V6(address) => format!("[{address}]"),
+            })
+            .collect();
+        [
+            "-q",
+            "--fail",
+            "--globoff",
+            "--proto",
+            "=http,https",
+            "--connect-timeout",
+            "20",
+            "--max-time",
+            &hop.max_seconds.to_string(),
+            "--speed-limit",
+            "1024",
+            "--speed-time",
+            "120",
+            "--max-filesize",
+            &self.max_bytes.to_string(),
+            "--resolve",
+            &format!("{}:{}:{}", hop.host, hop.port, addresses.join(",")),
+            "--write-out",
+            "%{http_code} %{redirect_url}",
+            "--progress-bar",
+            "--output",
+        ]
+        .map(str::to_string)
+        .into_iter()
+        .chain([
+            self.output.display().to_string(),
+            "--".into(),
+            hop.url.into(),
+        ])
+        .collect()
+    }
+
+    fn transfer(
+        &self,
+        hop: &Pinned,
+        still_enabled: &impl Fn() -> bool,
+        on_progress: &mut impl FnMut(&str),
+    ) -> io::Result<Hop> {
         let mut child = Command::new(self.curl)
             .env_clear()
-            .args([
-                "-q",
-                "--fail",
-                "--location",
-                "--proto",
-                "=http,https",
-                "--proto-redir",
-                "=http,https",
-                "--max-redirs",
-                "5",
-                "--connect-timeout",
-                "20",
-                "--max-time",
-                &self.max_seconds.to_string(),
-                "--speed-limit",
-                "1024",
-                "--speed-time",
-                "120",
-                "--max-filesize",
-                &self.max_bytes.to_string(),
-                "--progress-bar",
-                "--output",
-            ])
-            .arg(self.output)
-            .arg("--")
-            .arg(self.url)
+            .args(self.arguments(hop))
             .current_dir("/")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+        let written = {
+            let mut stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("curl has no stdout"))?;
+            thread::spawn(move || {
+                let mut text = String::new();
+                let _ = (&mut stdout).take(4096).read_to_string(&mut text);
+                text
+            })
+        };
         let progress = Arc::new(Mutex::new(String::new()));
         let reader = {
             let progress = Arc::clone(&progress);
@@ -235,6 +381,7 @@ impl Fetch<'_> {
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = reader.join();
+                    let _ = written.join();
                     return Err(io::Error::other("the download was switched off"));
                 }
             }
@@ -252,10 +399,32 @@ impl Fetch<'_> {
             thread::sleep(Duration::from_millis(200));
         };
         let tail = reader.join().unwrap_or_default();
+        let written = written.join().unwrap_or_default();
         if !status.success() {
             return Err(io::Error::other(curl_error(&tail)));
         }
-        Ok(())
+        Ok(parse_hop(&written))
+    }
+}
+
+/// One hop's URL, its host and port, and the addresses curl is pinned to.
+struct Pinned<'a> {
+    url: &'a str,
+    host: &'a str,
+    port: u16,
+    addresses: &'a [IpAddr],
+    max_seconds: u64,
+}
+
+/// curl's `--write-out`: a redirect's status and the URL it names.
+fn parse_hop(written: &str) -> Hop {
+    let mut words = written.split_whitespace();
+    match (
+        words.next().and_then(|code| code.parse::<u16>().ok()),
+        words.next(),
+    ) {
+        (Some(300..=399), Some(next)) if !next.is_empty() => Hop::Redirect(next.to_string()),
+        _ => Hop::Done,
     }
 }
 
@@ -266,6 +435,7 @@ pub struct Download<'a> {
     pub downloads: &'a Path,
     pub status: &'a Path,
     pub curl: &'a Path,
+    pub network: Network,
 }
 
 impl Download<'_> {
@@ -298,6 +468,7 @@ impl Download<'_> {
             output: temporary,
             max_bytes: MAX_IMAGE_BYTES,
             max_seconds: 7200,
+            network: self.network,
         };
         request.run(still_enabled, |current| {
             let _ = write_status(self.status, &in_progress(&self.iso.url, current));
@@ -320,6 +491,7 @@ impl Download<'_> {
 /// installs only its `picoclaw` executable.
 pub struct RuntimeInstall<'a> {
     pub curl: &'a Path,
+    pub network: Network,
     pub tar: &'a Path,
     pub url: &'a str,
     pub sha256: &'a str,
@@ -377,6 +549,7 @@ impl RuntimeInstall<'_> {
             output: archive,
             max_bytes: self.bytes,
             max_seconds: 600,
+            network: self.network,
         }
         .run(still_enabled, |current| {
             let percent: f64 = current.trim_end_matches('%').parse().unwrap_or(0.0);
@@ -509,12 +682,194 @@ mod tests {
         drop(taken);
     }
 
+    fn one_public_address(_host: &str, _port: u16) -> io::Result<Vec<IpAddr>> {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))])
+    }
+
+    /// Every host is one public address: the tests make no lookups.
+    const OFFLINE: Network = Network {
+        resolve: one_public_address,
+        public: is_public,
+    };
+
     /// A stand-in for curl that writes `content` to the `--output` path.
     fn fake_curl(dir: &Path, script: &str) -> PathBuf {
         let path = dir.join("curl");
         fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    #[test]
+    fn curl_runs_with_globbing_off_and_follows_no_redirect_itself() {
+        // curl's URL globbing turned `[ ] { }` into many requests, and curl
+        // followed redirects anywhere (security review of 2026-10-18, MED-05,
+        // N8).
+        let dir = tempfile::tempdir().unwrap();
+        let arguments = dir.path().join("arguments");
+        let curl = fake_curl(
+            dir.path(),
+            &format!("printf '%s\\n' \"$@\" > '{}'", arguments.display()),
+        );
+        let output = dir.path().join("out");
+        Fetch {
+            curl: &curl,
+            url: "https://mirror.example/rescue.iso",
+            output: &output,
+            max_bytes: 10,
+            max_seconds: 60,
+            network: OFFLINE,
+        }
+        .run(|| true, |_| {})
+        .unwrap();
+        let arguments = fs::read_to_string(&arguments).unwrap();
+        let arguments: Vec<&str> = arguments.lines().collect();
+        assert!(arguments.contains(&"--globoff"), "{arguments:?}");
+        assert!(!arguments.contains(&"--location") && !arguments.contains(&"-L"));
+        let resolve = arguments
+            .iter()
+            .position(|argument| *argument == "--resolve");
+        assert_eq!(
+            resolve.map(|index| arguments[index + 1]),
+            Some("mirror.example:443:192.0.2.1")
+        );
+        assert_eq!(arguments.last(), Some(&"https://mirror.example/rescue.iso"));
+    }
+
+    /// A stand-in HTTP server on `address`: it answers each request with
+    /// `answer(path)` and counts the requests.
+    fn serve(
+        address: Ipv4Addr,
+        answer: impl Fn(&str) -> String + Send + 'static,
+    ) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind((address, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&requests);
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap_or("/");
+                let _ = stream.write_all(answer(path).as_bytes());
+            }
+        });
+        (port, requests)
+    }
+
+    fn found(location: &str) -> String {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    fn image(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// The test's two hosts on loopback: one stands for the public internet,
+    /// the other for the operator's network.
+    fn two_hosts(host: &str, _port: u16) -> io::Result<Vec<IpAddr>> {
+        match host {
+            "public.test" => Ok(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]),
+            "intranet.test" => Ok(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))]),
+            _ => Err(io::Error::other("unknown host")),
+        }
+    }
+
+    fn only_the_first_is_public(address: IpAddr) -> bool {
+        address == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+    }
+
+    #[test]
+    fn a_redirect_from_a_public_address_into_a_private_one_is_refused() {
+        // A remote server could make the board send requests into the
+        // operator's network (security review of 2026-10-18, N8, decision 6).
+        let curl = Path::new(CURL);
+        assert!(curl.exists(), "the tests need {CURL}");
+        let (intranet, intranet_requests) = serve(Ipv4Addr::new(127, 0, 0, 2), |_| {
+            image("the operator's image")
+        });
+        let (public, public_requests) =
+            serve(Ipv4Addr::new(127, 0, 0, 1), move |path| match path {
+                "/start.iso" => found(&format!("http://intranet.test:{intranet}/rescue.iso")),
+                "/moved.iso" => found("/rescue.iso"),
+                _ => image("the public image"),
+            });
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out");
+        let network = Network {
+            resolve: two_hosts,
+            public: only_the_first_is_public,
+        };
+        let fetch = |url: &str| {
+            Fetch {
+                curl,
+                url,
+                output: &output,
+                max_bytes: 1024,
+                max_seconds: 60,
+                network,
+            }
+            .run(|| true, |_| {})
+        };
+        let error = fetch(&format!("http://public.test:{public}/start.iso")).unwrap_err();
+        assert!(error.to_string().contains("refused"), "{error}");
+        assert_eq!(
+            intranet_requests.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(public_requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // A redirect on the public side is followed.
+        fetch(&format!("http://public.test:{public}/moved.iso")).unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), "the public image");
+        // The operator's own URL may name a private address.
+        fetch(&format!("http://intranet.test:{intranet}/rescue.iso")).unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), "the operator's image");
+        assert_eq!(
+            intranet_requests.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn the_address_classes_of_the_redirect_rule() {
+        for private in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "127.0.0.1",
+            "169.254.1.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "224.0.0.1",
+            "fd00::1",
+            "fe80::1",
+            "::1",
+            "::",
+            "::ffff:192.168.1.1",
+        ] {
+            assert!(!is_public(private.parse().unwrap()), "{private}");
+        }
+        for public in [
+            "93.184.216.34",
+            "100.63.255.255",
+            "100.128.0.1",
+            "2001:4860::8888",
+        ] {
+            assert!(is_public(public.parse().unwrap()), "{public}");
+        }
     }
 
     #[test]
@@ -537,6 +892,7 @@ head -c 32769 /dev/zero > "$2"; printf 'CD001' >> "$2"; printf '\r##  50.0%%' >&
             downloads: &downloads,
             status: &status,
             curl: &curl,
+            network: OFFLINE,
         };
         let error = download.run(|| true).unwrap_err();
         assert!(error.to_string().contains("prepared no file"), "{error}");
@@ -619,6 +975,7 @@ printf 'hello' > "$2""#;
         let status = dir.path().join("install.json");
         let install = RuntimeInstall {
             curl: &curl,
+            network: OFFLINE,
             tar: Path::new("/bin/tar"),
             url: "https://example.org/picoclaw.tar.gz",
             sha256: &digest,

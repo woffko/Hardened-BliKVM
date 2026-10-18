@@ -342,6 +342,7 @@ fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
         downloads: Path::new(bli_kvm_admin_helper::DOWNLOAD_DROP),
         status,
         curl: Path::new(download::CURL),
+        network: download::Network::SYSTEM,
     };
     match job.run(remote_download_enabled) {
         Ok(()) => {
@@ -389,6 +390,7 @@ fn install_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
     eprintln!("admin helper: picoclaw install started");
     let install = download::RuntimeInstall {
         curl: Path::new(download::CURL),
+        network: download::Network::SYSTEM,
         tar: Path::new("/bin/tar"),
         url: PICOCLAW_RELEASE_URL,
         sha256: PICOCLAW_RELEASE_SHA256,

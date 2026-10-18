@@ -80,9 +80,11 @@ and are socket-activated per connection.
     reach localhost alone); it may not reach the board's own loopback,
     link-local or multicast addresses, except a local DNS stub, nor the
     board owner's, the admin helper's or the update services' sockets;
-  - it accepts only `http`/`https` URLs without credentials whose last path
-    segment is an `.iso` name the store accepts, one download at a time
-    (a lock next to the status file, 0640, which the web server probes);
+  - it accepts only `http`/`https` URLs without credentials, with an ASCII
+    host name and none of `[ ] { }` anywhere (so no IPv6 literal host),
+    whose last path segment is an `.iso` name the store accepts, one
+    download at a time (a lock next to the status file, 0640, which the web
+    server probes);
   - before forwarding a download, the web server empties the drop directory
     `.downloads` in the image store (the server's, 0750, the helper's group)
     and prepares in it one empty file for the image (the server's, 0660, the
@@ -91,11 +93,17 @@ and are socket-activated per connection.
     store, the catalog or `/etc/hardened-blikvm-gadget`; it passes through
     `/var/lib/hardened-blikvm-gadget` only to read the switches (an ACL
     entry `u:hardened-blikvm-download:--x`);
-  - `curl` runs with a cleared environment and the reference limits (HTTP(S)
-    redirects only, 5 redirects, 2 h, a stall limit), except that a file may
-    be as large as an upload (64 GiB, the reference's is 8 GiB), into the
+  - `curl` runs with a cleared environment, URL globbing off and the
+    reference limits (HTTP(S) only, 2 h, a stall limit), except that a file
+    may be as large as an upload (64 GiB, the reference's is 8 GiB), into the
     prepared file; progress goes to `/run/hardened-blikvm-download/status.json`
     in the reference shape;
+  - the helper follows redirects itself, up to 5: it resolves each hop's
+    host, pins curl to those addresses (`--resolve`) and reads the next hop
+    from curl's `--write-out`. Once a hop was on a public address, a hop into
+    a private, CGNAT, unique-local, loopback or link-local one is refused
+    before anything is sent to it; the operator's own URL may name a private
+    address (security review of 2026-10-18, MED-05, N8);
   - a finished file must carry the ISO 9660 magic, and the helper reports it
     `finished` (read as idle by the page); a failure empties the file and
     reports `failed` for 30 seconds;

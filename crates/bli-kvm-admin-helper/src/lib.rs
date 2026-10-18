@@ -272,22 +272,49 @@ pub struct RemoteIso {
     pub filename: String,
 }
 
+/// The host and port of an HTTP(S) URL without credentials, as the download
+/// helper resolves and pins it. curl's URL globbing is off, and `[ ] { }`
+/// are refused anywhere in the URL all the same (an IPv6 literal host with
+/// them; security review of 2026-10-18, MED-05); a host name is ASCII.
+pub fn remote_authority(raw: &str) -> Option<(String, u16)> {
+    if raw.is_empty()
+        || raw.len() > 2048
+        || raw
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, ' ' | '[' | ']' | '{' | '}'))
+    {
+        return None;
+    }
+    let (scheme, rest) = raw.split_once("://")?;
+    let default_port = match scheme.to_ascii_lowercase().as_str() {
+        "http" => 80,
+        "https" => 443,
+        _ => return None,
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.contains('@') {
+        return None;
+    }
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, port.parse::<u16>().ok().filter(|port| *port != 0)?),
+        None => (authority, default_port),
+    };
+    let valid_host = !host.is_empty()
+        && host.len() <= 253
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
+    valid_host.then(|| (host.to_ascii_lowercase(), port))
+}
+
 /// HTTP(S) URLs without credentials whose last path segment is an `.iso`
 /// image name the store accepts, as in the reference.
 pub fn validate_remote_iso(raw: &str) -> Option<RemoteIso> {
     let raw = raw.trim();
-    if raw.is_empty() || raw.len() > 2048 || raw.chars().any(|ch| ch.is_control() || ch == ' ') {
-        return None;
-    }
-    let (scheme, rest) = raw.split_once("://")?;
-    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
-        return None;
-    }
+    remote_authority(raw)?;
+    let (_, rest) = raw.split_once("://")?;
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    if authority.is_empty() || authority.contains('@') {
-        return None;
-    }
     let path = rest[authority_end..]
         .split(['?', '#'])
         .next()
@@ -460,9 +487,25 @@ mod tests {
             "https://example.org/a b.iso",
             "https://example.org/..%2f.iso",
             "file:///etc/passwd.iso",
+            // Glob characters anywhere, not only in the name (MED-05).
+            "https://example.org/a{1,2}/x.iso",
+            "https://example.org/[1-9]/x.iso",
+            "https://example.org/x.iso?a=[1]",
+            "https://[2001:db8::1]/x.iso",
+            "https://example.org:0/x.iso",
+            "https://example.org:x/x.iso",
+            "https://exämple.org/x.iso",
         ] {
             assert!(validate_remote_iso(bad).is_none(), "{bad}");
         }
+        assert_eq!(
+            remote_authority("https://Mirror.Example:8443/x.iso"),
+            Some(("mirror.example".into(), 8443))
+        );
+        assert_eq!(
+            remote_authority("http://mirror.example?x"),
+            Some(("mirror.example".into(), 80))
+        );
     }
 
     #[test]
