@@ -133,3 +133,50 @@ board was read once, read only (`evidence/private/security-20261018/board-facts-
   boot (on 2026-10-18 dated 2026-07-29) and replaced only after 7 days of
   running; until then the server refuses every QUIC session ("clock") and
   the page uses the standard transport. Functional, medium (E17).
+
+## Fixes
+
+The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
+(each commit names the test that failed on the code before it and passes
+after). "Board" says where the fix was seen on the test board: slot 97
+(0.1.0-beta.9, `1ab799d`) carries phases B to D; phase E is the system
+release's and is seen at gate E.
+
+| Item | Finding | Commit | Test that failed before | State |
+| --- | --- | --- | --- | --- |
+| B1 | HIGH-05, N9 | `946b5d9` | the limiter counts a source whatever the name; a full table still locks | fixed; slot 97 |
+| B2 | MED-04 | `05d2ff7`, `fa8de18` | a password change without the current password is refused; root's password follows the account's | fixed; slot 97 |
+| B3 | HIGH-06 | `eb9ba47`, `78d2804` | every live session, a QUIC page's too, is capped at a tightened lock | fixed; slot 97 |
+| B4 | MED-11 | `33c2e9d` | `/api/ws` refuses a message over 64 bytes; PicoClaw's lock is taken once upstream answers | fixed; slot 97 |
+| B5 | MED-06 | `f3c48d3` | an empty upload leaves the image of its name | fixed; slot 97 |
+| B6 | MED-06 | `7a376e4`, `a43edb2` | catalog changes under a lock, through a file of their own | fixed; slot 97 |
+| B7 | LOW-03 | `417c24d` | (passed before) | not confirmed: every unit with the owner's socket has the restricted surface; pinned by a test |
+| B8 | LOW-05 | `4b7f03c` | the serial path's pattern, picocom's options, the UUID fallback, PicoClaw's keys at logout | fixed; slot 97 |
+| B9 | E5's first step | `b91a95a` | (passed before) | not needed: the slot takes the catalog's path from the system's units; pinned by a test |
+| C1 | MED-01 | `fa561cc` | the owner's socket refuses a peer other than root and the server | fixed; slot 97 (no peer refused on the board) |
+| C2 | CRIT-02 | `f943eef` | a link or a second link in the store is refused; the LUN is given the checked file's descriptor | fixed; slot 97 (LUN 0 reads back the real path) |
+| C3 | MED-12 | `2833f19` | the owner's state files are 0640 | fixed; slot 97 |
+| C4 | (boardd) | `d57365d` | a damaged status image is refused, not a panic | fixed; slot 97 |
+| C5 | MED-01 | `9104bdd` | the platform broker refuses another peer | fixed; slot 97 (disabled on the board) |
+| C6 | LOW-03 | `e7591a6` | `all`, `default`, `lo`, `.`, `..` are refused | fixed; slot 97 |
+| D1 | HIGH-08 | `158da00` | clipboard, layout and monitors are held back while Windows is locked | fixed; slot 97; the operator's check at gate B–D |
+| D2 | HIGH-08 | `5f82f8e` | `hid.dll` from the system folder only; the import check of the agent | fixed; slot 97; the operator's check at gate B–D |
+| D3 | MED-13 | `d3c1860` | the agent's channel is opened unshared | fixed; slot 97; the operator's check at gate B–D |
+| D4 | N7 | `446992c` | the start line runs only a file with the board's agent's SHA-256 | fixed; slot 97; the operator's check at gate B–D |
+| E1 | MED-09, N2 | `b286e56` | no stager temporary in a store's root; old ones are cleaned, also by the exec store | fixed; gate E |
+| E2 | LOW-01 | `dae71b2` | the journal rolls its history over at 64 finished records | fixed; gate E |
+| E3 | HIGH-02, HIGH-04, MED-07, MED-08, LOW-02, N3, N4, N5 | `c83cf11`, `43e7df2`, `49e48b6`, `de4677f`, `6ccb846`, `ed83bde`, `591888b`, `5ca99ad` | the update state carried; one file system and a retry; a failed stage cleaned; carried owners checked; a canonical UUID; the running system's sequence in the floor; staged digests; `e2fsck` status 4 stops | fixed; gate E |
+| E4 | N1, MED-06 | `bd62801` | the worker's own account; it fills only the file the server prepared; the server publishes | fixed; gate E |
+| E5 | CRIT-01 | `73da924` | no root unit reads a configuration under a directory another account may write; the catalog copied once | fixed; gate E. boardd's own check of its directory ships in the first slot after the system release |
+| E6 | MED-12 | `ad21c51` | the image store is sticky | fixed; gate E |
+| E7 | MED-01 | `05e95d3` | the confirmation refuses another account | fixed; gate E |
+| E8 | MED-03, N6 | `04a0c69` | Janus's own loopback address; every non-client unit denies it; every Janus port in its unit | fixed; gate E (WebRTC probes) |
+| E9 | MED-05, N8 | `bb7be32` | glob characters refused; `--globoff`; a public-to-private redirect refused | fixed; gate E |
+| E10 | MED-06 | — | — | not needed: after E4 the helper writes no catalog (pinned by a test) |
+| E11 | MED-13 | `046fcb7` | the demand socket refuses another account and closes connections beyond its cap | fixed; gate E |
+| E12 | MED-12 | `5b5803a` | the owner's umask 0027 | fixed; gate E |
+| E13 | LOW-07, N6 | `0a1ac89` | the verifier covers every unit; the remount's and the boot report's sandboxes; nginx's ciphers | fixed; gate E |
+| E14 | LOW-04 | `66fcf5e` | the image leaves the jiggler, the revert records and the board's `nginx.conf` | fixed; gate E |
+| E15 | RustSec of beta.8 | `b35e147` | `cargo audit`: five advisories before, none after | fixed; gate E |
+| E16 | MED-10, HIGH-07, MED-02 | — | — | optional, at the operator's choice |
+| E17 | N11 | `9ff9a62` | a certificate made by a clock months behind is replaced | fixed; gate E |
