@@ -77,6 +77,24 @@ calls the agent for:
 Every value is bounded in the crate and checked on both ends (`reads.rs`);
 an answer must fit its call.
 
+Since the security review of 2026-10-18:
+
+- While the target's session is locked, the agent answers a clipboard read
+  or write, a layout switch, a monitors' change and its keep with the
+  refusal "the target's session is locked" (D1): the locked screen is not
+  the operator's desktop. The other calls, and those the board makes to
+  learn the agent's state, are answered as before.
+- The agent takes `hid.dll` (and any DLL that is not one of Windows' known
+  ones) from the system folder only: it loads it at run time with
+  `LOAD_LIBRARY_SEARCH_SYSTEM32`, its load configuration asks the same for
+  every DLL (`DependentLoadFlags`), and it sets the process's default DLL
+  directories at start, so a DLL beside it, in a downloads folder for
+  example, is never loaded (D2). `tools/check_agent_imports.py` checks the
+  built program's import table and load configuration.
+- The agent opens its HID channel unshared, so another program cannot open
+  the device beside it while it runs (D3); the agent's test tool is
+  refused meanwhile.
+
 ## The board
 
 The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
@@ -173,7 +191,12 @@ through the owner; the platform names the feature `target_agent`.
   of a second for the Run box from when Win+R has been sent, and a
   PowerShell line typed at the US layout's positions (the target's layout
   in front must be English) that finds the drive by its label and starts
-  the agent from it, its window hidden. An agent whose commit is not the
+  the agent from it, its window hidden. The line runs only a file whose
+  SHA-256 is the board's agent's (the agent's state names it, from
+  `agent/SHA256SUMS` of the slot's web tree), so another volume labelled
+  `BLIKVMAGENT`, an image on LUN 0 for example, starts nothing; without
+  that digest the page does not offer the start (security review of
+  2026-10-18, N7, D4). An agent whose commit is not the
   board's is said not to be the board's version, and the same start is
   offered as "Update the agent on the target", waited for until the
   board's agent is the connected one (decision 1 of the plan of

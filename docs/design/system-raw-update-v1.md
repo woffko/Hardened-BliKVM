@@ -168,6 +168,38 @@ carries. This takes effect from the RAW update that a board stages with this
 runtime: an older runtime's staging leaves them out, and the board then has
 the image's application state, as before.
 
+Also since that review, in the runtime that carries it:
+
+- The state is archived within its file system (`tar --one-file-system`):
+  the virtual media partition, mounted inside a carried directory, is not
+  device state and once made an update fail or fill the root (N3). A file
+  that changes while it is read (tar's status 1, the services run
+  meanwhile) is archived once more; a second change is reported.
+- A stage that fails removes what it left (the payload, `.new` files) and
+  marks an earlier staged record failed (N4).
+- The device's `/etc/passwd` and `/etc/group` are kept at the stage, and the
+  write is refused before anything is written when the new root does not
+  give every carried owner the account and group of the same name (owners
+  are carried by number; N5).
+- The root's UUID must be canonical, at the stage and in the boot step
+  (MED-08).
+- The floor is the larger of the confirmed sequence plus one and the running
+  system's own sequence, which the image keeps in
+  `/usr/share/hardened-blikvm/system-update/system-sequence`
+  (`BLI_KVM_IMAGE_SYSTEM_SEQUENCE` at its build; the bundle builder refuses a
+  root that does not name the bundle's sequence). So a card written from an
+  image refuses older system bundles; a floor that cannot be read refuses
+  (MED-07).
+- The record keeps the digests of `state.tar`, `fstab`, `shadow`, `passwd`
+  and `group`, which the boot step checks before it makes the backup
+  (HIGH-02, against a damaged card).
+- The boot step stops when `e2fsck -p` leaves errors uncorrected (status 4
+  or more; LOW-02).
+- The media catalog lives in `/var/lib/hardened-blikvm-gadget/catalog`, and
+  tmpfiles copy it from its former place in `/etc/hardened-blikvm-gadget`
+  (also carried) when the new place has none, so a board updated from a
+  root that had it there keeps its images listed (CRIT-01).
+
 ## Components
 
 - `crates/bli-kvm-system-raw-update`: the stage, boot, booted, confirm,

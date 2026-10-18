@@ -64,7 +64,8 @@ find.
 - **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
   system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
   of the main connection), a firewall with four modes and a confirmation that
-  rolls back by itself, time, system log, Tailscale, account, session lock,
+  rolls back by itself, time, system log, Tailscale, account (a new password
+  needs the current one), session lock,
   and the board's display going dark after a time without activity (its
   button lights it again).
 - **Updates**: signed application slots with a health check and automatic
@@ -81,9 +82,11 @@ find.
   the letters typed on a phone; the on-screen keyboard does not follow a
   layout switched on the target itself, as by Alt+Shift), changes the
   monitors' mode (undone after 15 s unless kept), passes clipboard text both
-  ways and locks the session. "Start the agent" types its start line on the
-  target, also as "Update the agent" over an agent that is not the board's
-  version, which then leaves; the agent's own menu can start it at
+  ways and locks the session; while the target's session is locked the
+  agent refuses the clipboard, the layout and the monitors. "Start the
+  agent" types its start line on the target, which runs only a file with
+  the board's agent's SHA-256, also as "Update the agent" over an agent that
+  is not the board's version, which then leaves; the agent's own menu can start it at
   sign-in, from a copy that follows the agent started last. Only the agent
   of the session at the console serves the board. The quality monitor's
   Agent row says its state
@@ -132,8 +135,8 @@ On the target, the optional agent (`hardened-blikvm-agent.exe`, built
 reproducibly from `crates/bli-kvm-target-agent` by
 `scripts/build-target-agent.sh`) runs as the signed-in user, finds the
 board's collection and answers only the calls the protocol names
-(`crates/bli-kvm-agent-protocol`); it opens no network connection and runs
-no command.
+(`crates/bli-kvm-agent-protocol`); it opens no network connection, runs
+no command and loads DLLs from the system folder only.
 
 Design notes are under [`docs/design`](docs/design): the QUIC transport, the
 firewall contract, the administration features, the video encoders (software,
@@ -141,6 +144,7 @@ and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
 agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261018-security-review.md`](docs/baselines/audit-20261018-security-review.md),
 [`audit-20261017-review.md`](docs/baselines/audit-20261017-review.md),
 [`audit-20261014-target-agent.md`](docs/baselines/audit-20261014-target-agent.md),
 [`audit-20261009-upscaling-phases.md`](docs/baselines/audit-20261009-upscaling-phases.md),
