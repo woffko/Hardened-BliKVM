@@ -1,27 +1,26 @@
 //! Remote ISO download into the virtual media store, while switched on.
 //!
-//! Runs unprivileged as the web-server account in its own unit, which is the
-//! only one with outbound network access. One download at a time: curl
-//! fetches the image into a hidden temporary file, progress goes to a status
-//! file the web server reads, and a finished file must be an ISO 9660 image
-//! before it is hashed, published and recorded in the media catalog.
+//! Runs unprivileged under an account of its own in its own unit, which is
+//! the only one with outbound network access. One download at a time: curl
+//! fetches the image into the one file the web server prepared for it,
+//! progress goes to a status file the web server reads, and a finished file
+//! must be an ISO 9660 image; the web server then checks it again, hashes it
+//! and publishes it into the store and the media catalog (security review of
+//! 2026-10-18, N1).
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bli_kvm_admin_helper::{DownloadStatus, MAX_IMAGE_BYTES, PicoclawInstallStatus, RemoteIso};
-use bli_kvm_media_catalog::{CatalogImage, MediaCatalog};
 use sha2::{Digest, Sha256};
 
-pub const IMAGE_DIRECTORY: &str = "/var/lib/hardened-blikvm-gadget/images";
-pub const MEDIA_CATALOG: &str = "/etc/hardened-blikvm-gadget/catalog.json";
 pub const CURL: &str = "/usr/bin/curl";
 const ISO9660_MAGIC_OFFSET: u64 = 0x8001;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
@@ -38,9 +37,11 @@ impl DownloadLock {
             .create(true)
             .truncate(false)
             .write(true)
-            .mode(0o600)
+            .mode(0o640)
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
+        // The web server, a member of the helper's group, probes the lock.
+        file.set_permissions(fs::Permissions::from_mode(0o640))?;
         // SAFETY: flock on a descriptor this function owns.
         let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
         Ok(locked.then_some(Self { _file: file }))
@@ -258,29 +259,34 @@ impl Fetch<'_> {
     }
 }
 
+/// One remote image, fetched into the file the web server prepared for it in
+/// the drop directory, the one place the helper's account may write.
 pub struct Download<'a> {
     pub iso: &'a RemoteIso,
-    pub images: &'a Path,
-    pub catalog: &'a Path,
+    pub downloads: &'a Path,
     pub status: &'a Path,
     pub curl: &'a Path,
 }
 
 impl Download<'_> {
-    fn temporary(&self) -> PathBuf {
-        self.images.join(format!(".{}.download", self.iso.filename))
-    }
-
-    /// Fetches, checks and publishes the image; the temporary file never
-    /// survives a failure.
+    /// Fetches and checks the image; a failure leaves the prepared file
+    /// empty, for the web server to remove.
     pub fn run(&self, still_enabled: impl Fn() -> bool) -> io::Result<()> {
-        let temporary = self.temporary();
-        let _ = fs::remove_file(&temporary);
+        let target = self.downloads.join(&self.iso.filename);
+        if !fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.is_file()) {
+            return Err(io::Error::other(
+                "the web server prepared no file for this download",
+            ));
+        }
         let result = self
-            .fetch(&temporary, still_enabled)
-            .and_then(|()| self.publish(&temporary));
+            .fetch(&target, still_enabled)
+            .and_then(|()| self.check(&target));
         if result.is_err() {
-            let _ = fs::remove_file(&temporary);
+            let _ = OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&target)
+                .and_then(|file| file.set_len(0));
         }
         result
     }
@@ -298,29 +304,14 @@ impl Download<'_> {
         })
     }
 
-    fn publish(&self, temporary: &Path) -> io::Result<()> {
-        let size = fs::symlink_metadata(temporary)?.len();
+    fn check(&self, target: &Path) -> io::Result<()> {
+        let size = fs::symlink_metadata(target)?.len();
         if size == 0 || size > MAX_IMAGE_BYTES {
             return Err(io::Error::other("downloaded image size out of bounds"));
         }
-        if !is_iso9660(temporary)? {
+        if !is_iso9660(target)? {
             return Err(io::Error::other("file is not a valid ISO image"));
         }
-        let sha256 = sha256_file(temporary)?;
-        fs::set_permissions(temporary, fs::Permissions::from_mode(0o644))?;
-        fs::rename(temporary, self.images.join(&self.iso.filename))?;
-        MediaCatalog::upsert_image(
-            self.catalog,
-            &CatalogImage {
-                image_name: self.iso.filename.clone(),
-                size,
-                sha256,
-                cdrom_allowed: true,
-                removable_allowed: true,
-                writable_allowed: false,
-            },
-        )
-        .map_err(|error| io::Error::other(error.to_string()))?;
         Ok(())
     }
 }
@@ -443,6 +434,7 @@ impl RuntimeInstall<'_> {
 mod tests {
     use super::*;
     use bli_kvm_admin_helper::validate_remote_iso;
+    use std::path::PathBuf;
 
     #[test]
     fn curl_progress_is_parsed() {
@@ -469,6 +461,11 @@ mod tests {
         let path = dir.path().join("lock");
         let first = DownloadLock::acquire(&path).unwrap();
         assert!(first.is_some());
+        // The web server, in the helper's group only, reads the lock.
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
         assert!(DownloadLock::acquire(&path).unwrap().is_none());
         drop(first);
         // A child forked by a parallel test may hold the descriptor until
@@ -512,14 +509,6 @@ mod tests {
         drop(taken);
     }
 
-    fn catalog(dir: &Path) -> PathBuf {
-        let path = dir.join("catalog.json");
-        fs::write(&path, br#"{"schemaVersion":1,"entries":[]}"#).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
-        path
-    }
-
     /// A stand-in for curl that writes `content` to the `--output` path.
     fn fake_curl(dir: &Path, script: &str) -> PathBuf {
         let path = dir.join("curl");
@@ -529,13 +518,14 @@ mod tests {
     }
 
     #[test]
-    fn only_a_finished_iso_is_published_and_recorded() {
+    fn the_download_fills_only_the_file_the_server_prepared() {
+        // The worker fetches remote data under an account of its own, which
+        // may write only the file the server prepared in the drop directory:
+        // the server publishes into the image store and the catalog
+        // (security review of 2026-10-18, N1).
         let dir = tempfile::tempdir().unwrap();
-        let images = dir.path().join("images");
-        fs::create_dir(&images).unwrap();
-        let etc = dir.path().join("etc");
-        fs::create_dir(&etc).unwrap();
-        let catalog = catalog(&etc);
+        let downloads = dir.path().join("downloads");
+        fs::create_dir(&downloads).unwrap();
         let status = dir.path().join("status.json");
         let iso = validate_remote_iso("https://mirror.example/rescue.iso").unwrap();
         // Writes 0x8001 zero bytes then the ISO 9660 magic to the output path.
@@ -544,28 +534,24 @@ head -c 32769 /dev/zero > "$2"; printf 'CD001' >> "$2"; printf '\r##  50.0%%' >&
         let curl = fake_curl(dir.path(), write_iso);
         let download = Download {
             iso: &iso,
-            images: &images,
-            catalog: &catalog,
+            downloads: &downloads,
             status: &status,
             curl: &curl,
         };
+        let error = download.run(|| true).unwrap_err();
+        assert!(error.to_string().contains("prepared no file"), "{error}");
+        assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
+
+        let prepared = downloads.join("rescue.iso");
+        fs::write(&prepared, b"").unwrap();
         download.run(|| true).unwrap();
-        let published = images.join("rescue.iso");
-        assert_eq!(fs::metadata(&published).unwrap().len(), 32774);
-        assert_eq!(
-            fs::metadata(&published).unwrap().permissions().mode() & 0o777,
-            0o644
-        );
-        let entry = MediaCatalog::open(&catalog)
-            .unwrap()
-            .find_by_name("rescue.iso")
-            .unwrap();
-        assert!(entry.cdrom_allowed && !entry.writable_allowed);
+        assert_eq!(fs::metadata(&prepared).unwrap().len(), 32774);
 
         let not_iso = r#"while [ "$1" != "--output" ]; do shift; done
 printf 'hello' > "$2""#;
         let curl = fake_curl(dir.path(), not_iso);
         let other = validate_remote_iso("https://mirror.example/other.iso").unwrap();
+        fs::write(downloads.join("other.iso"), b"").unwrap();
         let download = Download {
             iso: &other,
             curl: &curl,
@@ -573,6 +559,8 @@ printf 'hello' > "$2""#;
         };
         let error = download.run(|| true).unwrap_err();
         assert!(error.to_string().contains("not a valid ISO"), "{error}");
+        // A failure leaves the prepared file empty for the server to remove.
+        assert_eq!(fs::metadata(downloads.join("other.iso")).unwrap().len(), 0);
         let failing = fake_curl(
             dir.path(),
             "echo 'curl: (22) The requested URL returned error: 404' >&2; exit 22",
@@ -590,12 +578,12 @@ printf 'hello' > "$2""#;
         };
         let error = download.run(|| false).unwrap_err();
         assert!(error.to_string().contains("switched off"), "{error}");
-        let mut names: Vec<_> = fs::read_dir(&images)
+        let mut names: Vec<_> = fs::read_dir(&downloads)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         names.sort();
-        assert_eq!(names, ["rescue.iso"]);
+        assert_eq!(names, ["other.iso", "rescue.iso"]);
     }
 
     #[test]

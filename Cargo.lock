@@ -167,7 +167,6 @@ name = "bli-kvm-admin-helper"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-core",
- "bli-kvm-media-catalog",
  "bli-kvm-system-image-verifier",
  "bli-kvm-system-raw-update",
  "libc",

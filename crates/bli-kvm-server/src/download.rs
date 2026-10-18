@@ -105,7 +105,7 @@ pub(crate) async fn check_upload(
 }
 
 /// The image directory, when uploads are available at all.
-fn upload_directory(state: &AppState) -> AppResult<PathBuf> {
+pub(crate) fn upload_directory(state: &AppState) -> AppResult<PathBuf> {
     if !state.options.restricted_controls_enabled
         || !state.options.media_controls_enabled
         || state.control.is_none()
@@ -123,7 +123,11 @@ fn upload_directory(state: &AppState) -> AppResult<PathBuf> {
 
 /// Replacing the attached image would leave the target reading the old file
 /// while the catalog describes the new one.
-async fn refuse_attached(state: &AppState, session_token: &str, name: &str) -> AppResult<()> {
+pub(crate) async fn refuse_attached(
+    state: &AppState,
+    session_token: &str,
+    name: &str,
+) -> AppResult<()> {
     if attached_image(state, session_token).await?.as_deref() == Some(name) {
         return Err(AppError::Conflict(
             "detach the drive before replacing its image".into(),

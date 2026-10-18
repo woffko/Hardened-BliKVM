@@ -71,24 +71,48 @@ and are socket-activated per connection.
     (foreground: 60 s, 256 KiB captured; background: detached transient
     unit with a 1-hour limit).
 - **Image download helper** (`hardened-blikvm-image-download@.service`, the
-  same binary with `--download`, running as the web-server account with no
-  capabilities, write access only to the image store and the media catalog):
+  same binary with `--download`, running with no capabilities as
+  `hardened-blikvm-download`, an account of its own in no group another
+  account shares; the web server is the one other member of its group. It
+  ran as the web-server account until the security review of 2026-10-18,
+  N1):
   - it is the only unit with outbound network access (the web server may
     reach localhost alone); it may not reach the board's own loopback,
-    link-local or multicast addresses, except a local DNS stub;
+    link-local or multicast addresses, except a local DNS stub, nor the
+    board owner's, the admin helper's or the update services' sockets;
   - it accepts only `http`/`https` URLs without credentials whose last path
     segment is an `.iso` name the store accepts, one download at a time
-    (a lock next to the status file);
+    (a lock next to the status file, 0640, which the web server probes);
+  - before forwarding a download, the web server empties the drop directory
+    `.downloads` in the image store (the server's, 0750, the helper's group)
+    and prepares in it one empty file for the image (the server's, 0660, the
+    helper's group). The unit binds that directory at
+    `/run/hardened-blikvm-download/drop` and can write nothing else of the
+    store, the catalog or `/etc/hardened-blikvm-gadget`; it passes through
+    `/var/lib/hardened-blikvm-gadget` only to read the switches (an ACL
+    entry `u:hardened-blikvm-download:--x`);
   - `curl` runs with a cleared environment and the reference limits (HTTP(S)
     redirects only, 5 redirects, 2 h, a stall limit), except that a file may
-    be as large as an upload (64 GiB, the reference's is 8 GiB), into a
-    hidden temporary file; progress goes to
-    `/run/hardened-blikvm-download/status.json` in the reference shape;
-  - a finished file must carry the ISO 9660 magic, then it is hashed,
-    published atomically (0644) and recorded in the media catalog as a
-    CD-ROM or read-only removable image; any failure removes the temporary
-    file and reports `failed` for 30 seconds;
+    be as large as an upload (64 GiB, the reference's is 8 GiB), into the
+    prepared file; progress goes to `/run/hardened-blikvm-download/status.json`
+    in the reference shape;
+  - a finished file must carry the ISO 9660 magic, and the helper reports it
+    `finished` (read as idle by the page); a failure empties the file and
+    reports `failed` for 30 seconds;
+  - the web server then checks the file again (still its own, one link,
+    within the size bound, the ISO 9660 magic), hashes it, looks at the
+    switch and at the attached image once more, and publishes it as it does
+    an upload: renamed into the store (0644) and recorded in the media
+    catalog as a CD-ROM or read-only removable image. Until then the status
+    reads `in_progress` at 100 %; a refused publish reads `failed` for 30
+    seconds. A server restarted during a download takes the publish up again
+    from the helper's status;
   - it re-reads the switch while downloading and stops when it is turned off.
+  The application slot that prepares and publishes comes with the system
+  that runs the helper under its own account: an older system's helper
+  publishes on its own and leaves the prepared file empty, which the server
+  removes; an older slot on the newer system finds its downloads refused
+  ("the web server prepared no file for this download").
   Local image upload stays in the web server (`POST /api/download/file`) and
   needs no switch; the Download menu that carries both is shown whenever the
   image store is configured.
@@ -98,7 +122,8 @@ and are socket-activated per connection.
     only when its SHA-256 matches the digest pinned in the source (the
     reference fetches its checksum from the same CDN as the archive); only
     the `picoclaw` member is unpacked into
-    `/var/lib/hardened-blikvm-picoclaw-runtime` (web-server account, 0755),
+    `/var/lib/hardened-blikvm-picoclaw-runtime` (the download helper's
+    account, 0755),
     so the runtime cannot modify its own binary. Uninstall removes the binary
     and the runtime's home;
   - runtime: `hardened-blikvm-picoclaw.service` runs `picoclaw gateway` as

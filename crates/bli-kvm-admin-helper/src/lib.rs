@@ -16,6 +16,10 @@ pub const ADMIN_SOCKET: &str = "/run/hardened-blikvm-admin/admin.sock";
 pub const DOWNLOAD_SOCKET: &str = "/run/hardened-blikvm-download-api/download.sock";
 /// Progress of the current or last download, read by the web server.
 pub const DOWNLOAD_STATUS: &str = "/run/hardened-blikvm-download/status.json";
+/// The drop directory as the download worker's unit binds it: the image
+/// store's `.downloads`, where the web server prepares the one file the
+/// worker may write and from which it publishes that file by a rename.
+pub const DOWNLOAD_DROP: &str = "/run/hardened-blikvm-download/drop";
 /// Largest image a download may produce, as large as an upload (the
 /// reference allows 8 GiB); the image store's free space is the usual limit.
 pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
@@ -23,7 +27,7 @@ pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub const PICOCLAW_SOCKET: &str = "/run/hardened-blikvm-picoclaw-api/picoclaw.sock";
 /// Home of the PicoClaw runtime user; `PICOCLAW_HOME` is `.picoclaw` in it.
 pub const PICOCLAW_STATE: &str = "/var/lib/hardened-blikvm-picoclaw";
-/// Installed runtime binary, owned by the web-server account.
+/// Installed runtime binary, owned by the download helper's account.
 pub const PICOCLAW_RUNTIME_DIR: &str = "/var/lib/hardened-blikvm-picoclaw-runtime";
 pub const PICOCLAW_BINARY: &str = "/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw";
 /// Install progress, written by the download helper.

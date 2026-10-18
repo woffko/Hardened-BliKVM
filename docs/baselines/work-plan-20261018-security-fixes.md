@@ -336,7 +336,12 @@ E16. Optional, at the operator's choice: MED-10's bounded queue; HIGH-07's
   the operator's word (switches restored, `/root` restored), then the
   services, the state as found, the journal pruned, the slot roots clean, the
   watching probes and the operator's checks; a release only at the
-  operator's word.
+  operator's word. The card image is read from the board's root, whose
+  accounts and `/etc/tmpfiles.d` fragments were staged by hand: before the
+  image fetch, and with the runtime packages, the board gets E4's account
+  and membership (`packaging/sysusers.d/hardened-blikvm.conf`) and the
+  gadget fragment with its ACL entry, and the image's root is checked for
+  them.
 
 ## Phase G: the record
 

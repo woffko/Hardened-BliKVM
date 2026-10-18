@@ -339,15 +339,21 @@ fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
     eprintln!("admin helper: download of {} started", iso.filename);
     let job = download::Download {
         iso: &iso,
-        images: Path::new(download::IMAGE_DIRECTORY),
-        catalog: Path::new(download::MEDIA_CATALOG),
+        downloads: Path::new(bli_kvm_admin_helper::DOWNLOAD_DROP),
         status,
         curl: Path::new(download::CURL),
     };
     match job.run(remote_download_enabled) {
         Ok(()) => {
             eprintln!("admin helper: download of {} finished", iso.filename);
-            download::write_status(status, &DownloadStatus::idle())
+            // The web server publishes the file once it reads this; to the
+            // page the status reads idle.
+            let finished = DownloadStatus {
+                status: "finished".into(),
+                file: iso.url.clone(),
+                percentage: "100.00%".into(),
+            };
+            download::write_status(status, &finished)
         }
         Err(error) => {
             eprintln!("admin helper: download of {} failed: {error}", iso.filename);

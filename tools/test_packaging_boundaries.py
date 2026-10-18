@@ -1959,9 +1959,9 @@ class PackagingBoundaryTests(unittest.TestCase):
 
     def test_every_program_names_one_media_catalog(self) -> None:
         # The web server and the board owner take the catalog's path from
-        # their units, the image download helper from its own constant; a move
-        # of the catalog (security review of 2026-10-18, E5) changes them all
-        # at once, and every slot then follows its units.
+        # their units; the image download helper no longer writes it (E4). A
+        # move of the catalog (security review of 2026-10-18, E5) changes the
+        # units at once, and every slot then follows its units.
         named: set[str] = set()
         for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
             for line in unit.read_text().splitlines():
@@ -1971,11 +1971,63 @@ class PackagingBoundaryTests(unittest.TestCase):
                 ):
                     if line.startswith(variable) and "hardened-blikvm-gadget" in line:
                         named.add(line.removeprefix(variable))
-        helper = (ROOT / "crates/bli-kvm-admin-helper/src/download.rs").read_text()
-        constant = re.search(r'pub const MEDIA_CATALOG: &str = "([^"]+)";', helper)
-        assert constant is not None
-        named.add(constant.group(1))
         self.assertEqual(len(named), 1, named)
+        for source in sorted((ROOT / "crates/bli-kvm-admin-helper/src").glob("*.rs")):
+            self.assertNotIn("catalog.json", source.read_text(), source.name)
+
+    def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
+        # The worker fetches remote data; it ran as the web server, could
+        # write the image store and the catalog and pass the root admin
+        # helper's peer check (security review of 2026-10-18, N1).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        lines = unit.splitlines()
+        self.assertIn("User=hardened-blikvm-download", lines)
+        self.assertIn("Group=hardened-blikvm-download", lines)
+        self.assertFalse(
+            [line for line in lines if line.startswith(("ReadWritePaths=", "SupplementaryGroups="))]
+        )
+        inaccessible = " ".join(
+            line.removeprefix("InaccessiblePaths=")
+            for line in lines
+            if line.startswith("InaccessiblePaths=")
+        ).split()
+        for path in ("-/run/hardened-blikvm-gadget", "-/run/hardened-blikvm-admin"):
+            self.assertIn(path, inaccessible)
+        # It writes only the drop directory, bound where its code looks.
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        drop = re.search(r'pub const DOWNLOAD_DROP: &str = "([^"]+)";', helper)
+        server = (ROOT / "crates/bli-kvm-server/src/remote_download.rs").read_text()
+        name = re.search(r'pub\(crate\) const DROP_DIRECTORY: &str = "([^"]+)";', server)
+        assert drop is not None and name is not None
+        binds = [line for line in lines if line.startswith("BindPaths=")]
+        self.assertEqual(
+            binds,
+            [f"BindPaths=-/var/lib/hardened-blikvm-gadget/images/{name.group(1)}:{drop.group(1)}"],
+        )
+        # In no group another account shares but for the web server's
+        # membership in its own; the root admin helper admits only the server.
+        sysusers = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text().splitlines()
+        self.assertIn(
+            'u hardened-blikvm-download - "Hardened BliKVM remote image download" '
+            "/nonexistent /usr/sbin/nologin",
+            sysusers,
+        )
+        memberships = [line.split() for line in sysusers if line.startswith("m ")]
+        self.assertEqual(
+            [entry for entry in memberships if "hardened-blikvm-download" in entry],
+            [["m", "hardened-blikvm-server", "hardened-blikvm-download"]],
+        )
+        admin = (ROOT / "packaging/systemd/hardened-blikvm-admin@.service").read_text()
+        self.assertIn("--peer-user hardened-blikvm-server", admin)
+        self.assertNotIn("hardened-blikvm-download", admin)
+        # It passes through the gadget state directory to read the switches,
+        # and nothing more.
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "a+ /var/lib/hardened-blikvm-gadget - - - - u:hardened-blikvm-download:--x",
+            tmpfiles.splitlines(),
+        )
+        self.assertEqual(tmpfiles.count("hardened-blikvm-download"), 1)
 
     def test_a_server_with_the_owners_socket_has_the_restricted_surface(self) -> None:
         # The server's handlers that reach the board owner check only that

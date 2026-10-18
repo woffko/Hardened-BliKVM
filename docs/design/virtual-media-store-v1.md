@@ -9,8 +9,11 @@ the operator is told when an attach fails. Found and fixed in the audit of
 - Images live in `/var/lib/hardened-blikvm-gadget/images`, the MSD partition
   (p3) of the SD image layout, mounted `nosuid,nodev,noexec`.
 - The server (`hardened-blikvm-server`, group `hardened-blikvm`) writes
-  uploads there, and so does the remote-download helper (same user); the
-  board owner (root) attaches them to the USB gadget. The directory is
+  uploads there and publishes remote downloads, which the download helper
+  (`hardened-blikvm-download`, an account of its own) leaves in the file the
+  server prepares in `.downloads`, the one place of the store the helper can
+  write (`docs/design/admin-features-v1.md`); the board owner (root)
+  attaches them to the USB gadget. The directory is
   `0770 root:hardened-blikvm`.
 - The image builder gives the partition's root that mode and group when it
   creates p3 (checked after writing), and mounts it after
