@@ -54,7 +54,8 @@ export const Password = () => {
       .changePassword(username, password, currentPassword)
       .then((rsp: any) => {
         if (rsp.code !== 0) {
-          setMsg(t(rsp.code === -403 ? 'auth.wrongCurrentPassword' : 'auth.error'));
+          // The limiter answers -5, as at the login.
+          setMsg(t(rsp.code === -5 ? 'auth.locked' : 'auth.error'));
           return;
         }
 
@@ -62,16 +63,9 @@ export const Password = () => {
         navigate('/auth/login', { replace: true });
       })
       .catch((error: any) => {
+        // A wrong or missing current password is refused with 403.
         const status = error?.response?.status;
-        setMsg(
-          t(
-            status === 403
-              ? 'auth.wrongCurrentPassword'
-              : status === 429
-                ? 'auth.locked'
-                : 'auth.error'
-          )
-        );
+        setMsg(t(status === 403 ? 'auth.wrongCurrentPassword' : 'auth.error'));
       });
   }
 

@@ -39,25 +39,33 @@ try {
     }),
   );
   const sent = [];
-  let wrong = true;
+  let answer = "wrong";
   await page.route("**/api/auth/password", (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     sent.push(route.request().postDataJSON());
-    return route.fulfill(
-      wrong
-        ? {
-            status: 403,
-            contentType: "application/json",
-            body: JSON.stringify({
-              code: -403,
-              msg: "the current password is wrong",
-            }),
-          }
-        : {
-            contentType: "application/json",
-            body: JSON.stringify({ code: 0 }),
-          },
-    );
+    const answers = {
+      wrong: {
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: -403,
+          msg: "the current password is wrong",
+        }),
+      },
+      // The limiter's answer, as the server gives it: 200 with code -5.
+      locked: {
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: -5,
+          msg: "account locked after repeated failures",
+        }),
+      },
+      done: {
+        contentType: "application/json",
+        body: JSON.stringify({ code: 0 }),
+      },
+    };
+    return route.fulfill(answers[answer]);
   });
 
   await page.goto(`${app.baseUrl}/#/auth/password`, {
@@ -80,16 +88,20 @@ try {
   });
   assert.match(page.url(), /#\/auth\/password$/, "the page stays");
 
-  wrong = false;
+  answer = "locked";
+  await page.getByRole("button", { name: "Ok" }).click();
+  await page.getByText("Too many logins, please try again later").waitFor();
+
+  answer = "done";
   await page.getByPlaceholder("Current password").fill("initial password");
   await page.getByRole("button", { name: "Ok" }).click();
   await page.waitForURL(/#\/auth\/login$/);
-  assert.equal(sent.length, 2);
-  assert.equal(sent[1].currentPassword, "initial password");
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].currentPassword, "initial password");
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    "password change contract: ok (the current password sent, a wrong one said, the login after the change)",
+    "password change contract: ok (the current password sent, a wrong one and the limiter said, the login after the change)",
   );
 } finally {
   await browser.close();
