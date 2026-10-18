@@ -30,6 +30,14 @@ if [ ! -f "$base/data/.hardened-system-update/apply.json" ]; then
 fi
 umount "$base/data"
 e2fsck -p "$data" >/dev/null 2>&1
+fsck_status=$?
+# 0: clean; 1 or 2: errors corrected (2 asks for a reboot of a mounted file
+# system, which this one is not). From 4 on errors are left or the check did
+# not run: nothing of an update on that partition is used this boot.
+if [ "$fsck_status" -ge 4 ]; then
+  log_warning_msg "hardened system update: the data partition needs a check ($fsck_status); nothing was written"
+  exit 0
+fi
 if ! mount -t ext4 -o rw,noatime "$data" "$base/data"; then
   log_warning_msg "hardened system update: the data partition did not mount"
   exit 0

@@ -1947,6 +1947,16 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, commands)
         self.assertNotIn(0x01, commands)
 
+    def test_the_boot_step_trusts_no_data_partition_left_with_errors(self) -> None:
+        # e2fsck's status was ignored, and the update on a partition with
+        # errors it could not correct was then used (security review of
+        # 2026-10-18, LOW-02).
+        script = (ROOT / "packaging/system-update/initramfs-local-premount").read_text()
+        check = 'e2fsck -p "$data" >/dev/null 2>&1\nfsck_status=$?\n'
+        self.assertIn(check, script)
+        self.assertIn('if [ "$fsck_status" -ge 4 ]; then', script)
+        self.assertLess(script.index(check), script.index("mount -t ext4 -o rw,noatime"))
+
     def test_every_program_names_one_media_catalog(self) -> None:
         # The web server and the board owner take the catalog's path from
         # their units, the image download helper from its own constant; a move
