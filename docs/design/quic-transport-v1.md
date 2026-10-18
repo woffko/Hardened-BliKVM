@@ -53,7 +53,7 @@ datagrams (HID reports stay ordered on the input stream under the lease, see
 ### Crates
 
 Chosen: **`wtransport` 0.7.2** (MIT OR Apache-2.0), the WebTransport server
-over HTTP/3, on `quinn` 0.11.12, `rustls` 0.23.45 with `ring` 0.17.14, and
+over HTTP/3, on `quinn` 0.11.12, `rustls` 0.23.46 with `ring` 0.17.14, and
 `rcgen` 0.14.10 for the certificate.
 
 | | `wtransport` | `h3` + `h3-quinn` + `h3-webtransport` + `rcgen` |

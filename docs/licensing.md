@@ -95,7 +95,7 @@ compatible with the project's GPL-3.0-only. The lab tools that chose it
 
 The QUIC transport (`docs/design/quic-transport-v1.md`) adds a QUIC and TLS
 stack from crates.io, pinned in `Cargo.lock`: `wtransport` 0.7.2
-(WebTransport over HTTP/3) on `quinn` 0.11.12, `rustls` 0.23.45 with `ring`
+(WebTransport over HTTP/3) on `quinn` 0.11.12, `rustls` 0.23.46 with `ring`
 0.17.14, and `rcgen` 0.14.10 for the gateway's certificate. It is linked
 into one binary, `bli-kvm-quic-gateway`; the web server uses it only in its
 tests, as a client.
