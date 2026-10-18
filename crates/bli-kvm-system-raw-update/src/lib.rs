@@ -62,8 +62,15 @@ pub const CARRIED_STATE: &[&str] = &[
     "var/lib/NetworkManager/secret_key",
     "root/.ssh",
     "var/lib/hardened-blikvm",
+    // The application's update state: the journal with its floor and
+    // confirmed slot, the slot pointer and the protected copies' selection,
+    // so the board keeps its own application across the write.
+    "var/lib/hardened-blikvm-update",
+    "var/lib/hardened-blikvm-update-v2",
     "var/lib/hardened-blikvm-exec",
+    "var/lib/hardened-blikvm-exec-ledger",
     "var/lib/hardened-blikvm-slots",
+    "var/lib/hardened-blikvm-slots-v2",
     "var/lib/hardened-blikvm-gadget",
     "var/lib/hardened-blikvm-system-actions",
     "var/lib/hardened-blikvm-video",

@@ -857,6 +857,27 @@ fn every_ssh_host_key_type_is_carried() {
 }
 
 #[test]
+fn the_application_update_state_is_carried() {
+    // The journal (floor and confirmed slot), the slot pointer and the
+    // protected copies' selection: without them the board starts the image's
+    // own application after the update, with the image's floor (security
+    // review of 2026-10-18, HIGH-04).
+    for path in [
+        "var/lib/hardened-blikvm-update",
+        "var/lib/hardened-blikvm-update-v2",
+        "var/lib/hardened-blikvm-slots",
+        "var/lib/hardened-blikvm-slots-v2",
+        "var/lib/hardened-blikvm-exec",
+        "var/lib/hardened-blikvm-exec-ledger",
+    ] {
+        assert!(
+            bli_kvm_system_raw_update::CARRIED_STATE.contains(&path),
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn the_network_identity_is_carried() {
     for path in [
         "etc/NetworkManager/system-connections",

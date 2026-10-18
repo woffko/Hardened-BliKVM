@@ -158,14 +158,15 @@ bundle again, or another build of that day) is taken for the board's own, and
 the switches stay as that image has them (seen on the test board with two
 builds of 0.1.0-beta.3).
 
-Not carried yet (found 2026-10-07, for the next update runtime): the
-application stores of the update runtime 0.1.0~dev36 and later,
+Carried since the security review of 2026-10-18 (HIGH-04): the application
+stores of the update runtime 0.1.0~dev36 and later,
 `/var/lib/hardened-blikvm-slots-v2`, `/var/lib/hardened-blikvm-update-v2` and
-`/var/lib/hardened-blikvm-exec-ledger` (and the v1 `hardened-blikvm-update`),
-while `hardened-blikvm-exec` is. After a RAW update the board therefore has the
-image's application state with its own protected copies: consistent where the
-board ran the application the image carries, so a board installs the
-application bundle of the same release before its RAW bundle.
+`/var/lib/hardened-blikvm-exec-ledger`, and the v1 `hardened-blikvm-update`,
+beside `hardened-blikvm-exec`. A board keeps its own application, journal and
+anti-rollback floor across a RAW update, whichever application the image
+carries. This takes effect from the RAW update that a board stages with this
+runtime: an older runtime's staging leaves them out, and the board then has
+the image's application state, as before.
 
 ## Components
 
