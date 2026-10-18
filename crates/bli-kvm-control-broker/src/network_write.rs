@@ -240,13 +240,17 @@ pub fn normalize_mac(value: &str) -> Result<[u8; 6], NetworkWriteError> {
     Ok(bytes)
 }
 
-/// A network interface name is the kernel's own restricted charset.
+/// A network interface name is the kernel's own restricted charset, and none
+/// of the names that stand for something else under
+/// `/proc/sys/net/ipv6/conf`: `all` and `default` (every interface at
+/// once), the loopback `lo`, and the directories `.` and `..`.
 pub fn normalize_interface(interface: &str) -> Result<&str, NetworkWriteError> {
     if interface.is_empty()
         || interface.len() > MAX_INTERFACE_NAME_BYTES
         || !interface
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+        || matches!(interface, "all" | "default" | "lo" | "." | "..")
     {
         return Err(NetworkWriteError::InvalidRequest);
     }
@@ -463,6 +467,20 @@ mod tests {
                 Err(NetworkWriteError::InvalidRequest)
             );
         }
+    }
+
+    #[test]
+    fn the_kernels_pseudo_interfaces_are_not_interfaces() {
+        // `all` and `default` set every interface's IPv6 at once, `lo` is the
+        // loopback, and `.` and `..` name directories, not interfaces.
+        for reserved in ["all", "default", "lo", ".", ".."] {
+            assert_eq!(
+                normalize_interface(reserved),
+                Err(NetworkWriteError::InvalidRequest),
+                "{reserved}"
+            );
+        }
+        assert_eq!(normalize_interface("lo0").unwrap(), "lo0");
     }
 
     #[test]
