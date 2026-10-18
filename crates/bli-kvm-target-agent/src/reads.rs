@@ -97,7 +97,7 @@ fn registry_number(key: &str, value: &str) -> Option<u32> {
 }
 
 /// Whether the session is locked: the desktop in front is not the user's.
-fn locked() -> bool {
+pub(crate) fn locked() -> bool {
     // SAFETY: the desktop opened is closed; the name's buffer goes with its
     // size in bytes.
     unsafe {

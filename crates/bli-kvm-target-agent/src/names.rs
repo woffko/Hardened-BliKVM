@@ -228,6 +228,28 @@ pub fn serves_session(own: u32, console: u32) -> bool {
     console != u32::MAX && own == console
 }
 
+/// The reason a locked session's agent gives for a call that waits for it
+/// to be unlocked.
+pub const LOCKED_REFUSAL: &str = "the target's session is locked";
+
+/// Whether `call` waits until Windows' session is unlocked: the clipboard
+/// both ways, the layout and the monitors' changes. Windows' lock screen is
+/// its own border, and the KVM's operator need not be the Windows user, so
+/// the agent does not give or change behind it what the lock withholds;
+/// reads of the monitors, the layouts and the state go on, and locking is
+/// harmless (security review of 2026-10-18, HIGH-08).
+pub fn waits_for_unlock(call: &bli_kvm_agent_protocol::Call) -> bool {
+    use bli_kvm_agent_protocol::Call;
+    matches!(
+        call,
+        Call::ReadClipboard
+            | Call::WriteClipboard { .. }
+            | Call::SetLayout { .. }
+            | Call::SetDisplays { .. }
+            | Call::KeepDisplays
+    )
+}
+
 /// The status while connected to `board`: its program and version, and
 /// that this agent is not the board's when the board names another commit
 /// (a board that names none, from before, is not said to differ).
@@ -615,6 +637,35 @@ mod tests {
             connected(&english, &board("unknown"), own),
             "Connected to hardened-blikvm-board 0.1.0-beta.8"
         );
+    }
+
+    #[test]
+    fn a_locked_session_holds_off_what_its_lock_withholds() {
+        use bli_kvm_agent_protocol::{Call, DisplayMode};
+        for call in [
+            Call::ReadClipboard,
+            Call::WriteClipboard { text: "x".into() },
+            Call::SetLayout {
+                id: "00000409".into(),
+            },
+            Call::SetDisplays {
+                mode: DisplayMode::Extend,
+            },
+            Call::KeepDisplays,
+        ] {
+            assert!(waits_for_unlock(&call), "{call:?}");
+        }
+        for call in [
+            Call::Ping,
+            Call::System,
+            Call::Monitors,
+            Call::Keyboard,
+            Call::Lock,
+            Call::SetBoardMonitor { id: None },
+        ] {
+            assert!(!waits_for_unlock(&call), "{call:?}");
+        }
+        assert_eq!(LOCKED_REFUSAL, "the target's session is locked");
     }
 
     #[test]

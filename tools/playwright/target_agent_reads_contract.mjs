@@ -78,6 +78,9 @@ let displays = "extend";
 // its bounds.
 let failMonitors = false;
 let refuseKeeps = 0;
+// A clipboard read the agent refuses once, its session locked (the security
+// review of 2026-10-18, HIGH-08).
+let lockedReads = 0;
 // The next monitors' change is answered this late, its round trip with it.
 let slowChangeMs = 0;
 // How long the played agent waits before it puts a change back: long enough
@@ -187,6 +190,15 @@ try {
           msg: "the agent did not do it: the agent's answer is not the call's or is out of its bounds",
         },
       });
+    if (call === "read_clipboard" && lockedReads > 0) {
+      lockedReads -= 1;
+      return route.fulfill({
+        json: {
+          code: -409,
+          msg: "the agent did not do it: the target's session is locked",
+        },
+      });
+    }
     if (call === "keep_displays" && refuseKeeps > 0) {
       refuseKeeps -= 1;
       return route.fulfill({
@@ -394,6 +406,11 @@ try {
     .waitFor();
   await actions.getByRole("button", { name: "Target's clipboard" }).click();
   const clipboard = page.getByRole("dialog", { name: "Target's clipboard" });
+  // While the target's session is locked the agent says so, and the read
+  // made after it is unlocked gets the text.
+  lockedReads = 1;
+  await clipboard.getByRole("button", { name: "Read the target's" }).click();
+  await clipboard.getByText("the target's session is locked").waitFor();
   await clipboard.getByRole("button", { name: "Read the target's" }).click();
   const text = clipboard.getByTestId("agent-clipboard-text");
   await eventually(async () => (await text.inputValue()) === "from the target");

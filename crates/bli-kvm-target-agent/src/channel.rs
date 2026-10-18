@@ -81,8 +81,12 @@ fn set_status(status: String, message: u32) {
     }
 }
 
-/// The agent's reads and actions, for the board's calls.
+/// The agent's reads and actions, for the board's calls; what a locked
+/// session withholds waits for it to be unlocked (`names::waits_for_unlock`).
 fn answer(call: Call) -> Result<Answer, String> {
+    if names::waits_for_unlock(&call) && reads::locked() {
+        return Err(names::LOCKED_REFUSAL.to_string());
+    }
     match call {
         Call::Ping => Ok(Answer::Pong),
         Call::System => Ok(Answer::System(reads::system())),
