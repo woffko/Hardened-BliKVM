@@ -858,26 +858,43 @@ impl Tools for SystemTools {
             .filter(|path| fs::symlink_metadata(root.join(path)).is_ok())
             .collect();
         let temporary = target.with_extension("tar.new");
-        let mut command = std::process::Command::new("tar");
-        command
-            .args([
-                "--create",
-                "--numeric-owner",
-                "--xattrs",
-                "--acls",
-                "--file",
-            ])
-            .arg(&temporary)
-            .arg("--directory")
-            .arg(root)
-            .arg("--")
-            .args(&present);
-        let status = command.stdin(std::process::Stdio::null()).status()?;
-        if !status.success() {
-            return Err(io::Error::other("the device state could not be archived"));
+        // Not across file systems: the virtual media partition is mounted
+        // inside a carried directory, and its images are not device state
+        // (security review of 2026-10-18, N3). A file that changes while it
+        // is read (tar's status 1, the services run meanwhile) is archived
+        // once more; a second change is reported as such.
+        for attempt in 0..2 {
+            let status = std::process::Command::new("tar")
+                .args([
+                    "--create",
+                    "--one-file-system",
+                    "--numeric-owner",
+                    "--xattrs",
+                    "--acls",
+                    "--file",
+                ])
+                .arg(&temporary)
+                .arg("--directory")
+                .arg(root)
+                .arg("--")
+                .args(&present)
+                .stdin(std::process::Stdio::null())
+                .status()?;
+            match status.code() {
+                Some(0) => {
+                    File::open(&temporary)?.sync_all()?;
+                    return fs::rename(temporary, target);
+                }
+                Some(1) if attempt == 0 => continue,
+                Some(1) => {
+                    return Err(io::Error::other(
+                        "a carried file changed while it was archived, twice",
+                    ));
+                }
+                _ => return Err(io::Error::other("the device state could not be archived")),
+            }
         }
-        File::open(&temporary)?.sync_all()?;
-        fs::rename(temporary, target)
+        Err(io::Error::other("the device state could not be archived"))
     }
 
     fn restore_state(&mut self, root: &Path, archive: &Path) -> io::Result<()> {
