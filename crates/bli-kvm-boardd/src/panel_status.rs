@@ -182,6 +182,15 @@ pub fn load_background(path: &Path) -> Result<Vec<Rgb565>, StatusError> {
     }
     let bytes_per_pixel = usize::from(bits / 8);
     let row_bytes = (u64::from(width) * bits as u64).div_ceil(32) as usize * 4;
+    // The pixels start after the header and every row lies in the file; a cut
+    // or misplaced image is damaged, not a panic of the daemon that also
+    // drives the fan (security review of 2026-10-18, MED-12 item 4).
+    let pixels_end = row_bytes
+        .checked_mul(height as usize)
+        .and_then(|size| size.checked_add(offset));
+    if offset < 54 || pixels_end.is_none_or(|end| end > data.len()) {
+        return Err(StatusError::DamagedImage);
+    }
     let top_down = i32::from_le_bytes([data[22], data[23], data[24], data[25]]) < 0;
     let mut frame = vec![Rgb565::BLACK; DISPLAY_PIXEL_COUNT as usize];
     for row in 0..DISPLAY_HEIGHT.min(height as u16) {
@@ -275,6 +284,30 @@ mod tests {
         assert_eq!(frame.len(), DISPLAY_PIXEL_COUNT as usize);
         assert_eq!(frame[0], Rgb565::from_rgb888(10, 20, 30));
         assert_eq!(frame[1], Rgb565::BLACK);
+    }
+
+    #[test]
+    fn a_truncated_or_misplaced_bmp_is_damaged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cut.bmp");
+        // A 240x240 header followed by 100 bytes instead of its rows.
+        let mut cut = tiny_bmp();
+        cut[18..22].copy_from_slice(&240_i32.to_le_bytes());
+        cut[22..26].copy_from_slice(&240_i32.to_le_bytes());
+        cut.truncate(54);
+        cut.extend_from_slice(&[0_u8; 100]);
+        fs::write(&path, &cut).unwrap();
+        assert_eq!(load_background(&path), Err(StatusError::DamagedImage));
+        // Pixels said to start beyond the file.
+        let mut far = tiny_bmp();
+        far[10..14].copy_from_slice(&u32::MAX.to_le_bytes());
+        fs::write(&path, &far).unwrap();
+        assert_eq!(load_background(&path), Err(StatusError::DamagedImage));
+        // An offset inside the header.
+        let mut inside = tiny_bmp();
+        inside[10..14].copy_from_slice(&10_u32.to_le_bytes());
+        fs::write(&path, &inside).unwrap();
+        assert_eq!(load_background(&path), Err(StatusError::DamagedImage));
     }
 
     #[test]
