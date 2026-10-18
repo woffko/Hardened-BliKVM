@@ -56,9 +56,45 @@ pub fn make(days: u32) -> Result<(Identity, CertificateInfo), String> {
     Ok((identity, info))
 }
 
+/// Whether `now` (seconds since 1970) lies outside a certificate's validity.
+/// The board starts with its clock wherever the card left it and takes the
+/// network time later, so a certificate made at the start may be months old
+/// or not yet valid by the time a page asks for it: such a one is replaced
+/// as soon as the clock says so (security review of 2026-10-18, N11).
+pub fn outside(info: &CertificateInfo, now: u64) -> bool {
+    now < info.not_before || now >= info.not_after
+}
+
+/// The clock now, in seconds since 1970.
+pub fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_certificate_made_by_a_clock_months_behind_is_outside_once_the_clock_is_right() {
+        // The board of N11 started at 29 July with the network time of
+        // 18 October still to come.
+        const STARTED: u64 = 1_785_283_200;
+        const RIGHT: u64 = 1_792_281_600;
+        let made = CertificateInfo {
+            sha256: String::new(),
+            not_before: STARTED - 3600,
+            not_after: STARTED - 3600 + 13 * 24 * 3600,
+        };
+        assert!(!outside(&made, STARTED));
+        assert!(outside(&made, RIGHT));
+        // A clock that went back is outside too.
+        assert!(outside(&made, STARTED - 7200));
+        let (_, fresh) = make(13).unwrap();
+        assert!(!outside(&fresh, now()));
+    }
 
     #[test]
     fn a_certificate_is_short_lived_and_backdated() {

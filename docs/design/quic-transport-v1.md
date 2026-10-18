@@ -241,7 +241,12 @@ Tokens, their hashes, report contents and frame data never reach a log.
 ECDSA P-256, made in memory at start, valid for 13 days from one hour
 before. After 7 days the gateway makes a new one and reloads the endpoint's
 configuration: sessions that are open go on, new ones get the new
-certificate. No private key reaches a disk. The server learns the hash over
+certificate. It does so as well within a minute of the clock lying outside
+the certificate it has: the board starts with its clock wherever the card
+left it and takes the network time later, and a certificate made before
+that was months out of date for a week (security review of 2026-10-18,
+N11); the unit also starts after `time-sync.target`. No private key reaches
+a disk. The server learns the hash over
 the link and gives it to the page with the token. The page sends its clock
 with the request; if the certificate would not be valid by that clock, the
 server answers `clock` instead.

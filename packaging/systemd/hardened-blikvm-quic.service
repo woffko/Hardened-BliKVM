@@ -5,8 +5,10 @@ Documentation=https://github.com/woffko/Hardened-BliKVM
 # (docs/design/quic-transport-v1.md). It is the board's switch: installed
 # disabled, enabled and started, or stopped and disabled, by the board owner.
 # It holds no authority and finds the web server's link by itself; without
-# the server it serves nobody.
-After=network.target
+# the server it serves nobody. It starts once the time is synchronised where
+# the board waits for that, and replaces its certificate whenever the clock
+# lies outside it (security review of 2026-10-18, N11).
+After=network.target time-sync.target
 
 [Service]
 Type=simple

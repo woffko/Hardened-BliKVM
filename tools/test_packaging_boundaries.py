@@ -2020,6 +2020,19 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
         self.assertGreaterEqual(checked, 14)
 
+    def test_the_quic_gateway_starts_after_the_time_is_synchronised(self) -> None:
+        # Its certificate was made by the clock the board started with (N11).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-quic.service").read_text()
+        after = [
+            word
+            for line in unit.splitlines()
+            if line.startswith("After=")
+            for word in line.removeprefix("After=").split()
+        ]
+        self.assertIn("time-sync.target", after)
+        gateway = (ROOT / "crates/bli-kvm-quic-gateway/src/lib.rs").read_text()
+        self.assertIn("certificate::outside(&self.link.certificate(), certificate::now())", gateway)
+
     def test_the_owners_files_are_not_writable_by_its_group(self) -> None:
         # The owner's drop-in gave its files group write (UMask=0007), so any
         # account of the shared group could change the owner's state

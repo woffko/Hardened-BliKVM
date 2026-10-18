@@ -90,6 +90,11 @@ impl Link {
         }
     }
 
+    /// The certificate the endpoint presents.
+    pub fn certificate(&self) -> CertificateInfo {
+        self.0.certificate.lock().unwrap().clone()
+    }
+
     /// The endpoint presents a new certificate from now on.
     pub fn set_certificate(&self, certificate: CertificateInfo) {
         *self.0.certificate.lock().unwrap() = certificate;

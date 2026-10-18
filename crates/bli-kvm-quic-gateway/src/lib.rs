@@ -31,6 +31,8 @@ use crate::{config::Config, frames::FrameSource, link::Link, session::Slot};
 
 /// Streams a page may have open at once. HTTP/3 itself takes three
 /// unidirectional ones; the page opens the control and the input stream.
+/// How often the clock is held against the certificate's validity.
+const CLOCK_CHECK: Duration = Duration::from_secs(60);
 const MAX_BIDIRECTIONAL_STREAMS: u32 = 8;
 const MAX_UNIDIRECTIONAL_STREAMS: u32 = 8;
 /// What a page may send before it is read: its messages are small.
@@ -131,6 +133,7 @@ impl Gateway {
             tokio::time::Instant::now() + self.config.certificate_use,
             self.config.certificate_use,
         );
+        let mut clock = tokio::time::interval(CLOCK_CHECK);
         tokio::pin!(shutdown);
         loop {
             tokio::select! {
@@ -157,6 +160,13 @@ impl Gateway {
                     ));
                 }
                 _ = renew.tick() => self.renew_certificate(),
+                _ = clock.tick() => {
+                    if certificate::outside(&self.link.certificate(), certificate::now()) {
+                        eprintln!("quic gateway: the clock lies outside the certificate");
+                        self.renew_certificate();
+                        renew.reset();
+                    }
+                }
                 () = &mut shutdown => break,
             }
         }
