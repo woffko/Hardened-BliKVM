@@ -192,7 +192,13 @@ Also since that review, in the runtime that carries it:
   (MED-07).
 - The record keeps the digests of `state.tar`, `fstab`, `shadow`, `passwd`
   and `group`, which the boot step checks before it makes the backup
-  (HIGH-02, against a damaged card).
+  (HIGH-02, against a damaged card). A boot step of an older runtime
+  (`0.1.0~dev38` and before) refuses such a record for its unknown field,
+  so the stage and the boot step must be the same system's, as they are on
+  a board whose system came with an image or a RAW update; this runtime
+  reads an older record. A runtime put on by hand needs the initramfs that
+  carries its boot step (seen on the test board on 2026-10-19: the first
+  install wrote nothing and left the update staged).
 - The boot step stops when `e2fsck -p` leaves errors uncorrected (status 4
   or more; LOW-02).
 - The media catalog lives in `/var/lib/hardened-blikvm-gadget/catalog`, and

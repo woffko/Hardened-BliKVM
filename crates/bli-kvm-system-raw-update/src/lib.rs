@@ -617,18 +617,22 @@ fn restore_backup(
     Ok(BootAction::Reboot)
 }
 
-/// Removes the staged payload, the backup, the carried state and the copies
-/// of the device's fstab and shadow once no step can use them.
+/// What an update leaves in the staging directory until it is kept or
+/// given up: the payload, the backup, the carried state and the copies of
+/// the device's fstab, shadow and accounts.
+const LEFT_FILES: [&str; 7] = [
+    BACKUP_FILE,
+    PAYLOAD_FILE,
+    STATE_FILE,
+    FSTAB_FILE,
+    SHADOW_FILE,
+    PASSWD_FILE,
+    GROUP_FILE,
+];
+
+/// Removes what an update left once no step can use it.
 fn discard(staging: &Path) {
-    for file in [
-        BACKUP_FILE,
-        PAYLOAD_FILE,
-        STATE_FILE,
-        FSTAB_FILE,
-        SHADOW_FILE,
-        PASSWD_FILE,
-        GROUP_FILE,
-    ] {
+    for file in LEFT_FILES {
         let _ = fs::remove_file(staging.join(file));
     }
 }
@@ -651,13 +655,9 @@ pub fn confirm(staging: &Path) -> Result<Record> {
     if record.phase != Phase::Booted {
         return Err(UpdateError::NothingToDo);
     }
-    for file in [
-        BACKUP_FILE,
-        PAYLOAD_FILE,
-        STATE_FILE,
-        FSTAB_FILE,
-        SHADOW_FILE,
-    ] {
+    // The accounts' copies too: confirming left them behind (seen on the
+    // test board on 2026-10-19).
+    for file in LEFT_FILES {
         match fs::remove_file(staging.join(file)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}

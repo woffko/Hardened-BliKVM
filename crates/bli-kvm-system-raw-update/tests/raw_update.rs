@@ -282,8 +282,14 @@ fn a_staged_update_is_written_booted_restored_and_confirmed() {
         BootAction::Continue
     );
     assert_eq!(confirm(&fixture.staging).unwrap().phase, Phase::Confirmed);
-    assert!(!fixture.staging.join(BACKUP_FILE).exists());
-    assert!(!fixture.staging.join("payload.img.zst").exists());
+    // Nothing staged stays once the new system is kept: the record and the
+    // confirmed sequence alone.
+    let mut left: Vec<String> = fs::read_dir(&fixture.staging)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["apply.json", "confirmed-sequence"]);
     assert!(confirm(&fixture.staging).is_err());
 }
 
