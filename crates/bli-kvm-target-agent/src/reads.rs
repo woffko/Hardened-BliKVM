@@ -14,13 +14,19 @@ use windows_sys::Win32::Devices::Display::{
     DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS,
     QueryDisplayConfig,
 };
-use windows_sys::Win32::Foundation::{ERROR_SUCCESS, POINT};
+use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HANDLE, POINT};
 use windows_sys::Win32::Globalization::{
     GetLocaleInfoEx, LCIDToLocaleName, LOCALE_SLOCALIZEDDISPLAYNAME,
 };
 use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromPoint};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+};
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_INFO_CLASS, WTSINFOEXW, WTSSessionInfoEx,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{
     CloseDesktop, DESKTOP_READOBJECTS, GetUserObjectInformationW, OpenInputDesktop, UOI_NAME,
@@ -96,15 +102,20 @@ fn registry_number(key: &str, value: &str) -> Option<u32> {
     (status == ERROR_SUCCESS).then_some(number)
 }
 
-/// Whether the session is locked: the desktop in front is not the user's.
+/// Whether the session is locked (`names::session_locked`): the session's
+/// own flag, and the desktop in front.
 pub(crate) fn locked() -> bool {
+    names::session_locked(session_flags(), input_desktop().as_deref())
+}
+
+/// The name of the desktop in front, if the user may open it.
+fn input_desktop() -> Option<String> {
     // SAFETY: the desktop opened is closed; the name's buffer goes with its
     // size in bytes.
     unsafe {
         let desktop = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
         if desktop.is_null() {
-            // The sign-in desktop cannot be opened by the user.
-            return true;
+            return None;
         }
         let mut name = [0_u16; 64];
         let mut needed = 0_u32;
@@ -116,7 +127,85 @@ pub(crate) fn locked() -> bool {
             &mut needed,
         );
         CloseDesktop(desktop);
-        read == 0 || !text(&name).eq_ignore_ascii_case("Default")
+        (read != 0).then(|| text(&name))
+    }
+}
+
+/// wtsapi32.dll's two functions the lock needs, loaded from the system
+/// folder only: it is not one of Windows' known DLLs, so imported statically
+/// it would be looked for in the agent's own folder first (security review
+/// of 2026-10-18, HIGH-08).
+struct WtsApi {
+    query: unsafe extern "system" fn(HANDLE, u32, WTS_INFO_CLASS, *mut *mut u16, *mut u32) -> i32,
+    free: unsafe extern "system" fn(*const core::ffi::c_void),
+}
+
+fn wts_api() -> Option<&'static WtsApi> {
+    static API: std::sync::OnceLock<Option<WtsApi>> = std::sync::OnceLock::new();
+    // SAFETY: `load_wts_api` only asks Windows for the system folder's
+    // wtsapi32.dll and its functions by their documented names.
+    API.get_or_init(|| unsafe { load_wts_api() }).as_ref()
+}
+
+/// Loads wtsapi32.dll from the system folder and takes its functions.
+///
+/// # Safety
+/// Each pointer is cast to the signature wtsapi32.dll documents for its name.
+unsafe fn load_wts_api() -> Option<WtsApi> {
+    let name: Vec<u16> = "wtsapi32.dll\0".encode_utf16().collect();
+    // SAFETY: a zero-ended name; the module stays loaded for the process.
+    let module = unsafe { LoadLibraryExW(name.as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32) };
+    if module.is_null() {
+        return None;
+    }
+    // SAFETY: zero-ended names of functions of the module just loaded.
+    let symbol = |name: &[u8]| unsafe { GetProcAddress(module, name.as_ptr()) };
+    // SAFETY: each address is the function of that name, whose signature
+    // is the one given.
+    unsafe {
+        Some(WtsApi {
+            query: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(
+                    HANDLE,
+                    u32,
+                    WTS_INFO_CLASS,
+                    *mut *mut u16,
+                    *mut u32,
+                ) -> i32,
+            >(symbol(b"WTSQuerySessionInformationW\0")?),
+            free: std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(*const core::ffi::c_void),
+            >(symbol(b"WTSFreeMemory\0")?),
+        })
+    }
+}
+
+/// The session's lock flag, as `WTSSessionInfoEx` gives it.
+fn session_flags() -> Option<i32> {
+    let api = wts_api()?;
+    let mut buffer: *mut u16 = null_mut();
+    let mut bytes = 0_u32;
+    // SAFETY: Windows fills the buffer it allocates and says its size; it is
+    // read as the documented structure only when large enough, and freed.
+    unsafe {
+        if (api.query)(
+            WTS_CURRENT_SERVER_HANDLE,
+            WTS_CURRENT_SESSION,
+            WTSSessionInfoEx,
+            &mut buffer,
+            &mut bytes,
+        ) == 0
+            || buffer.is_null()
+        {
+            return None;
+        }
+        let info = buffer.cast::<WTSINFOEXW>();
+        let flags = (bytes as usize >= size_of::<WTSINFOEXW>() && (*info).Level == 1)
+            .then(|| (*info).Data.WTSInfoExLevel1.SessionFlags);
+        (api.free)(buffer.cast());
+        flags
     }
 }
 

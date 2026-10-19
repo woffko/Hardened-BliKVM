@@ -83,7 +83,12 @@ Since the security review of 2026-10-18:
   or write, a layout switch, a monitors' change and its keep with the
   refusal "the target's session is locked" (D1): the locked screen is not
   the operator's desktop. The other calls, and those the board makes to
-  learn the agent's state, are answered as before.
+  learn the agent's state, are answered as before. The session counts as
+  locked when Windows' own flag for it says so (`WTSSessionInfoEx`, from
+  `wtsapi32.dll` loaded from the system folder) or the desktop in front is
+  not the user's: the desktop alone missed the lock screen of Windows 11
+  26H2 on the test target, which read `Default` after Win+L, and the
+  clipboard read then failed only as held by another program.
 - The agent takes `hid.dll` (and any DLL that is not one of Windows' known
   ones) from the system folder only: it loads it at run time with
   `LOAD_LIBRARY_SEARCH_SYSTEM32`, its load configuration asks the same for

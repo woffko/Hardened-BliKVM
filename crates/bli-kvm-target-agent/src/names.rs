@@ -232,6 +232,23 @@ pub fn serves_session(own: u32, console: u32) -> bool {
 /// to be unlocked.
 pub const LOCKED_REFUSAL: &str = "the target's session is locked";
 
+/// Windows' flags for a locked session and an unlocked one
+/// (`WTS_SESSIONSTATE_LOCK`, `WTS_SESSIONSTATE_UNLOCK`).
+pub const SESSION_LOCKED: i32 = 0;
+pub const SESSION_UNLOCKED: i32 = 1;
+
+/// Whether the session is locked, from what Windows says of it: the
+/// session's own flag (`flags`, where Windows gives one), and the desktop in
+/// front (`input_desktop`), which is not the user's `Default` one behind a
+/// secure prompt (`None`: it cannot be opened, as the sign-in desktop
+/// cannot). The desktop alone missed Windows 11's lock screen on the test
+/// target, where it still read `Default` after Win+L (security review of
+/// 2026-10-18, D1).
+pub fn session_locked(flags: Option<i32>, input_desktop: Option<&str>) -> bool {
+    flags == Some(SESSION_LOCKED)
+        || !input_desktop.is_some_and(|name| name.eq_ignore_ascii_case("Default"))
+}
+
 /// Whether `call` waits until Windows' session is unlocked: the clipboard
 /// both ways, the layout and the monitors' changes. Windows' lock screen is
 /// its own border, and the KVM's operator need not be the Windows user, so
@@ -666,6 +683,21 @@ mod tests {
             assert!(!waits_for_unlock(&call), "{call:?}");
         }
         assert_eq!(LOCKED_REFUSAL, "the target's session is locked");
+    }
+
+    #[test]
+    fn the_session_is_locked_by_its_flag_or_by_the_desktop_in_front() {
+        // Windows 11's lock screen on the test target: the flag says locked
+        // while the desktop in front still reads Default.
+        assert!(session_locked(Some(SESSION_LOCKED), Some("Default")));
+        assert!(!session_locked(Some(SESSION_UNLOCKED), Some("Default")));
+        assert!(!session_locked(None, Some("default")));
+        // A secure prompt's desktop, or one that cannot be opened.
+        assert!(session_locked(Some(SESSION_UNLOCKED), Some("Winlogon")));
+        assert!(session_locked(None, None));
+        // A flag Windows does not know leaves it to the desktop.
+        assert!(!session_locked(Some(-1), Some("Default")));
+        assert!(session_locked(Some(-1), None));
     }
 
     #[test]
