@@ -223,7 +223,11 @@ session lock, SSH, the switches (SSH, QUIC, Tailscale, mDNS) and the
 catalog; the watching probes passed, QUIC video included; Janus listens on
 its address alone. Confirming left the staged accounts' copies, which
 `7ffd42a` removes (removed by hand on the board; the image of this gate
-carries the runtime without it). The board ends with slot 99 and the
+carries the runtime without it). The application journal holds 83 records
+of 128: E2's rollover, tested on the host with 200 activations, first acts
+on the board at its 128th, so the board's journal was not pruned in this
+gate, only no longer stuck at the cap. The slot roots hold nothing but
+slots and `current`. The board ends with slot 99 and the
 system of sequence 7, the operator's switches and settings as found, root's
 home as it was, and no unit failed (a status worker's instance that failed
 when its client hung up was reset).
