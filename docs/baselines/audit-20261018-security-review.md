@@ -159,24 +159,76 @@ release's and is seen at gate E.
 | C4 | (boardd) | `d57365d` | a damaged status image is refused, not a panic | fixed; slot 97 |
 | C5 | MED-01 | `9104bdd` | the platform broker refuses another peer | fixed; slot 97 (disabled on the board) |
 | C6 | LOW-03 | `e7591a6` | `all`, `default`, `lo`, `.`, `..` are refused | fixed; slot 97 |
-| D1 | HIGH-08 | `158da00` | clipboard, layout and monitors are held back while Windows is locked | fixed; slot 97; the operator's check at gate B–D |
-| D2 | HIGH-08 | `5f82f8e` | `hid.dll` from the system folder only; the import check of the agent | fixed; slot 97; the operator's check at gate B–D |
-| D3 | MED-13 | `d3c1860` | the agent's channel is opened unshared | fixed; slot 97; the operator's check at gate B–D |
-| D4 | N7 | `446992c` | the start line runs only a file with the board's agent's SHA-256 | fixed; slot 97; the operator's check at gate B–D |
+| D1 | HIGH-08 | `158da00`, `2ec7452` | clipboard, layout and monitors are held back while Windows is locked; the session's own lock flag counts | fixed; slot 99, the operator's check at gate B–D (the desktop test alone missed Windows 11's lock screen on slot 98) |
+| D2 | HIGH-08 | `5f82f8e` | `hid.dll` from the system folder only; the import check of the agent | fixed; the operator's check at gate B–D (slot 98) |
+| D3 | MED-13 | `d3c1860` | the agent's channel is opened unshared | fixed; the operator's check at gate B–D (slot 98) |
+| D4 | N7 | `446992c` | the start line runs only a file with the board's agent's SHA-256 | fixed; the operator's check at gate B–D (slots 98 and 99) |
 | E1 | MED-09, N2 | `b286e56` | no stager temporary in a store's root; old ones are cleaned, also by the exec store | fixed; gate E |
 | E2 | LOW-01 | `dae71b2` | the journal rolls its history over at 64 finished records | fixed; gate E |
-| E3 | HIGH-02, HIGH-04, MED-07, MED-08, LOW-02, N3, N4, N5 | `c83cf11`, `43e7df2`, `49e48b6`, `de4677f`, `6ccb846`, `ed83bde`, `591888b`, `5ca99ad` | the update state carried; one file system and a retry; a failed stage cleaned; carried owners checked; a canonical UUID; the running system's sequence in the floor; staged digests; `e2fsck` status 4 stops | fixed; gate E |
-| E4 | N1, MED-06 | `bd62801` | the worker's own account; it fills only the file the server prepared; the server publishes | fixed; gate E |
+| E3 | HIGH-02, HIGH-04, MED-07, MED-08, LOW-02, N3, N4, N5 | `c83cf11`, `43e7df2`, `49e48b6`, `de4677f`, `6ccb846`, `ed83bde`, `591888b`, `5ca99ad`, `7ffd42a` | the update state carried; one file system and a retry; a failed stage cleaned; carried owners checked; a canonical UUID; the running system's sequence in the floor; staged digests; `e2fsck` status 4 stops; nothing staged left once kept | fixed; gate E (the last after it, see below) |
+| E4 | N1, MED-06 | `bd62801`, `724e9de` | the worker's own account (a sysusers fragment of its own beside the pinned identities); it fills only the file the server prepared; the server publishes | fixed; gate E |
 | E5 | CRIT-01 | `73da924` | no root unit reads a configuration under a directory another account may write; the catalog copied once | fixed; gate E. boardd's own check of its directory ships in the first slot after the system release |
 | E6 | MED-12 | `ad21c51` | the image store is sticky | fixed; gate E |
 | E7 | MED-01 | `05e95d3` | the confirmation refuses another account | fixed; gate E |
-| E8 | MED-03, N6 | `04a0c69` | Janus's own loopback address; every non-client unit denies it; every Janus port in its unit | fixed; gate E (WebRTC probes) |
-| E9 | MED-05, N8 | `bb7be32` | glob characters refused; `--globoff`; a public-to-private redirect refused | fixed; gate E |
+| E8 | MED-03, N6 | `04a0c69`, `eb07bc0` | Janus's own loopback address, given to `lo` under a label; every non-client unit denies it; every Janus port in its unit | fixed; gate E (WebRTC probes) |
+| E9 | MED-05, N8 | `bb7be32`, `2372b64` | glob characters refused; `--globoff`; a public-to-private redirect refused | fixed; gate E |
 | E10 | MED-06 | — | — | not needed: after E4 the helper writes no catalog (pinned by a test) |
 | E11 | MED-13 | `046fcb7` | the demand socket refuses another account and closes connections beyond its cap | fixed; gate E |
 | E12 | MED-12 | `5b5803a` | the owner's umask 0027 | fixed; gate E |
 | E13 | LOW-07, N6 | `0a1ac89` | the verifier covers every unit; the remount's and the boot report's sandboxes; nginx's ciphers | fixed; gate E |
 | E14 | LOW-04 | `66fcf5e` | the image leaves the jiggler, the revert records and the board's `nginx.conf` | fixed; gate E |
 | E15 | RustSec of beta.8 | `b35e147` | `cargo audit`: five advisories before, none after | fixed; gate E |
-| E16 | MED-10, HIGH-07, MED-02 | — | — | optional, at the operator's choice |
+| E16 | MED-10, HIGH-07, MED-02 | — | — | not done: the operator's choice (2026-10-18) |
 | E17 | N11 | `9ff9a62` | a certificate made by a clock months behind is replaced | fixed; gate E |
+
+## Gates
+
+Gate B–D (2026-10-18 and 19). Slot 97 (0.1.0-beta.9, `1ab799d`) went on at
+the operator's word and was verified on the board: services, the state as
+found but for the slot, the owner refusing no peer, LUN 0 reading back the
+checked file by its path, the watching probes; QUIC video failed with
+"clock" (N11, fixed by E17). The operator's checks on the target ran on
+slot 98: the agent updated within 10 s (D4, D2), its test tool was refused
+while it ran (D3), and with Windows locked a clipboard read from the phone
+was refused, but as "another program holds the clipboard": the agent's
+lock test, the desktop in front, still read `Default` behind the lock
+screen of Windows 11 26H2. With the session's own lock flag (`2ec7452`,
+slot 99) the read was refused as "the target's session is locked", the
+clipboard read again after unlocking and the agent updated within 10 s.
+
+Gate E (2026-10-18 and 19). From `724e9de` (check green in one run): slot 98
+and update runtime `0.1.0~dev39`, whose files are dev38's and the download
+account's sysusers fragment. At the operator's word: slot 98, then the
+system staged by hand as the board's earlier system was (the package, the
+account, the gadget's tmpfiles with the catalog's copy, the units in
+`/etc/systemd/system`, which were packaging's at `89bc1e8`, nginx's
+configuration, the video path with `deploy_vp8.sh`), and a reboot. Janus
+then took neither address (`eb07bc0`): fixed on the board at once, WebRTC
+probes passing. Slot 99 (`2ec7452`, check green with `screen_area_contract`
+flaky under load and the check resumed from it) carried D1's fix. The card
+image was read with the KVM pages closed (0.1.0-beta.9, system sequence 7)
+and inspected: the download account and its membership, the gadget's
+tmpfiles from packaging, no catalog in the new place and an empty one in
+the former, nginx's configuration from packaging, no jiggler or revert
+record, the image store 1770, the configuration directory root's, the
+system sequence, dev39, Janus's unit and addresses, the units of the new
+catalog, the owner's umask, the exec store starting slot 99. Its RAW bundle
+(sequence 7) was installed with root's home saved: the first install wrote
+nothing, as the board's initramfs was still beta.4's, whose boot step
+refuses dev39's record (the staging by hand had not rebuilt it); at the
+operator's word the image's initramfs, built on the board, replaced it,
+and the second install wrote, booted and was confirmed. Carried: the TLS
+certificate, the host keys, the account, the slot, the hostname, the
+session lock, SSH, the switches (SSH, QUIC, Tailscale, mDNS) and the
+catalog; the watching probes passed, QUIC video included; Janus listens on
+its address alone. Confirming left the staged accounts' copies, which
+`7ffd42a` removes (removed by hand on the board; the image of this gate
+carries the runtime without it). The board ends with slot 99 and the
+system of sequence 7, the operator's switches and settings as found, root's
+home as it was, and no unit failed (a status worker's instance that failed
+when its client hung up was reset).
+
+Artifacts: slot 98 `86e40c76…8b93`, slot 99 `fcddf946…704a`, agent of slot
+99 `d31c0d5e…8f7a`, update runtime dev39 `80095d07…0187`, encoder
+`e42ac68a…78fb`, card image `603f3972…64f2` (zst `7656c9fe…0a2b`), system
+root `d2e4e2d2…87be`, RAW bundle sequence 7 `c735993d…c549`.
