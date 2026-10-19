@@ -3,21 +3,10 @@
 // the board refuses it as wrong, and goes to the login once the change is
 // made.
 import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
 import { startApp } from "./app_harness.mjs";
+import { launchChromium } from "./quality_fixture.mjs";
 
-const { chromium } = await import(
-  pathToFileURL(
-    process.env.PLAYWRIGHT_MODULE ??
-      "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs",
-  ).href
-);
-const browser = await chromium.launch({
-  headless: true,
-  executablePath:
-    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
-    "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
-});
+const browser = await launchChromium();
 const app = await startApp();
 
 try {
