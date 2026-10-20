@@ -232,6 +232,18 @@ system of sequence 7, the operator's switches and settings as found, root's
 home as it was, and no unit failed (a status worker's instance that failed
 when its client hung up was reset).
 
+Flaky tests, named as the plan's rules ask; each passed alone or in a full
+run without the load that stopped it:
+`on_screen_keyboard_contract` (the second confirmation's race, gate B–D);
+`screen_area_contract` (the pointer read before the page has the whole
+desktop again, two in three alone at load 14); `quic_video_contract` and
+`mjpeg_upscale_contract` (the page's upscaler draws in headless Chromium on
+the CPU: a frame dropped, or fewer than 90 % of the frames drawn, while
+another session's fuzzers held the host at load 12 to 18); the update
+supervisor's `upload_worker_stages_retries_and_rejects_without_activation`
+(its client's 5 s read under that load). The final full check on the final
+commit ran after those fuzzers had ended.
+
 Artifacts: slot 98 `86e40c76…8b93`, slot 99 `fcddf946…704a`, agent of slot
 99 `d31c0d5e…8f7a`, update runtime dev39 `80095d07…0187`, encoder
 `e42ac68a…78fb`, card image `603f3972…64f2` (zst `7656c9fe…0a2b`), system
