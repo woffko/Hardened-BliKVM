@@ -4672,6 +4672,104 @@ mod tests {
         assert!(!logs_in_with(&app, "second password").await);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn two_password_changes_at_once_leave_both_passwords_the_same() {
+        // The first change's root password is refused once the second's has
+        // arrived as well: unserialised, the first puts the account back
+        // over the second, whose root password stays (code audit of
+        // 2026-10-20, AUD-19.3).
+        use tokio::io::AsyncBufReadExt;
+        let root = tempdir().unwrap();
+        let socket = root.path().join("admin.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let helper = tokio::spawn(async move {
+            async fn read(listener: &tokio::net::UnixListener) -> (tokio::net::UnixStream, String) {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let request: bli_kvm_admin_helper::AdminRequest =
+                    serde_json::from_str(&line).unwrap();
+                let bli_kvm_admin_helper::AdminRequest::RootPassword { password } = request else {
+                    panic!("unexpected helper request");
+                };
+                (reader.into_inner(), password)
+            }
+            let done = r#"{"status":"done"}"#;
+            let refused = r#"{"status":"refused","reason":"fixture"}"#;
+            let mut set = Vec::new();
+            // The first account's root password.
+            let (mut stream, password) = read(&listener).await;
+            stream
+                .write_all(format!("{done}\n").as_bytes())
+                .await
+                .unwrap();
+            drop(stream);
+            set.push(password);
+            let (mut first, _) = read(&listener).await;
+            match tokio::time::timeout(std::time::Duration::from_secs(3), read(&listener)).await {
+                Ok((mut second, password)) => {
+                    first
+                        .write_all(format!("{refused}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    drop(first);
+                    second
+                        .write_all(format!("{done}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    set.push(password);
+                }
+                Err(_) => {
+                    first
+                        .write_all(format!("{refused}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    drop(first);
+                    let (mut second, password) = read(&listener).await;
+                    second
+                        .write_all(format!("{done}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    set.push(password);
+                }
+            }
+            set
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            admin_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let change = |password: &'static str| {
+            let app = app.clone();
+            let request = password_change(
+                &cookie,
+                &csrf,
+                serde_json::json!({
+                    "username": "operator",
+                    "password": password,
+                    "currentPassword": "initial password"
+                }),
+            );
+            tokio::spawn(async move { app.oneshot(request).await.unwrap() })
+        };
+        let first = change("first password");
+        let second = change("second password");
+        let _ = first.await.unwrap();
+        let _ = second.await.unwrap();
+        let set = tokio::time::timeout(std::time::Duration::from_secs(20), helper)
+            .await
+            .unwrap()
+            .unwrap();
+        let root_password = set.last().unwrap().clone();
+        assert!(
+            logs_in_with(&app, &root_password).await,
+            "the web account is not root's password {root_password:?}"
+        );
+    }
+
     #[tokio::test]
     async fn an_oversized_hid_message_closes_the_socket() {
         use futures_util::{SinkExt, StreamExt};

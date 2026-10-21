@@ -240,6 +240,11 @@ pub async fn change_password(
         .filter(|current| !current.is_empty() && current.len() <= 256)
         .ok_or_else(|| AppError::Forbidden("the current password is required".into()))?;
     validate_credentials(&request.username, &request.password)?;
+    // One change at a time, from the check of the current password to
+    // root's: two at once could each check the old password and then leave
+    // the account and root with different ones (code audit of 2026-10-20,
+    // AUD-19.3).
+    let _change = state.setup_lock.lock().await;
     // Checked like a login, under the same limiter.
     let limiter_key = format!("password:{}", request.username);
     let locked = || AppError::RateLimited("account locked after repeated failures".into());
@@ -280,9 +285,14 @@ pub async fn change_password(
         .accounts
         .load()?
         .ok_or_else(|| AppError::NotFound("account not initialized".into()))?;
-    state
-        .accounts
-        .replace(&request.username, &request.password)?;
+    {
+        // The new hash runs on the blocking pool, as a verification does.
+        let accounts = state.accounts.clone();
+        let (username, password) = (request.username.clone(), request.password.clone());
+        tokio::task::spawn_blocking(move || accounts.replace(&username, &password))
+            .await
+            .map_err(|_| AppError::Internal("the password could not be hashed".into()))??;
+    }
     if let Err(error) = set_root_password(&state, &request.password).await {
         state.accounts.put_back(&previous)?;
         return Err(error);
