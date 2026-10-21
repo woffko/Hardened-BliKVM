@@ -27,6 +27,32 @@ use thiserror::Error;
 
 mod protected_root;
 
+/// The system sequence of the running root, which the image builder writes
+/// and a RAW system update replaces with the root it writes.
+pub const ROOT_SYSTEM_SEQUENCE: &str = "/usr/share/hardened-blikvm/system-update/system-sequence";
+
+/// The sequence a root's `system-sequence` file names, if it is a small
+/// regular file holding a positive decimal number.
+pub fn read_system_sequence(path: &Path) -> Option<u64> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(33).read_to_string(&mut text).ok()?;
+    if text.len() > 32 {
+        return None;
+    }
+    text.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|sequence| *sequence > 0)
+}
+
 /// Require a root-to-leaf chain of directories owned by UID 0 and not
 /// writable by group or others, with no symbolic links.
 pub fn validate_protected_directory(path: &Path) -> Result<(), ApplicationStageError> {

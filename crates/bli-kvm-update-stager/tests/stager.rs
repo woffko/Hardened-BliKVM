@@ -576,6 +576,35 @@ fn a_temporary_file_left_by_an_interrupted_copy_is_cleaned_before_staging() {
 }
 
 #[test]
+fn a_roots_system_sequence_is_read_only_from_a_small_regular_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("system-sequence");
+    fs::write(&path, "8\n").unwrap();
+    assert_eq!(bli_kvm_update_stager::read_system_sequence(&path), Some(8));
+    for bad in [
+        "0\n",
+        "eight\n",
+        "",
+        "1234567890123456789012345678901234567",
+    ] {
+        fs::write(&path, bad).unwrap();
+        assert_eq!(
+            bli_kvm_update_stager::read_system_sequence(&path),
+            None,
+            "{bad:?}"
+        );
+    }
+    fs::write(directory.path().join("elsewhere"), "8\n").unwrap();
+    let linked = directory.path().join("linked");
+    std::os::unix::fs::symlink(directory.path().join("elsewhere"), &linked).unwrap();
+    assert_eq!(bli_kvm_update_stager::read_system_sequence(&linked), None);
+    assert_eq!(
+        bli_kvm_update_stager::read_system_sequence(&directory.path().join("absent")),
+        None
+    );
+}
+
+#[test]
 fn a_staging_cut_before_its_receipt_is_cleaned() {
     // The stager makes `.staging-*`, then its metadata directory, then the
     // receipt: a power loss between them left a directory every later

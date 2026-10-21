@@ -109,7 +109,12 @@ pub fn load(path: &Path, protected: bool) -> Result<HelperConfig, HelperError> {
     }
     let document: ConfigDocument =
         serde_json::from_slice(&bytes).map_err(|_| HelperError::InvalidConfig)?;
-    validate(document)
+    validate(
+        document,
+        bli_kvm_update_stager::read_system_sequence(Path::new(
+            bli_kvm_update_stager::ROOT_SYSTEM_SEQUENCE,
+        )),
+    )
 }
 
 fn decode_public_key(value: &str) -> Option<[u8; 32]> {
@@ -129,7 +134,10 @@ fn decode_public_key(value: &str) -> Option<[u8; 32]> {
     Some(output)
 }
 
-fn validate(document: ConfigDocument) -> Result<HelperConfig, HelperError> {
+fn validate(
+    document: ConfigDocument,
+    root_sequence: Option<u64>,
+) -> Result<HelperConfig, HelperError> {
     let roots = [
         &document.updater_slot_root,
         &document.execution_root,
@@ -147,7 +155,10 @@ fn validate(document: ConfigDocument) -> Result<HelperConfig, HelperError> {
         &document.board_socket,
     ]);
     let policy = ExecutionPolicy {
-        system_sequence: document.system_sequence,
+        // The configuration is carried across RAW updates; the running
+        // root's sequence names the system that runs (code audit of
+        // 2026-10-20, AUD-02).
+        system_sequence: document.system_sequence.max(root_sequence.unwrap_or(0)),
         minimum_application_sequence: document.minimum_application_sequence,
         quota: StageQuota {
             max_slots: document.max_slots,
@@ -258,6 +269,38 @@ mod tests {
             SocketAddr::from((Ipv4Addr::LOCALHOST, 18080))
         );
         assert!(config.probes.board.external_rtc);
+    }
+
+    #[test]
+    fn the_running_roots_system_sequence_counts_when_it_is_newer() {
+        // A slot that asks for the system a RAW update brought must be
+        // accepted although the carried configuration still names the
+        // first image's (code audit of 2026-10-20, AUD-02).
+        let document = || serde_json::from_value::<ConfigDocument>(document()).unwrap();
+        assert_eq!(
+            validate(document(), Some(8))
+                .ok()
+                .unwrap()
+                .policy
+                .system_sequence,
+            8
+        );
+        assert_eq!(
+            validate(document(), None)
+                .ok()
+                .unwrap()
+                .policy
+                .system_sequence,
+            2
+        );
+        assert_eq!(
+            validate(document(), Some(1))
+                .ok()
+                .unwrap()
+                .policy
+                .system_sequence,
+            2
+        );
     }
 
     #[test]
