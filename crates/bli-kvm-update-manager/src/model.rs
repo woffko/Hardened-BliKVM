@@ -441,6 +441,43 @@ impl JournalDocument {
         self.pruned_through_generation = self.generation;
     }
 
+    /// Removes the oldest finished record that neither a pending operation
+    /// nor the current rollback receipt names; `false` when there is none.
+    fn prune_oldest_finished(&mut self) -> bool {
+        let receipt = self
+            .native_completion
+            .as_ref()
+            .map(|completion| completion.intent.operation_id.clone());
+        let Some(oldest) = self.history.iter().position(|record| {
+            record.outcome != OperationOutcome::Pending
+                && receipt.as_deref() != Some(record.operation_id.as_str())
+        }) else {
+            return false;
+        };
+        self.history.remove(oldest);
+        self.pruned_through_generation = self.generation;
+        true
+    }
+
+    /// Makes the document fit the journal's size, as the history's count
+    /// rollover makes it fit the count: a native rollback's record keeps its
+    /// completion (about 800 bytes), so 64 KiB filled at the 81st, long
+    /// before the 128th record (code audit of 2026-10-20, AUD-03). With
+    /// `native_admission`, room is kept for the whole attempt as well.
+    pub(crate) fn fit_journal(&mut self, native_admission: bool) -> Result<(), UpdateManagerError> {
+        loop {
+            let fits = if native_admission {
+                self.validate_native_activation_capacity()
+            } else {
+                crate::journal::encode_document(self).map(|_| ())
+            };
+            match fits {
+                Err(UpdateManagerError::JournalTooLarge) if self.prune_oldest_finished() => {}
+                result => return result,
+            }
+        }
+    }
+
     pub(crate) fn complete_operation(
         &mut self,
         operation_id: &str,

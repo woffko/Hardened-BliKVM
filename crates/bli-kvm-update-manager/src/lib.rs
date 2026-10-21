@@ -1313,6 +1313,7 @@ impl ApplicationUpdateManager {
             )?;
             document.complete_operation(&operation_id, OperationOutcome::Noop)?;
             let previous_generation = document.advance_generation()?;
+            document.fit_journal(false)?;
             self.state.store(&document, Some(previous_generation))?;
             return Ok(PrepareResult::Immediate(ActivationOutcome::AlreadyActive));
         }
@@ -1346,9 +1347,7 @@ impl ApplicationUpdateManager {
         document.begin_operation(operation_id, pending.target.slot_id.clone(), health_binding)?;
         document.pending = Some(pending);
         let previous_generation = document.advance_generation()?;
-        if document.schema_version == model::NATIVE_LIFECYCLE_SCHEMA_VERSION {
-            document.validate_native_activation_capacity()?;
-        }
+        document.fit_journal(document.schema_version == model::NATIVE_LIFECYCLE_SCHEMA_VERSION)?;
         self.state.store(&document, Some(previous_generation))?;
         Ok(PrepareResult::Prepared)
     }

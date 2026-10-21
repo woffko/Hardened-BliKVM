@@ -1716,6 +1716,64 @@ fn a_rollover_keeps_a_pending_record_however_old() {
 }
 
 #[test]
+fn native_rollbacks_beyond_the_journals_size_are_all_admitted() {
+    // A native rollback's record keeps its completion (about 800 bytes): the
+    // 64 KiB journal filled at the 81st, long before the history's 128
+    // records rolled over, and every later admission was refused (code
+    // audit of 2026-10-20, AUD-03).
+    let fixture = Fixture::new();
+    let confirmed = fixture.stage(1, 1, 1);
+    let candidate = fixture.stage(2, 1, 1);
+    let manager = fixture.manager(1);
+    manager.initialize(&confirmed.slot_id).unwrap();
+    let mut generation = manager.migrate_native_idle(1, |_| Ok(())).unwrap();
+    let mut now = 100;
+    // Beyond the 81st and beyond the history's 128 records.
+    for operation in 1..=130_u8 {
+        now += 10;
+        let activation = request(operation, &candidate, 1, now);
+        assert_eq!(
+            manager
+                .admit_native_activation(generation, &activation)
+                .unwrap_or_else(|error| panic!("rollback {operation}: {error:?}")),
+            ActivationPreparation::Prepared
+        );
+        let prepared = manager.inspect_recovery().unwrap();
+        manager
+            .execute_native_prepared_activation(
+                prepared.generation,
+                activation,
+                || Ok(()),
+                || Ok(clock(1, now + 1)),
+            )
+            .unwrap();
+        let pending = manager.inspect_recovery().unwrap();
+        let intent = manager
+            .begin_native_rejection(pending.generation, [operation; 16])
+            .unwrap();
+        let rejected = manager.inspect_recovery().unwrap();
+        let restored = manager
+            .restore_native_selection(rejected.generation, &intent, || Ok(()))
+            .unwrap();
+        manager
+            .acknowledge_native_restoration(
+                restored.generation,
+                restored.rollback_intent.as_ref().unwrap(),
+                || Ok(()),
+            )
+            .unwrap();
+        let complete = manager.state.load().unwrap().unwrap();
+        generation = manager
+            .migrate_native_idle(complete.generation, |_| Ok(()))
+            .unwrap();
+    }
+    let size = fs::metadata(fixture.state.path().join("application-state.json"))
+        .unwrap()
+        .len();
+    assert!(size <= 64 * 1024, "{size} bytes");
+}
+
+#[test]
 fn the_operation_history_rolls_over_keeping_the_newest_records() {
     let fixture = Fixture::new();
     let slot1 = fixture.stage(1, 1, 1);
