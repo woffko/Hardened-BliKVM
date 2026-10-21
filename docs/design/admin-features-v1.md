@@ -128,16 +128,26 @@ and are socket-activated per connection.
   needs no switch; the Download menu that carries both is shown whenever the
   image store is configured.
 - **PicoClaw** (the reference's AI assistant, runtime v0.2.8):
-  - install: the download helper fetches the pinned upstream release archive
+  - install: PicoClaw's installer (`hardened-blikvm-picoclaw-install@.service`
+    behind its own socket, as `hardened-blikvm-pico-install`, an account in
+    no shared group) fetches the pinned upstream release archive
     (`picoclaw_Linux_arm64.tar.gz` of sipeed/picoclaw v0.2.8) and accepts it
     only when its SHA-256 matches the digest pinned in the source (the
     reference fetches its checksum from the same CDN as the archive); only
     the `picoclaw` member is unpacked into
-    `/var/lib/hardened-blikvm-picoclaw-runtime` (the download helper's
-    account, 0755),
-    so the runtime cannot modify its own binary. Uninstall removes the binary
-    and the runtime's home;
-  - runtime: `hardened-blikvm-picoclaw.service` runs `picoclaw gateway` as
+    `/var/lib/hardened-blikvm-picoclaw-runtime` (the installer's account,
+    0755), so the runtime cannot modify its own binary. No image download
+    writes that directory: the download template had it, and an ISO
+    download's worker could replace the executable (code audit of
+    2026-10-20, AUD-05.2); its helper now refuses PicoClaw requests, and the
+    web server sends them to the installer when the system names it.
+    Uninstall removes the binary and the runtime's home;
+  - runtime: before every start a root step checks the installed executable
+    against the pinned release's size and SHA-256 and copies it into
+    `/run/hardened-blikvm-picoclaw-exec`, root's; the unit starts that copy,
+    so whoever can write the installed file cannot choose what runs, and a
+    file that differs is not started. `hardened-blikvm-picoclaw.service` runs
+    `picoclaw gateway` as
     the dedicated `hardened-blikvm-picoclaw` user with a sandbox in which only
     its home (`/var/lib/hardened-blikvm-picoclaw`) is writable. It has network
     access for the model API but not to link-local or multicast addresses. Its
@@ -158,7 +168,12 @@ and are socket-activated per connection.
     actions) with an internal token the server generates and keeps in its
     state directory. The server accepts those calls only directly on
     loopback (not through the TLS proxy, which always adds
-    `X-Forwarded-For`), with the token and the switch on. Actions are sent as
+    `X-Forwarded-For`), with the token and the switch on. The TLS proxy
+    reaches the server through a socket of its own, which serves nginx's
+    user alone and is the only place the server believes `X-Forwarded-For`;
+    any other local process on the TCP port, the runtime included, counts as
+    its own address for the login limiter (code audit of 2026-10-20,
+    AUD-16.2). Actions are sent as
     HID reports through the HID lease of the operator session that opened the
     assistant, so the assistant can only act while that operator's KVM page
     holds the keyboard and mouse. While the assistant session holds its lock
