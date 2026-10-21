@@ -2732,6 +2732,34 @@ class PackagingBoundaryTests(unittest.TestCase):
         server_end = config.index("location = /api/application-update/upload")
         self.assertNotIn("add_header", config[server_end:])
 
+    def test_nginx_reaches_the_server_through_a_socket_of_its_own(self) -> None:
+        # The server believed X-Forwarded-For from any loopback peer, and any
+        # local process reaches its TCP port (code audit of 2026-10-20,
+        # AUD-16.2). nginx goes through the server's proxy socket, which
+        # serves nginx's user alone; loopback TCP is the backup an older
+        # application slot, which makes no such socket, is still reached by.
+        config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
+        upstream = re.search(r"upstream hardened_blikvm_server \{([^{}]*)\}", config)
+        assert upstream is not None
+        servers = re.findall(r"^\s*server\s+([^;]+);", upstream.group(1), re.MULTILINE)
+        self.assertEqual(
+            servers,
+            ["unix:/run/hardened-blikvm-proxy/http.sock", "127.0.0.1:18080 backup"],
+        )
+        user = re.search(r"^user\s+([^;]+);", config, re.MULTILINE)
+        assert user is not None
+        for unit in sorted((ROOT / "packaging/systemd").glob("**/hardened-blikvm-server-*.service")):
+            lines = unit.read_text().splitlines()
+            self.assertIn(
+                "Environment=BLI_KVM_PROXY_SOCKET=/run/hardened-blikvm-proxy/http.sock",
+                lines,
+                unit.name,
+            )
+            self.assertIn(f"Environment=BLI_KVM_PROXY_USER={user.group(1)}", lines, unit.name)
+            directories = [line for line in lines if line.startswith("RuntimeDirectory=")]
+            self.assertEqual(len(directories), 1, unit.name)
+            self.assertIn("hardened-blikvm-proxy", directories[0].split("=", 1)[1].split())
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
@@ -2749,7 +2777,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
         self.assertEqual(
             sorted(destinations),
-            ["http://127.0.0.1:18080"] * 4 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
+            ["http://hardened_blikvm_server"] * 4
+            + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
         )
         locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
         self.assertEqual(
@@ -2775,7 +2804,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ]:
             block = locations[route]
             self.assertIn(f"client_max_body_size {limit};", block)
-            self.assertIn("proxy_pass http://127.0.0.1:18080;", block)
+            self.assertIn("proxy_pass http://hardened_blikvm_server;", block)
             self.assertIn("proxy_request_buffering off;", block)
             self.assertIn("proxy_buffering off;", block)
             self.assertIn("proxy_http_version 1.1;", block)
