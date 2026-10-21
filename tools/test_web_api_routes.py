@@ -123,6 +123,18 @@ class WebApiRouteTests(unittest.TestCase):
             "gated calls that are routed now: drop them from the list",
         )
 
+    def test_query_parameters_are_passed_as_they_are(self) -> None:
+        # `http.get(url, params)` hands its second argument to axios as the
+        # query; a `{ params }` there arrives as `params[...]`, which the
+        # server ignores (code audit of 2026-10-20, AUD-15).
+        wrapped = []
+        for path in sorted((ROOT / "web/src").rglob("*.ts*")):
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"http\.get\(\s*[^,()]+,\s*\{\s*params\b", text):
+                line = text.count("\n", 0, match.start()) + 1
+                wrapped.append(f"{path.relative_to(ROOT)}:{line}")
+        self.assertEqual(wrapped, [], "query parameters wrapped in a params object")
+
 
 if __name__ == "__main__":
     unittest.main()
