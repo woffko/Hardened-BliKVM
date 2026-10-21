@@ -69,6 +69,11 @@ where
     RetryNotRequired,
     #[error("fan policy evaluation failed")]
     Policy(#[source] FanPolicyError),
+    #[error("fan policy evaluation and the maximum-cooling fallback both failed")]
+    PolicyAndFailsafeFailed {
+        policy_error: FanPolicyError,
+        failsafe_error: E,
+    },
     #[error("startup failsafe command was not confirmed")]
     StartupFailsafe(#[source] E),
     #[error("fan command failed; maximum-cooling fallback was confirmed and latched")]
@@ -167,10 +172,26 @@ where
             FanSupervisorStatus::Active => {}
         }
 
-        let decision = self
-            .policy
-            .evaluate(now_ms, observation)
-            .map_err(FanSupervisorError::Policy)?;
+        let decision = match self.policy.evaluate(now_ms, observation) {
+            Ok(decision) => decision,
+            Err(policy_error) => {
+                // A policy that cannot decide must not leave the fan as it
+                // was: maximum cooling until it answers again (code audit of
+                // 2026-10-20, AUD-06).
+                let failsafe = failsafe_command();
+                if self.applied_command != Some(failsafe) {
+                    if let Err(failsafe_error) = self.actuator.apply(failsafe) {
+                        self.status = FanSupervisorStatus::ActuationUncertain;
+                        return Err(FanSupervisorError::PolicyAndFailsafeFailed {
+                            policy_error,
+                            failsafe_error,
+                        });
+                    }
+                    self.applied_command = Some(failsafe);
+                }
+                return Err(FanSupervisorError::Policy(policy_error));
+            }
+        };
         if self.applied_command == Some(decision.command) {
             return Ok(self.outcome(FanSupervisorAction::NoChange, Some(decision)));
         }
@@ -260,7 +281,7 @@ fn failsafe_command() -> FanCommand {
 mod tests {
     use std::collections::VecDeque;
 
-    use bli_kvm_fan_policy::{FanCurvePoint, FanMode, FanReason};
+    use bli_kvm_fan_policy::{FanCurvePoint, FanMode};
 
     use super::*;
 
@@ -447,22 +468,61 @@ mod tests {
     }
 
     #[test]
-    fn policy_errors_do_not_reach_the_actuator() {
-        let mut supervisor = FanSupervisor::new(config(), 1_000, MockActuator::default()).unwrap();
+    fn a_policy_error_runs_the_fan_at_maximum_cooling_until_the_policy_answers() {
+        let mut supervisor = FanSupervisor::new(config(), 0, MockActuator::default()).unwrap();
         let _ = supervisor.initialize().unwrap();
         let _ = supervisor
-            .evaluate(2_000, FanObservation::TemperatureMillidegrees(70_000))
+            .evaluate(30_000, FanObservation::TemperatureMillidegrees(50_000))
             .unwrap();
-        let attempts = supervisor.actuator().attempts.len();
+        assert_eq!(supervisor.state().applied_command, Some(FanCommand::Off));
+        // The clock goes back while the board heats: the policy cannot
+        // decide, so the fan must not stay off.
         assert!(matches!(
-            supervisor.evaluate(1_999, FanObservation::SensorUnavailable),
+            supervisor.evaluate(29_000, FanObservation::TemperatureMillidegrees(95_000)),
             Err(FanSupervisorError::Policy(
                 FanPolicyError::ClockMovedBackwards
             ))
         ));
-        assert_eq!(supervisor.actuator().attempts.len(), attempts);
-        assert_eq!(supervisor.state().policy.mode, FanMode::Running);
-        assert_eq!(supervisor.state().policy.reason, FanReason::SensorRecovered);
+        assert_eq!(supervisor.state().applied_command, Some(duty(100)));
+        assert_eq!(supervisor.state().status, FanSupervisorStatus::Active);
+        assert_eq!(supervisor.state().policy.mode, FanMode::Off);
+        // A second error leaves maximum cooling as it is.
+        assert!(
+            supervisor
+                .evaluate(29_500, FanObservation::SensorUnavailable)
+                .is_err()
+        );
+        assert_eq!(
+            supervisor.actuator().attempts,
+            vec![duty(100), FanCommand::Off, duty(100)]
+        );
+        // Once the policy answers again, its command is applied.
+        let answered = supervisor
+            .evaluate(31_000, FanObservation::TemperatureMillidegrees(50_000))
+            .unwrap();
+        assert_eq!(answered.action, FanSupervisorAction::CommandApplied);
+        assert_eq!(answered.applied_command, Some(FanCommand::Off));
+    }
+
+    #[test]
+    fn a_policy_error_whose_maximum_cooling_fails_is_actuation_uncertain() {
+        let actuator = MockActuator::with_results([Ok(()), Ok(()), Err(MockError(1))]);
+        let mut supervisor = FanSupervisor::new(config(), 0, actuator).unwrap();
+        let _ = supervisor.initialize().unwrap();
+        let _ = supervisor
+            .evaluate(30_000, FanObservation::TemperatureMillidegrees(50_000))
+            .unwrap();
+        assert!(matches!(
+            supervisor.evaluate(29_000, FanObservation::TemperatureMillidegrees(95_000)),
+            Err(FanSupervisorError::PolicyAndFailsafeFailed {
+                policy_error: FanPolicyError::ClockMovedBackwards,
+                failsafe_error: MockError(1),
+            })
+        ));
+        assert_eq!(
+            supervisor.state().status,
+            FanSupervisorStatus::ActuationUncertain
+        );
     }
 
     #[test]

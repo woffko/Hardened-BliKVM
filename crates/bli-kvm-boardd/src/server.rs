@@ -446,7 +446,7 @@ where
         let Some(led) = self.led.as_mut() else {
             return Err(BoarddError::InvalidState);
         };
-        led.set_enabled(enabled, unix_millis_now())
+        led.set_enabled(enabled, crate::board_millis())
             .map_err(|kind| match kind {
                 "invalid_state" => BoarddError::InvalidState,
                 _ => BoarddError::BackendUnavailable,
@@ -484,7 +484,7 @@ where
             return;
         };
         let enabled = led.enabled();
-        let _ = led.set_enabled(enabled, unix_millis_now());
+        let _ = led.set_enabled(enabled, crate::board_millis());
     }
 
     pub fn draw_display_test(&mut self) -> Result<(), BoarddError> {
@@ -505,7 +505,7 @@ where
         })?;
         self.display_dark = !on;
         if on {
-            self.display_activity_ms = Some(unix_millis_now());
+            self.display_activity_ms = Some(crate::board_millis());
         }
         Ok(())
     }
@@ -627,13 +627,6 @@ where
             Err(error) => Response::error(-error_code(&error), error.to_string_static()),
         },
     }
-}
-
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn error_code(error: &BoarddError) -> i32 {
@@ -1047,6 +1040,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_clock_that_goes_back_runs_the_fan_at_its_failsafe_duty() {
+        let mut state = state();
+        state.note_thermal(Ok(40_000));
+        state.sample(600_000).unwrap();
+        assert_eq!(
+            state.supervisor.state().applied_command,
+            Some(FanCommand::Off)
+        );
+        // Ten minutes back, and the board above its critical temperature.
+        state.note_thermal(Ok(95_000));
+        for step in 0..600 {
+            let _ = state.sample(step * 1_000);
+            assert_eq!(
+                state.supervisor.state().applied_command,
+                Some(FanCommand::DutyPercent(FanDutyPercent::MAXIMUM)),
+                "sample {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_board_clock_never_goes_back() {
+        let mut last = crate::board_millis();
+        for _ in 0..1_000 {
+            let now = crate::board_millis();
+            assert!(now >= last);
+            last = now;
+        }
+    }
+
     #[derive(Default)]
     struct MockDisplay {
         initialized: bool,
@@ -1287,7 +1311,7 @@ mod tests {
         );
         assert!(state.status().button_present);
         assert!(!state.status().display_backlight_on);
-        state.tick_button(unix_millis_now());
+        state.tick_button(crate::board_millis());
         let data = state.status();
         assert_eq!(data.button_wakeups, 1);
         assert!(data.display_backlight_on, "wake must light the panel");
@@ -1300,7 +1324,7 @@ mod tests {
             },
             None,
         );
-        bare.tick_button(unix_millis_now());
+        bare.tick_button(crate::board_millis());
         assert_eq!(bare.status().button_wakeups, 1);
         assert!(!bare.status().display_present);
     }

@@ -44,6 +44,12 @@ capabilities.
   (explicit asserted level, period, pulse, idle floor),
   `bli-kvm-display-button-policy` (debounce, activation hold, wake event) and
   `bli-kvm-serial-switch-codec` (host-side only until a transport exists).
+  These policies refuse a time earlier than their last one, so the daemon
+  gives them a monotonic clock that starts with the process, never the wall
+  clock, which a network time step or a manual correction can move back. A
+  fan policy that cannot decide (that refusal included) leaves the fan at
+  its failsafe duty, full speed, until the policy answers again (code audit
+  of 2026-10-20, AUD-06).
 - **Control surface**: the daemon exposes its state and accepts reviewed
   commands over its own Unix socket, mirroring the owner's protocol style
   (versioned request/response, fixed rejection codes, no free-form payloads).
