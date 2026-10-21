@@ -347,12 +347,12 @@ impl ModeExecutor for NftModeExecutor {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::firewall_confirmation::PendingChange;
     use crate::firewall_settings::SystemFirewallRunner;
 
-    fn configuration() -> ModeConfiguration {
+    pub(crate) fn configuration() -> ModeConfiguration {
         ModeConfiguration {
             https_enabled: true,
             https_port: 8443,
@@ -366,8 +366,8 @@ mod tests {
     /// nft as the executor meets it: a kernel that holds the owned table in
     /// one of its forms, or no owned table. Files are real ones.
     #[derive(Clone)]
-    struct Kernel(std::sync::Arc<std::sync::Mutex<KernelState>>);
-    struct KernelState {
+    pub(crate) struct Kernel(std::sync::Arc<std::sync::Mutex<KernelState>>);
+    pub(crate) struct KernelState {
         table: Option<(FirewallMode, RuleForm)>,
         handle: u64,
         /// Something the owner never wrote is in its table.
@@ -376,7 +376,7 @@ mod tests {
     }
 
     impl Kernel {
-        fn holding(table: Option<(FirewallMode, RuleForm)>) -> Self {
+        pub(crate) fn holding(table: Option<(FirewallMode, RuleForm)>) -> Self {
             Self(std::sync::Arc::new(std::sync::Mutex::new(KernelState {
                 table,
                 handle: 7,
@@ -384,7 +384,7 @@ mod tests {
                 batches: Vec::new(),
             })))
         }
-        fn table(&self) -> Option<(FirewallMode, RuleForm)> {
+        pub(crate) fn table(&self) -> Option<(FirewallMode, RuleForm)> {
             self.0.lock().unwrap().table
         }
         fn batches(&self) -> Vec<String> {

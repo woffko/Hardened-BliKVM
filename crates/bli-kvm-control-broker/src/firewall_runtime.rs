@@ -98,11 +98,21 @@ impl ModeRuntime {
         configuration: ModeConfiguration,
         boot_id: [u8; 16],
     ) -> Result<Self, String> {
-        let executor = NftModeExecutor::open_frozen(
-            Box::new(SystemFirewallRunner),
-            directory.clone(),
+        Self::open_with_runner(
+            directory,
             configuration,
-        )?;
+            boot_id,
+            Box::new(SystemFirewallRunner),
+        )
+    }
+
+    fn open_with_runner(
+        directory: PathBuf,
+        configuration: ModeConfiguration,
+        boot_id: [u8; 16],
+        runner: Box<dyn crate::firewall_settings::FirewallRunner>,
+    ) -> Result<Self, String> {
+        let executor = NftModeExecutor::open_frozen(runner, directory.clone(), configuration)?;
         let transaction =
             FirewallTransaction::open(PendingFileStore::new(&directory)?, executor, boot_id)
                 .map_err(|error| format!("{error:?}"))?;
@@ -138,11 +148,24 @@ impl ModeRuntime {
         self.persisted = Some(path);
     }
 
-    fn remember(&self, mode: bli_kvm_core::FirewallMode) {
-        if let Some(path) = &self.persisted
-            && let Err(error) = write_persisted_mode(path, mode)
-        {
-            eprintln!("firewall: the confirmed mode was not persisted: {error}");
+    fn remember(&self, mode: bli_kvm_core::FirewallMode) -> Result<(), String> {
+        match &self.persisted {
+            Some(path) => write_persisted_mode(path, mode),
+            None => Ok(()),
+        }
+    }
+
+    /// Puts back the mode persisted before a change that did not happen.
+    fn forget(&self, previous: Option<bli_kvm_core::FirewallMode>) {
+        let Some(path) = &self.persisted else {
+            return;
+        };
+        let restored = match previous {
+            Some(mode) => write_persisted_mode(path, mode),
+            None => std::fs::remove_file(path).map_err(|error| error.to_string()),
+        };
+        if let Err(error) = restored {
+            eprintln!("firewall: the persisted mode could not be put back: {error}");
         }
     }
 
@@ -167,37 +190,44 @@ impl ModeRuntime {
             return reject(ControlRejectionCode::InvalidState);
         }
         // A mode is remembered once confirmed: at once when it needs no
-        // confirmation, otherwise when the operator confirms it.
-        let (result, confirmed) = match request {
-            PlatformControlRequestV2::FirewallModeChange { request } => (
-                self.transaction.request(
-                    request.operation_id,
-                    request.session_binding,
-                    request.mode,
-                    now_ms,
-                ),
-                (!request.mode.requires_confirmation()).then_some(request.mode),
+        // confirmation, otherwise when the operator confirms it. It is
+        // written before the change takes effect, so a mode that a reboot
+        // would not keep is refused rather than applied or confirmed (code
+        // audit of 2026-10-20, AUD-14).
+        let confirmed = match request {
+            PlatformControlRequestV2::FirewallModeChange { request } => {
+                (!request.mode.requires_confirmation()).then_some(request.mode)
+            }
+            _ => self
+                .transaction
+                .pending()
+                .map(crate::firewall_confirmation::PendingChange::requested_mode),
+        };
+        let previous = self.persisted.as_deref().and_then(read_persisted_mode);
+        if let Some(mode) = confirmed
+            && let Err(error) = self.remember(mode)
+        {
+            eprintln!("firewall: the {mode:?} mode cannot be persisted: {error}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        let result = match request {
+            PlatformControlRequestV2::FirewallModeChange { request } => self.transaction.request(
+                request.operation_id,
+                request.session_binding,
+                request.mode,
+                now_ms,
             ),
             PlatformControlRequestV2::FirewallModeConfirm { request } => {
-                let requested = self
-                    .transaction
-                    .pending()
-                    .map(crate::firewall_confirmation::PendingChange::requested_mode);
-                (
-                    self.transaction
-                        .confirm(request.operation_id, request.session_binding, now_ms),
-                    requested,
-                )
+                self.transaction
+                    .confirm(request.operation_id, request.session_binding, now_ms)
             }
             _ => unreachable!(),
         };
+        if result.is_err() && confirmed.is_some() {
+            self.forget(previous);
+        }
         match result {
-            Ok(()) => {
-                if let Some(mode) = confirmed {
-                    self.remember(mode);
-                }
-                ControlResponse::Applied
-            }
+            Ok(()) => ControlResponse::Applied,
             Err(
                 TransactionError::RecoveryRequired
                 | TransactionError::Journal(
@@ -284,6 +314,82 @@ mod tests {
         .unwrap();
         assert!(runtime.transaction.pending().is_some());
     }
+    #[test]
+    fn a_mode_that_cannot_be_persisted_is_not_applied_or_confirmed() {
+        use crate::firewall_executor::tests::{Kernel, configuration};
+        use bli_kvm_core::{FirewallChangeRequest, FirewallMode};
+        let change = |mode, operation| PlatformControlRequestV2::FirewallModeChange {
+            request: FirewallChangeRequest {
+                operation_id: [operation; 16],
+                session_binding: [2; 32],
+                mode,
+                issued_at_unix_ms: 100_000,
+            },
+        };
+        let directory = tempfile::tempdir().unwrap();
+        // The persisted mode's directory is a regular file: no write works.
+        let blocker = directory.path().join("not-a-directory");
+        std::fs::write(&blocker, "").unwrap();
+        let kernel = Kernel::holding(None);
+        let mut runtime = ModeRuntime::open_with_runner(
+            directory.path().join("run"),
+            configuration(),
+            [3; 16],
+            Box::new(kernel.clone()),
+        )
+        .unwrap();
+        runtime.persisted = Some(blocker.join("firewall-mode.json"));
+        // A mode that needs no confirmation is not applied.
+        assert_ne!(
+            runtime.dispatch(&change(FirewallMode::Moderate, 1), 100_000),
+            ControlResponse::Applied
+        );
+        assert_eq!(kernel.table(), None);
+
+        // A mode that needs one is not confirmed: its revert stays due.
+        use crate::firewall_confirmation::{PendingChange, PendingStore};
+        let run = directory.path().join("confirming");
+        std::fs::create_dir(&run).unwrap();
+        // The first owner freezes the configuration the change is made with.
+        ModeRuntime::open_with_runner(
+            run.clone(),
+            configuration(),
+            [3; 16],
+            Box::new(Kernel::holding(None)),
+        )
+        .unwrap();
+        let pending = PendingChange::prepare(
+            [4; 16],
+            [2; 32],
+            [3; 16],
+            FirewallMode::Moderate,
+            FirewallMode::Restricted,
+            100_000,
+        )
+        .unwrap();
+        PendingFileStore::new(&run)
+            .unwrap()
+            .save(&pending.encode().unwrap())
+            .unwrap();
+        let kernel = Kernel::holding(None);
+        let mut runtime =
+            ModeRuntime::open_with_runner(run, configuration(), [3; 16], Box::new(kernel)).unwrap();
+        assert!(runtime.transaction.pending().is_some());
+        runtime.persisted = Some(blocker.join("firewall-mode.json"));
+        let confirm = PlatformControlRequestV2::FirewallModeConfirm {
+            request: bli_kvm_core::FirewallConfirmRequest {
+                operation_id: [4; 16],
+                session_binding: [2; 32],
+                issued_at_unix_ms: 100_000,
+            },
+        };
+        assert_ne!(
+            runtime.dispatch(&confirm, 100_000),
+            ControlResponse::Applied
+        );
+        assert!(runtime.transaction.pending().is_some());
+    }
+
     #[test]
     fn stale_future_and_invalid_requests_are_refused_before_nft() {
         let directory = tempfile::tempdir().unwrap();
