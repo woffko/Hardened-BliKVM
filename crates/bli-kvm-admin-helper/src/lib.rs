@@ -307,11 +307,16 @@ pub fn remote_authority(raw: &str) -> Option<(String, u16)> {
         Some((host, port)) => (host, port.parse::<u16>().ok().filter(|port| *port != 0)?),
         None => (authority, default_port),
     };
+    // A label starting with a hyphen reads as an option to curl, which then
+    // ignores its pin (code audit of 2026-10-20, AUD-10).
     let valid_host = !host.is_empty()
         && host.len() <= 253
         && host
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        && host
+            .split('.')
+            .all(|label| !label.starts_with('-') && !label.ends_with('-'));
     valid_host.then(|| (host.to_ascii_lowercase(), port))
 }
 
@@ -512,6 +517,23 @@ mod tests {
         assert_eq!(
             remote_authority("http://mirror.example?x"),
             Some(("mirror.example".into(), 80))
+        );
+    }
+
+    #[test]
+    fn a_host_label_cannot_start_or_end_with_a_hyphen() {
+        // curl takes such a name for an option-like host and ignores its pin
+        // (code audit of 2026-10-20, AUD-10).
+        for url in [
+            "http://-a.example/x.iso",
+            "http://a-.example/x.iso",
+            "http://mirror.-b.example/x.iso",
+        ] {
+            assert_eq!(remote_authority(url), None, "{url}");
+        }
+        assert_eq!(
+            remote_authority("http://a-b.example/x.iso"),
+            Some(("a-b.example".into(), 80))
         );
     }
 

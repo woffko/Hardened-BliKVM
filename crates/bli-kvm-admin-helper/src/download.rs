@@ -184,19 +184,30 @@ pub fn is_public(address: IpAddr) -> bool {
             || address.is_multicast()
             || first == 0
             || first >= 240
-            || (first == 100 && (64..128).contains(&second)))
+            || (first == 100 && (64..128).contains(&second))
+            // Benchmarking (code audit of 2026-10-20, AUD-10).
+            || (first == 198 && (18..20).contains(&second)))
     }
     match address {
         IpAddr::V4(address) => public_v4(address),
         IpAddr::V6(address) => match address.to_ipv4_mapped() {
             Some(mapped) => public_v4(mapped),
             None => {
-                let first = address.segments()[0];
+                let segments = address.segments();
+                let first = segments[0];
                 !(address.is_loopback()
                     || address.is_unspecified()
                     || address.is_multicast()
                     || first & 0xfe00 == 0xfc00
-                    || first & 0xffc0 == 0xfe80)
+                    || first & 0xffc0 == 0xfe80
+                    // IPv4 translated (NAT64, 64:ff9b::/96 and
+                    // 64:ff9b:1::/48), 6to4, IPv4-compatible and
+                    // documentation addresses (code audit of 2026-10-20,
+                    // AUD-10).
+                    || (first == 0x64 && segments[1] == 0xff9b)
+                    || first == 0x2002
+                    || segments[..6] == [0; 6]
+                    || (first == 0x2001 && segments[1] == 0x0db8))
             }
         },
     }
@@ -349,23 +360,20 @@ impl Fetch<'_> {
                 .take()
                 .ok_or_else(|| io::Error::other("curl has no stderr"))?;
             thread::spawn(move || {
-                let mut tail = String::new();
+                let mut tail = Vec::new();
                 let mut buffer = [0_u8; 4096];
                 while let Ok(count) = stderr.read(&mut buffer) {
                     if count == 0 {
                         break;
                     }
-                    tail.push_str(&String::from_utf8_lossy(&buffer[..count]));
-                    if tail.len() > 4096 {
-                        tail.drain(..tail.len() - 1024);
-                    }
-                    if let Some(value) = parse_progress(&tail)
+                    push_tail(&mut tail, &buffer[..count]);
+                    if let Some(value) = parse_progress(&String::from_utf8_lossy(&tail))
                         && let Ok(mut current) = progress.lock()
                     {
                         *current = value;
                     }
                 }
-                tail
+                String::from_utf8_lossy(&tail).into_owned()
             })
         };
         let mut reported = String::new();
@@ -403,7 +411,17 @@ impl Fetch<'_> {
         if !status.success() {
             return Err(io::Error::other(curl_error(&tail)));
         }
-        Ok(parse_hop(&written))
+        parse_hop(&written)
+    }
+}
+
+/// Keeps the end of curl's stderr, where its progress and its error are,
+/// as bytes: a cut inside a character must not stop the helper (code audit
+/// of 2026-10-20, AUD-10).
+fn push_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > 4096 {
+        tail.drain(..tail.len() - 1024);
     }
 }
 
@@ -417,14 +435,21 @@ struct Pinned<'a> {
 }
 
 /// curl's `--write-out`: a redirect's status and the URL it names.
-fn parse_hop(written: &str) -> Hop {
+fn parse_hop(written: &str) -> io::Result<Hop> {
     let mut words = written.split_whitespace();
     match (
         words.next().and_then(|code| code.parse::<u16>().ok()),
         words.next(),
     ) {
-        (Some(300..=399), Some(next)) if !next.is_empty() => Hop::Redirect(next.to_string()),
-        _ => Hop::Done,
+        (Some(200), _) => Ok(Hop::Done),
+        (Some(300..=399), Some(next)) if !next.is_empty() => Ok(Hop::Redirect(next.to_string())),
+        // A redirect that names nowhere, or an answer without the image
+        // (204, 304): its body is not the image (code audit of 2026-10-20,
+        // AUD-10).
+        (status, _) => Err(io::Error::other(format!(
+            "the server answered {} without the image",
+            status.map_or_else(|| "nothing".to_string(), |status| status.to_string())
+        ))),
     }
 }
 
@@ -693,9 +718,11 @@ mod tests {
     };
 
     /// A stand-in for curl that writes `content` to the `--output` path.
+    /// A curl that runs `script` and, unless the script exits first, answers
+    /// as a complete transfer does (`--write-out`'s status 200).
     fn fake_curl(dir: &Path, script: &str) -> PathBuf {
         let path = dir.join("curl");
-        fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        fs::write(&path, format!("#!/bin/sh\n{script}\nprintf '200 '\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
@@ -842,6 +869,54 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_inside_a_character_does_not_stop_the_helper() {
+        // A compromised curl could end its output inside a character where
+        // the tail is cut, and the helper aborted (code audit of 2026-10-20,
+        // AUD-10).
+        let mut tail = Vec::new();
+        push_tail(&mut tail, &[b'#'; 4000]);
+        push_tail(&mut tail, &[0xff; 400]);
+        assert!(tail.len() <= 4096 + 1200);
+    }
+
+    #[test]
+    fn only_a_complete_answer_ends_the_hops() {
+        // A 3xx without a Location ended them, and its body counted as the
+        // image (code audit of 2026-10-20, AUD-10).
+        let curl = Path::new(CURL);
+        assert!(curl.exists(), "the tests need {CURL}");
+        let (public, _) = serve(Ipv4Addr::new(127, 0, 0, 1), |path| match path {
+            "/nowhere.iso" => {
+                "HTTP/1.1 302 Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nCD001-iso"
+                    .to_string()
+            }
+            "/nothing.iso" => "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_string(),
+            _ => image("the public image"),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out");
+        let network = Network {
+            resolve: two_hosts,
+            public: only_the_first_is_public,
+        };
+        let fetch = |path: &str| {
+            Fetch {
+                curl,
+                url: &format!("http://public.test:{public}{path}"),
+                output: &output,
+                max_bytes: 1024,
+                max_seconds: 60,
+                network,
+            }
+            .run(|| true, |_| {})
+        };
+        assert!(fetch("/nowhere.iso").is_err());
+        assert!(fetch("/nothing.iso").is_err());
+        fetch("/image.iso").unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), "the public image");
+    }
+
+    #[test]
     fn the_address_classes_of_the_redirect_rule() {
         // The private ranges as numbers: the source check keeps their
         // dotted form out of the repository.
@@ -868,6 +943,15 @@ mod tests {
             "fe80::1",
             "::1",
             "::",
+            // Translated or embedded IPv4, documentation and benchmarking
+            // (code audit of 2026-10-20, AUD-10).
+            "64:ff9b::c0a8:101",
+            "64:ff9b:1::1",
+            "2002:c0a8:101::1",
+            "::c0a8:101",
+            "2001:db8::1",
+            "198.18.0.1",
+            "198.19.255.254",
         ] {
             assert!(!is_public(private.parse().unwrap()), "{private}");
         }
