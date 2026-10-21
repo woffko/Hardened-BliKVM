@@ -400,6 +400,7 @@ pub(crate) fn check_drop(images: &Path, name: &str) -> io::Result<Checked> {
         ));
     }
     file.set_permissions(fs::Permissions::from_mode(0o644))?;
+    no_writer_left(&file)?;
     let size = metadata.len();
     if size == 0 || size > MAX_IMAGE_BYTES {
         return Err(io::Error::other("downloaded image size out of bounds"));
@@ -435,6 +436,26 @@ pub(crate) fn check_drop(images: &Path, name: &str) -> io::Result<Checked> {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Ok(Checked { size, sha256 })
+}
+
+/// Proves that nothing holds the file open for writing any more. Once the
+/// file is 0644 nobody but the server can open it so; a descriptor the
+/// helper kept from before would still write, and change the image after
+/// it is checked. The kernel grants a read lease only while no descriptor or
+/// shared mapping of the file is writable, so the lease is taken and let go
+/// at once (code audit of 2026-10-20, AUD-05.1).
+fn no_writer_left(file: &File) -> io::Result<()> {
+    // SAFETY: fcntl on a descriptor this function borrows; the lease commands
+    // take an integer argument only.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLEASE, libc::F_RDLCK) } != 0 {
+        let error = io::Error::last_os_error();
+        return Err(io::Error::other(format!(
+            "the downloaded file is still open for writing ({error})"
+        )));
+    }
+    // SAFETY: as above.
+    unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLEASE, libc::F_UNLCK) };
+    Ok(())
 }
 
 /// Renames the checked file into the image store.
@@ -610,6 +631,24 @@ mod tests {
         assert_eq!(summaries[0].image_name, "rescue.iso");
         assert_eq!(summaries[0].size, iso_bytes().len() as u64);
         assert!(summaries[0].cdrom_allowed && !summaries[0].writable_allowed);
+    }
+
+    #[test]
+    fn a_file_still_open_for_writing_is_not_taken() {
+        // The helper could keep a descriptor across the server's check and
+        // change the image after it (code audit of 2026-10-20, AUD-05.1).
+        let (_directory, images, _catalog) = store();
+        let drop = images.join(DROP_DIRECTORY);
+        prepare_drop(&images, "a.iso", None).unwrap();
+        fs::write(drop.join("a.iso"), iso_bytes()).unwrap();
+        let writer = OpenOptions::new()
+            .write(true)
+            .open(drop.join("a.iso"))
+            .unwrap();
+        let error = check_drop(&images, "a.iso").unwrap_err();
+        assert!(error.to_string().contains("still open"), "{error}");
+        std::mem::drop(writer);
+        check_drop(&images, "a.iso").unwrap();
     }
 
     #[test]
