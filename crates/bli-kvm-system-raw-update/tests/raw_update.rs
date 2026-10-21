@@ -1101,3 +1101,37 @@ fn leftovers_of_a_finished_update_can_be_discarded() {
     let record = read_record(&fixture.staging).unwrap().unwrap();
     assert_eq!(record.phase, Phase::RolledBack);
 }
+
+#[test]
+fn a_new_roots_nginx_configuration_is_the_images_with_the_carried_redirect() {
+    // The carried /etc/hardened-blikvm held the board's nginx.conf, so a
+    // board updated by RAW kept the configuration of the image it was first
+    // written from, and no system release could change it (code audit of
+    // 2026-10-20, V1).
+    use bli_kvm_system_raw_update::kept_nginx_conf;
+    let server = |extra: &str| {
+        format!(
+            "events {{}}\nhttp {{\n    server {{\n        listen 80 default_server;\n        listen [::]:80 default_server;\n{extra}    }}\n    server {{\n        listen 443 ssl default_server;\n        ssl_ciphers NEW;\n    }}\n}}\n"
+        )
+    };
+    let shipped_redirect = "        return 308 https://$host$request_uri;\n";
+    let image = server(shipped_redirect);
+    let carried = server(shipped_redirect).replace("ssl_ciphers NEW;", "ssl_ciphers OLD;");
+    assert_eq!(kept_nginx_conf(&image, &carried), image);
+    // The owner's redirect, switched on in a configuration without one, is
+    // carried into the image's.
+    let image = server("");
+    let carried =
+        bli_kvm_core::nginx_redirect::render_redirect(&server("").replace("NEW", "OLD"), true);
+    let kept = kept_nginx_conf(&image, &carried);
+    assert!(kept.contains("ssl_ciphers NEW;"), "{kept}");
+    assert!(
+        bli_kvm_core::nginx_redirect::redirects_port_80(&kept),
+        "{kept}"
+    );
+    // Without a redirect in the carried file, the image's stays as it is.
+    assert_eq!(
+        kept_nginx_conf(&image, &server("").replace("NEW", "OLD")),
+        image
+    );
+}

@@ -630,6 +630,23 @@ const LEFT_FILES: [&str; 7] = [
     GROUP_FILE,
 ];
 
+/// The board's nginx configuration, relative to the root.
+pub const NGINX_CONF: &str = "etc/hardened-blikvm/nginx.conf";
+
+/// What the new root's nginx configuration is after the carried state is
+/// restored over it: the image's, so a system release can change it, with
+/// the HTTPS redirect the carried one had (code audit of 2026-10-20, V1).
+/// A redirect switched off in the carried file is not carried: HTTPS stays
+/// as the image has it.
+pub fn kept_nginx_conf(image: &str, carried: &str) -> String {
+    use bli_kvm_core::nginx_redirect::{redirects_port_80, render_redirect};
+    if redirects_port_80(carried) && !redirects_port_80(image) {
+        render_redirect(image, true)
+    } else {
+        image.to_string()
+    }
+}
+
 /// Removes what an update left once no step can use it.
 fn discard(staging: &Path) {
     for file in LEFT_FILES {
@@ -1000,7 +1017,17 @@ impl Tools for SystemTools {
             );
             // Rewrite in place: the file keeps its owner and mode.
             fs::write(&new_shadow, merged)?;
-            self.restore_state(mount, &staging.join(STATE_FILE))
+            let image_nginx = fs::read_to_string(mount.join(NGINX_CONF)).ok();
+            self.restore_state(mount, &staging.join(STATE_FILE))?;
+            // The carried directory brought the board's nginx configuration
+            // back over the image's; the image's comes back, with the
+            // board's redirect. In place: the file keeps the carried owner
+            // and mode.
+            if let Some(image) = image_nginx {
+                let carried = fs::read_to_string(mount.join(NGINX_CONF)).unwrap_or_default();
+                fs::write(mount.join(NGINX_CONF), kept_nginx_conf(&image, &carried))?;
+            }
+            Ok(())
         })();
         run("/bin/sync", &[])?;
         run("/bin/umount", &[mount_str])?;

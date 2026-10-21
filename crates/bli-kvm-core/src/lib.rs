@@ -12,6 +12,7 @@ mod diagnostics;
 mod display_sleep;
 mod firewall;
 mod inventory;
+pub mod nginx_redirect;
 mod platform;
 mod video_settings;
 

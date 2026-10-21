@@ -926,6 +926,7 @@ dependencies = [
 name = "bli-kvm-system-raw-update"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-core",
  "bli-kvm-system-image-verifier",
  "ed25519-dalek",
  "libc",
