@@ -182,6 +182,9 @@ pub struct ServerOptions {
     /// Unprivileged remote image download helper. No value keeps remote
     /// download unavailable even when switched on.
     pub download_socket: Option<PathBuf>,
+    /// PicoClaw's own installer, when the system has one; PicoClaw is
+    /// installed and removed through the download helper otherwise.
+    pub picoclaw_installer_socket: Option<PathBuf>,
     /// PicoClaw configuration helper (runs as the runtime's user). With the
     /// admin and download helpers it makes the assistant available.
     pub picoclaw_socket: Option<PathBuf>,
@@ -271,6 +274,7 @@ impl Default for ServerOptions {
             unit_cgroups: PathBuf::from("/sys/fs/cgroup/system.slice"),
             admin_socket: None,
             download_socket: None,
+            picoclaw_installer_socket: None,
             picoclaw_socket: None,
             picoclaw_mcp_url: None,
             network_writes_enabled: false,

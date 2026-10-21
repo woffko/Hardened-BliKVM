@@ -127,6 +127,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         vp8_encoder_report: env::var_os("BLI_KVM_VP8_ENCODER_REPORT").map(PathBuf::from),
         admin_socket: env::var_os("BLI_KVM_ADMIN_SOCKET").map(PathBuf::from),
         download_socket: env::var_os("BLI_KVM_DOWNLOAD_SOCKET").map(PathBuf::from),
+        picoclaw_installer_socket: env::var_os("BLI_KVM_PICOCLAW_INSTALLER_SOCKET")
+            .map(PathBuf::from),
         picoclaw_socket: env::var_os("BLI_KVM_PICOCLAW_SOCKET").map(PathBuf::from),
         picoclaw_mcp_url: Some(format!("http://{address}/internal/picoclaw/mcp")),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),

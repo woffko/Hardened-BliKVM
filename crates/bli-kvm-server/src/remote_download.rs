@@ -500,7 +500,7 @@ pub(crate) fn download_running() -> bool {
 }
 
 /// True while the helper holds the download lock next to the status file.
-fn lock_held(status_path: &Path) -> bool {
+pub(crate) fn lock_held(status_path: &Path) -> bool {
     let Some(file) = open_worker_file(&status_path.with_file_name("download.lock")) else {
         return false;
     };

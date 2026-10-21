@@ -30,8 +30,15 @@ pub const PICOCLAW_STATE: &str = "/var/lib/hardened-blikvm-picoclaw";
 /// Installed runtime binary, owned by the download helper's account.
 pub const PICOCLAW_RUNTIME_DIR: &str = "/var/lib/hardened-blikvm-picoclaw-runtime";
 pub const PICOCLAW_BINARY: &str = "/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw";
-/// Install progress, written by the download helper.
+/// Install progress, written by the download helper of an older system.
 pub const PICOCLAW_INSTALL_STATUS: &str = "/run/hardened-blikvm-download/picoclaw-install.json";
+/// PicoClaw's own installer, a unit and an account apart from the image
+/// download (code audit of 2026-10-20, AUD-05.2): its socket, and its
+/// progress with its lock (`download.lock`) beside it.
+pub const PICOCLAW_INSTALLER_SOCKET: &str =
+    "/run/hardened-blikvm-picoclaw-install-api/install.sock";
+pub const PICOCLAW_INSTALLER_STATUS: &str =
+    "/run/hardened-blikvm-picoclaw-install/picoclaw-install.json";
 /// The upstream release the reference also runs, pinned by digest.
 pub const PICOCLAW_RELEASE_URL: &str =
     "https://github.com/sipeed/picoclaw/releases/download/v0.2.8/picoclaw_Linux_arm64.tar.gz";
