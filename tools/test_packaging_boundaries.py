@@ -2211,6 +2211,19 @@ class PackagingBoundaryTests(unittest.TestCase):
             create()
             self.assertEqual((moved / "catalog.json").read_text(), catalog)
 
+    def test_a_download_worker_ends_within_its_transfer_budget(self) -> None:
+        # The helper has no deadline of its own on a curl that hangs, and the
+        # unit none either (code audit of 2026-10-20, AUD-05.3).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        limits = [line for line in unit.splitlines() if line.startswith("RuntimeMaxSec=")]
+        self.assertEqual(len(limits), 1, limits)
+        seconds = int(limits[0].removeprefix("RuntimeMaxSec="))
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/download.rs").read_text()
+        budgets = [int(value) for value in re.findall(r"max_seconds: (\d+),\n", helper)]
+        self.assertTrue(budgets)
+        self.assertGreater(seconds, max(budgets))
+        self.assertLessEqual(seconds, max(budgets) + 600)
+
     def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
         # The worker fetches remote data; it ran as the web server, could
         # write the image store and the catalog and pass the root admin

@@ -25,6 +25,9 @@ StateDirectoryMode=0755
 UMask=0022
 KillMode=control-group
 TimeoutStopSec=10
+# Just above the helper's two hours for a transfer: a curl or a helper that
+# hangs ends with the unit (code audit of 2026-10-20, AUD-05.3).
+RuntimeMaxSec=7500
 TasksMax=32
 LimitNOFILE=256
 MemoryMax=256M
