@@ -168,6 +168,11 @@ impl NativeExecutionStore {
             .flatten()
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
+        // So may a deletion of an earlier collection: it is finished before
+        // the listing, which refuses its marker and tombstone (code audit of
+        // 2026-10-20, AUD-04).
+        self.stager
+            .recover_slot_deletions(&protected, &self.trust)?;
         let mut removed = Vec::new();
         for slot in self.stager.list_slots(&self.trust)? {
             if !protected.contains(&slot.slot_id) {
@@ -564,6 +569,49 @@ mod tests {
         assert!(store.collect_garbage(&ledger, &slots[1]).is_ok());
         assert!(!leftover.exists());
         store.prepare_from_slot(updater.path(), &slots[1]).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_deletion_in_the_exec_store_does_not_stop_a_preparation() {
+        use std::os::unix::fs::PermissionsExt;
+        let (updater, trust, slots) = updater_with(&[14, 15, 16]);
+        let protected = tempfile::tempdir().unwrap();
+        let ledger_root = tempfile::tempdir().unwrap();
+        let ledger = SelectionLedgerStore::fixture(ledger_root.path());
+        let mut store = execution_store(protected.path(), trust);
+        store.prepare_from_slot(updater.path(), &slots[0]).unwrap();
+        store.prepare_from_slot(updater.path(), &slots[1]).unwrap();
+        store.select(&ledger, &slots[1]).unwrap();
+        // A collection's deletion of the first slot cut short (code audit of
+        // 2026-10-20, AUD-04): its marker written and the slot renamed to its
+        // tombstone. Every boot prepares the confirmed slot through this
+        // collection.
+        let manifest_sha256 = store
+            .stager
+            .inspect_slot(&slots[0], &store.trust)
+            .unwrap()
+            .manifest_sha256;
+        let marker = protected.path().join(format!(".delete-{}.json", slots[0]));
+        std::fs::write(
+            &marker,
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "purpose": "hardened-blikvm-slot-deletion",
+                "slotId": slots[0],
+                "manifestSha256": manifest_sha256,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let tombstone = protected.path().join(format!(".deleting-{}", slots[0]));
+        std::fs::rename(protected.path().join(&slots[0]), &tombstone).unwrap();
+        assert_eq!(
+            store.collect_garbage(&ledger, &slots[2]).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(!marker.exists() && !tombstone.exists());
+        store.prepare_from_slot(updater.path(), &slots[2]).unwrap();
     }
 
     #[test]

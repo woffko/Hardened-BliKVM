@@ -1526,11 +1526,68 @@ fn validate_abandoned_staging_tree(
     {
         return Err(ApplicationStageError::UnsafeAbandonedStaging);
     }
+    if cut_before_its_receipt(root, identity)? {
+        return Ok(());
+    }
     validate_abandoned_receipt(root, identity)?;
     let mut entries = 0_usize;
     let mut bytes = 0_u64;
     inspect_abandoned_directory(root, root, identity, &mut entries, &mut bytes)?;
     Ok(())
+}
+
+/// A staging cut before its receipt was written: nothing in it but, at
+/// most, the stager's own metadata directory, holding at most an empty
+/// receipt, all its own and on its device, with no link (code audit of
+/// 2026-10-20, AUD-04). Such a directory carries nothing and is removed.
+fn cut_before_its_receipt(
+    root: &Path,
+    identity: RootIdentity,
+) -> Result<bool, ApplicationStageError> {
+    let own =
+        |path: &Path, directory: bool| -> Result<Option<fs::Metadata>, ApplicationStageError> {
+            let metadata = fs::symlink_metadata(path)
+                .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+            let kind = if directory {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            };
+            Ok((kind
+                && !metadata.file_type().is_symlink()
+                && metadata.dev() == identity.device
+                && metadata.uid() == identity.owner
+                && metadata.permissions().mode() & 0o7000 == 0)
+                .then_some(metadata))
+        };
+    let names = |path: &Path| -> Result<Vec<std::ffi::OsString>, ApplicationStageError> {
+        fs::read_dir(path)
+            .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name())
+                    .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)
+            })
+            .collect()
+    };
+    match names(root)?.as_slice() {
+        [] => return Ok(true),
+        [name] if name == SLOT_METADATA_DIRECTORY => {}
+        _ => return Ok(false),
+    }
+    let metadata_directory = root.join(SLOT_METADATA_DIRECTORY);
+    if own(&metadata_directory, true)?.is_none() {
+        return Ok(false);
+    }
+    let receipt = Path::new(SLOT_RECEIPT_PATH)
+        .file_name()
+        .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?;
+    match names(&metadata_directory)?.as_slice() {
+        [] => Ok(true),
+        [name] if name == receipt => Ok(own(&root.join(SLOT_RECEIPT_PATH), false)?
+            .is_some_and(|metadata| metadata.len() == 0 && metadata.nlink() == 1)),
+        _ => Ok(false),
+    }
 }
 
 fn validate_abandoned_receipt(

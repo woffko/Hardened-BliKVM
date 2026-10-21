@@ -576,6 +576,42 @@ fn a_temporary_file_left_by_an_interrupted_copy_is_cleaned_before_staging() {
 }
 
 #[test]
+fn a_staging_cut_before_its_receipt_is_cleaned() {
+    // The stager makes `.staging-*`, then its metadata directory, then the
+    // receipt: a power loss between them left a directory every later
+    // collection refused, which stops the board's application at every
+    // boot (code audit of 2026-10-20, AUD-04).
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let staging = |name: &str| {
+        let path = slots.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    staging(".staging-AbC123");
+    let metadata = staging(".staging-DeF456").join(".hardened-blikvm");
+    fs::create_dir(&metadata).unwrap();
+    let metadata = staging(".staging-GhI789").join(".hardened-blikvm");
+    fs::create_dir(&metadata).unwrap();
+    fs::write(metadata.join("receipt.json"), b"").unwrap();
+    fs::set_permissions(
+        metadata.join("receipt.json"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert_eq!(stager.cleanup_abandoned_staging().unwrap().removed, 3);
+    assert!(root_entries(slots.path()).is_empty());
+    // A cut staging that holds anything else stays refused.
+    let other = staging(".staging-JkL012");
+    fs::write(other.join("payload"), b"something").unwrap();
+    assert!(matches!(
+        stager.cleanup_abandoned_staging(),
+        Err(ApplicationStageError::UnsafeAbandonedStaging)
+    ));
+}
+
+#[test]
 fn the_snapshot_is_never_a_named_file_in_the_root() {
     let (signing, trust) = keys();
     let payload = payload();
