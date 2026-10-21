@@ -148,6 +148,8 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-quic.service \
   packaging/systemd/hardened-blikvm-image-download.socket \
   packaging/systemd/hardened-blikvm-image-download@.service \
+  packaging/systemd/hardened-blikvm-picoclaw-install.socket \
+  packaging/systemd/hardened-blikvm-picoclaw-install@.service \
   packaging/systemd/hardened-blikvm-picoclaw.service \
   packaging/systemd/hardened-blikvm-picoclaw-api.socket \
   packaging/systemd/hardened-blikvm-picoclaw-api@.service \
@@ -170,6 +172,7 @@ install -m 0644 \
   packaging/sysusers.d/hardened-blikvm-quic.conf \
   packaging/sysusers.d/hardened-blikvm-ve.conf \
   packaging/sysusers.d/hardened-blikvm-download.conf \
+  packaging/sysusers.d/hardened-blikvm-picoclaw-install.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \

@@ -1,0 +1,19 @@
+[Unit]
+Description=Hardened BliKVM PicoClaw installer for the web server
+Documentation=https://github.com/woffko/Hardened-BliKVM
+
+[Socket]
+# Only the web server may connect; the helper also authenticates the peer UID
+# with SO_PEERCRED and refuses while PicoClaw is switched off.
+ListenStream=/run/hardened-blikvm-picoclaw-install-api/install.sock
+Accept=yes
+SocketUser=hardened-blikvm-server
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0755
+Backlog=4
+MaxConnections=2
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

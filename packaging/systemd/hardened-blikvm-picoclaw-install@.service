@@ -1,0 +1,62 @@
+[Unit]
+Description=Hardened BliKVM PicoClaw installer
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=local-fs.target network-online.target
+
+[Service]
+Type=simple
+# Fetches the pinned PicoClaw release and installs its executable, or
+# removes it, at the web server's request while the PicoClaw switch is on.
+# An account of its own, in no group another account shares, which writes
+# only PicoClaw's runtime directory: no image download can write a PicoClaw
+# file, and the runtime starts only a copy root checked against the pinned
+# digest (code audit of 2026-10-20, AUD-05.2; docs/design/admin-features-v1.md).
+User=hardened-blikvm-pico-install
+Group=hardened-blikvm-pico-install
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-install --peer-user hardened-blikvm-server
+RuntimeDirectory=hardened-blikvm-picoclaw-install
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=hardened-blikvm-picoclaw-runtime
+StateDirectoryMode=0755
+UMask=0022
+KillMode=control-group
+TimeoutStopSec=10
+# Just above the helper's two hours for a transfer: a curl or a helper that
+# hangs ends with the unit.
+RuntimeMaxSec=7500
+TasksMax=32
+LimitNOFILE=256
+MemoryMax=256M
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+InaccessiblePaths=-/run/hardened-blikvm-gadget -/run/hardened-blikvm -/run/hardened-blikvm-admin -/run/hardened-blikvm-update-api -/run/hardened-blikvm-exec-api -/run/hardened-blikvm-hid -/etc/hardened-blikvm-gadget
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# The board's own services are not download sources.
+IPAddressDeny=localhost link-local multicast
+IPAddressAllow=127.0.0.53

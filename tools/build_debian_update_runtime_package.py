@@ -24,8 +24,8 @@ from tools import ve_module
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev39"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev40"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -186,6 +186,19 @@ FILE_MAP.update({
     "share/sysusers.d/hardened-blikvm-download.conf": (
         "usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-download-sysusers.conf"
     ),
+    # dev40: PicoClaw's installer, a unit, a socket and an account of their
+    # own, so no image download writes a PicoClaw file (code audit of
+    # 2026-10-20, AUD-05.2).
+    "share/systemd/hardened-blikvm-picoclaw-install.socket": (
+        "lib/systemd/system/hardened-blikvm-picoclaw-install.socket"
+    ),
+    "share/systemd/hardened-blikvm-picoclaw-install@.service": (
+        "lib/systemd/system/hardened-blikvm-picoclaw-install@.service"
+    ),
+    "share/sysusers.d/hardened-blikvm-picoclaw-install.conf": (
+        "usr/share/doc/hardened-blikvm-update-runtime/examples/"
+        "hardened-blikvm-picoclaw-install-sysusers.conf"
+    ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
         "lib/systemd/system/hardened-blikvm-hid-gadget.service"
@@ -300,6 +313,10 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-ve.conf": 33,
         # dev39 is the 36th.
         "hardened-blikvm-download.conf": 36,
+        # dev40 is the 37th.
+        "hardened-blikvm-picoclaw-install.socket": 37,
+        "hardened-blikvm-picoclaw-install@.service": 37,
+        "hardened-blikvm-picoclaw-install.conf": 37,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

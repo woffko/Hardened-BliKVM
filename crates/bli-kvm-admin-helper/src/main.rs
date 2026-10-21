@@ -5,14 +5,17 @@
 //! switch file for every request and refuses a switched-off feature on its
 //! own, whatever the web server decided.
 //!
-//! With `--download` the same binary serves remote image downloads and the
-//! PicoClaw install from a separate unprivileged unit that has network
-//! access; with `--picoclaw` it manages the PicoClaw configuration as the
-//! runtime's own user; `--require-feature NAME` exits non-zero while that
-//! switch is off (a pre-start check for the PicoClaw runtime).
+//! With `--download` the same binary serves remote image downloads from a
+//! separate unprivileged unit that has network access, and with
+//! `--picoclaw-install` the PicoClaw install from another one; with
+//! `--picoclaw` it manages the PicoClaw configuration as the runtime's own
+//! user; `--require-feature NAME` exits non-zero while that switch is off and
+//! `--picoclaw-prepare` makes the checked copy the runtime starts (pre-start
+//! steps of the PicoClaw runtime, as root).
 
 mod download;
 mod picoclaw;
+mod picoclaw_exec;
 mod root_password;
 mod scripts;
 mod system_update;
@@ -31,7 +34,8 @@ use std::time::Duration;
 
 use bli_kvm_admin_helper::{
     AdminReply, AdminRequest, DOWNLOAD_STATUS, DownloadStatus, FRAME_DATA, FRAME_RESIZE,
-    PICOCLAW_BINARY, PICOCLAW_INSTALL_STATUS, PICOCLAW_RELEASE_BYTES, PICOCLAW_RELEASE_SHA256,
+    PICOCLAW_BINARY, PICOCLAW_BINARY_BYTES, PICOCLAW_BINARY_SHA256, PICOCLAW_EXEC_DIR,
+    PICOCLAW_INSTALLER_STATUS, PICOCLAW_RELEASE_BYTES, PICOCLAW_RELEASE_SHA256,
     PICOCLAW_RELEASE_URL, PICOCLAW_RUNTIME_DIR, PICOCLAW_SERVICE, PICOCLAW_STATE, decode_resize,
     encode_frame, read_frame, read_line, validate_remote_iso, write_line, write_reply,
 };
@@ -49,6 +53,24 @@ fn main() -> ExitCode {
         Some("--picoclaw") => {
             mode = "picoclaw";
             first = arguments.next();
+        }
+        Some("--picoclaw-install") => {
+            mode = "picoclaw-install";
+            first = arguments.next();
+        }
+        Some("--picoclaw-prepare") if arguments.next().is_none() => {
+            return match picoclaw_exec::prepare(
+                Path::new(PICOCLAW_BINARY),
+                Path::new(PICOCLAW_EXEC_DIR),
+                PICOCLAW_BINARY_SHA256,
+                PICOCLAW_BINARY_BYTES,
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("admin helper: PicoClaw is not started: {error}");
+                    ExitCode::from(1)
+                }
+            };
         }
         Some("--require-feature") => {
             let feature = arguments.next();
@@ -74,7 +96,7 @@ fn main() -> ExitCode {
         (Some("--peer-user"), Some(user), None) => user,
         _ => {
             eprintln!(
-                "usage: bli-kvm-admin-helper [--download | --picoclaw] --peer-user USER\n       bli-kvm-admin-helper --require-feature NAME"
+                "usage: bli-kvm-admin-helper [--download | --picoclaw | --picoclaw-install] --peer-user USER\n       bli-kvm-admin-helper --require-feature NAME\n       bli-kvm-admin-helper --picoclaw-prepare"
             );
             return ExitCode::from(2);
         }
@@ -89,6 +111,7 @@ fn main() -> ExitCode {
     let served = match mode {
         "download" => serve_download(&mut stream),
         "picoclaw" => serve_picoclaw(&mut stream),
+        "picoclaw-install" => serve_picoclaw_installer(&mut stream),
         _ => serve(&mut stream),
     };
     match served {
@@ -319,8 +342,11 @@ fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
     let request: AdminRequest = read_line(stream)?;
     let url = match request {
         AdminRequest::ImageDownload { url } => url,
-        AdminRequest::PicoclawInstall {} => return install_picoclaw(stream),
-        AdminRequest::PicoclawRemove {} => return remove_picoclaw(stream),
+        // No image download writes a PicoClaw file (code audit of
+        // 2026-10-20, AUD-05.2).
+        AdminRequest::PicoclawInstall {} | AdminRequest::PicoclawRemove {} => {
+            return refuse(stream, "PicoClaw is installed by its own installer");
+        }
         _ => return refuse(stream, "not a download request"),
     };
     if !remote_download_enabled() {
@@ -374,18 +400,27 @@ fn picoclaw_enabled() -> bool {
     AdminFeatureSwitches::load(Path::new(ADMIN_FEATURES_PATH)).get(AdminFeature::Picoclaw)
 }
 
+/// PicoClaw's installer: its install and its removal, nothing else.
+fn serve_picoclaw_installer(stream: &mut UnixStream) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    match read_line(stream)? {
+        AdminRequest::PicoclawInstall {} => install_picoclaw(stream),
+        AdminRequest::PicoclawRemove {} => remove_picoclaw(stream),
+        _ => refuse(stream, "not a PicoClaw install request"),
+    }
+}
+
 /// Installs the pinned PicoClaw release; one network job at a time.
 fn install_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
     if !picoclaw_enabled() {
         return refuse(stream, "picoclaw is switched off");
     }
-    let status = Path::new(DOWNLOAD_STATUS);
-    let lock_path = status.with_file_name("download.lock");
+    let install_status = Path::new(PICOCLAW_INSTALLER_STATUS);
+    let lock_path = install_status.with_file_name("download.lock");
     let Some(_lock) = download::DownloadLock::acquire_within(&lock_path, download::LOCK_WAIT)?
     else {
         return refuse(stream, "a download is in progress");
     };
-    let install_status = Path::new(PICOCLAW_INSTALL_STATUS);
     download::write_install_status(install_status, "downloading", 0, "");
     write_line(stream, &AdminReply::Ready)?;
     let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -408,7 +443,7 @@ fn install_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
 }
 
 fn remove_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
-    let status = Path::new(DOWNLOAD_STATUS);
+    let status = Path::new(PICOCLAW_INSTALLER_STATUS);
     let Some(_lock) = download::DownloadLock::acquire(&status.with_file_name("download.lock"))?
     else {
         return refuse(stream, "a download is in progress");
@@ -418,7 +453,7 @@ fn remove_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return refuse(stream, &error.to_string()),
     }
-    let _ = std::fs::remove_file(PICOCLAW_INSTALL_STATUS);
+    let _ = std::fs::remove_file(PICOCLAW_INSTALLER_STATUS);
     write_line(stream, &AdminReply::Done)
 }
 

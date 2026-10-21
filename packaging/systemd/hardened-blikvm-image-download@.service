@@ -8,9 +8,10 @@ Type=simple
 # The only unit with outbound network access; the web server itself may
 # reach localhost alone. It runs under an account of its own, in no group
 # another account shares but for the web server, and can write only the file
-# the web server prepares in the image store's drop directory (bound below)
-# and the PicoClaw runtime directory; the web server checks and publishes the
-# image (docs/design/admin-features-v1.md).
+# the web server prepares in the image store's drop directory (bound below);
+# the web server checks and publishes the image. PicoClaw is installed by a
+# unit and an account of its own (code audit of 2026-10-20, AUD-05.2;
+# docs/design/admin-features-v1.md).
 User=hardened-blikvm-download
 Group=hardened-blikvm-download
 StandardInput=socket
@@ -20,8 +21,6 @@ ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --download --peer-us
 RuntimeDirectory=hardened-blikvm-download
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
-StateDirectory=hardened-blikvm-picoclaw-runtime
-StateDirectoryMode=0755
 UMask=0022
 KillMode=control-group
 TimeoutStopSec=10

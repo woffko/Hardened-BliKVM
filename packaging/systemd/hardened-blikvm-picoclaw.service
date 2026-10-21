@@ -9,7 +9,10 @@ Type=simple
 # Started and stopped only through the administration helper while the
 # PicoClaw switch is on (docs/design/admin-features-v1.md). The runtime and
 # its agent tools run as a dedicated dynamic user whose only writable place
-# is its own home; its binary belongs to another account.
+# is its own home. It starts the copy of its executable that root checked
+# against the pinned digest just before, in root's own directory: whoever can
+# write the installed file cannot choose what runs (code audit of
+# 2026-10-20, AUD-05.2).
 DynamicUser=yes
 User=hardened-blikvm-picoclaw
 StateDirectory=hardened-blikvm-picoclaw
@@ -18,7 +21,8 @@ WorkingDirectory=/var/lib/hardened-blikvm-picoclaw
 Environment=HOME=/var/lib/hardened-blikvm-picoclaw
 Environment=PICOCLAW_HOME=/var/lib/hardened-blikvm-picoclaw/.picoclaw
 ExecStartPre=+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --require-feature picoclaw
-ExecStart=/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw gateway
+ExecStartPre=+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-prepare
+ExecStart=/run/hardened-blikvm-picoclaw-exec/picoclaw gateway
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=15s

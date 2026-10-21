@@ -27,7 +27,7 @@ pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub const PICOCLAW_SOCKET: &str = "/run/hardened-blikvm-picoclaw-api/picoclaw.sock";
 /// Home of the PicoClaw runtime user; `PICOCLAW_HOME` is `.picoclaw` in it.
 pub const PICOCLAW_STATE: &str = "/var/lib/hardened-blikvm-picoclaw";
-/// Installed runtime binary, owned by the download helper's account.
+/// Installed runtime binary, owned by PicoClaw's installer's account.
 pub const PICOCLAW_RUNTIME_DIR: &str = "/var/lib/hardened-blikvm-picoclaw-runtime";
 pub const PICOCLAW_BINARY: &str = "/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw";
 /// Install progress, written by the download helper of an older system.
@@ -45,6 +45,13 @@ pub const PICOCLAW_RELEASE_URL: &str =
 pub const PICOCLAW_RELEASE_SHA256: &str =
     "9ce9fbf76da9c967baffb18c4b502dec2055b3ad050fc2381b6260429e1acf70";
 pub const PICOCLAW_RELEASE_BYTES: u64 = 19_999_445;
+/// The pinned release's `picoclaw` executable, checked by root before every
+/// start of the runtime, which runs the checked copy in `PICOCLAW_EXEC_DIR`
+/// (code audit of 2026-10-20, AUD-05.2).
+pub const PICOCLAW_BINARY_SHA256: &str =
+    "d5eebc3b12485da97b45884199ec6a1598e1576f292db84c9f8a8bab0e6f7db2";
+pub const PICOCLAW_BINARY_BYTES: u64 = 30_671_032;
+pub const PICOCLAW_EXEC_DIR: &str = "/run/hardened-blikvm-picoclaw-exec";
 pub const PICOCLAW_SERVICE: &str = "hardened-blikvm-picoclaw.service";
 pub const PICOCLAW_GATEWAY_PORT: u16 = 18790;
 /// Header carrying the internal token on the runtime's KVM calls.

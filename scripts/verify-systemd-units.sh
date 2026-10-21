@@ -78,6 +78,9 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-
 # The PicoClaw runtime is downloaded at run time, not packaged.
 install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
 install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
+# The runtime starts the checked copy root makes before each start.
+install -d -m 0755 "$test_root/run/hardened-blikvm-picoclaw-exec"
+install -m 0755 /bin/true "$test_root/run/hardened-blikvm-picoclaw-exec/picoclaw"
 install -m 0755 /bin/true "$test_root/usr/bin/ustreamer"
 install -m 0755 /bin/true "$test_root/usr/bin/janus"
 install -m 0755 /bin/true "$test_root/usr/sbin/ip"
@@ -95,6 +98,7 @@ install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm-diagnostics.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-quic.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-download.conf" \
+  "$project_root/packaging/sysusers.d/hardened-blikvm-picoclaw-install.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-ve.conf" \
   "$test_root/usr/lib/sysusers.d/"
 for fragment in $fragments; do

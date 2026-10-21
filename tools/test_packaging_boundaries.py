@@ -2211,6 +2211,56 @@ class PackagingBoundaryTests(unittest.TestCase):
             create()
             self.assertEqual((moved / "catalog.json").read_text(), catalog)
 
+    def test_no_image_download_writes_a_picoclaw_file(self) -> None:
+        # The download template kept PicoClaw's runtime directory for every
+        # instance, so an ISO download's worker could replace the executable
+        # PicoClaw's user then ran (code audit of 2026-10-20, AUD-05.2).
+        download = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        self.assertFalse(
+            [line for line in download.splitlines() if line.startswith("StateDirectory")]
+        )
+        self.assertNotIn("hardened-blikvm-picoclaw-runtime", download)
+        # Its install and removal have a unit, a socket and an account of
+        # their own.
+        installer = (
+            ROOT / "packaging/systemd/hardened-blikvm-picoclaw-install@.service"
+        ).read_text().splitlines()
+        self.assertIn("User=hardened-blikvm-pico-install", installer)
+        self.assertIn("Group=hardened-blikvm-pico-install", installer)
+        self.assertIn("StateDirectory=hardened-blikvm-picoclaw-runtime", installer)
+        self.assertIn(
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-install "
+            "--peer-user hardened-blikvm-server",
+            installer,
+        )
+        socket = (ROOT / "packaging/systemd/hardened-blikvm-picoclaw-install.socket").read_text()
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        path = re.search(r'pub const PICOCLAW_INSTALLER_SOCKET: &str =\s*"([^"]+)";', helper)
+        assert path is not None
+        self.assertIn(f"ListenStream={path.group(1)}", socket.splitlines())
+        self.assertIn("SocketUser=hardened-blikvm-server", socket.splitlines())
+        sysusers = (
+            ROOT / "packaging/sysusers.d/hardened-blikvm-picoclaw-install.conf"
+        ).read_text().splitlines()
+        self.assertFalse([line for line in sysusers if line.startswith("m ")])
+        # The runtime starts only the copy root checked, from root's
+        # directory, whoever can write the installed file.
+        runtime = (ROOT / "packaging/systemd/hardened-blikvm-picoclaw.service").read_text().splitlines()
+        exec_dir = re.search(r'pub const PICOCLAW_EXEC_DIR: &str = "([^"]+)";', helper)
+        assert exec_dir is not None
+        self.assertIn(
+            "ExecStartPre=+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-prepare",
+            runtime,
+        )
+        self.assertIn(f"ExecStart={exec_dir.group(1)}/picoclaw gateway", runtime)
+        # Every server unit names the installer to the server.
+        for unit in sorted((ROOT / "packaging/systemd").glob("**/hardened-blikvm-server-*.service")):
+            self.assertIn(
+                f"Environment=BLI_KVM_PICOCLAW_INSTALLER_SOCKET={path.group(1)}",
+                unit.read_text().splitlines(),
+                unit.name,
+            )
+
     def test_a_download_worker_ends_within_its_transfer_budget(self) -> None:
         # The helper has no deadline of its own on a curl that hangs, and the
         # unit none either (code audit of 2026-10-20, AUD-05.3).
