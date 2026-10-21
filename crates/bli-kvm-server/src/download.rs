@@ -183,6 +183,17 @@ pub(crate) fn sweep_stale_uploads(directory: &Path) {
     remove_stale_uploads(directory, STALE_UPLOAD_AGE);
 }
 
+/// An upload's temporary file, removed unless it is taken for the image.
+struct Temporary(Option<PathBuf>);
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 pub(crate) async fn upload_image(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
@@ -277,7 +288,7 @@ async fn upload_image_inner(
         return Err(AppError::Conflict(NO_SPACE.into()));
     }
 
-    let mut uploaded: Option<(String, UploadKind, u64, String)> = None;
+    let mut uploaded: Option<(String, UploadKind, u64, String, Temporary)> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -338,27 +349,17 @@ async fn upload_image_inner(
                 for byte in digest {
                     sha256.push_str(&format!("{byte:02x}"));
                 }
-                let target = directory.join(&name);
                 if let Err(error) = file.sync_all().await {
                     drop(file);
                     let _ = tokio::fs::remove_file(&temporary).await;
                     return Err(store_unwritable(&name, &error));
                 }
                 drop(file);
-                // The drive may have been attached to this image while it was
-                // arriving; the rename would swap the file under the target.
-                if let Err(error) = refuse_attached(state, session_token, &name).await {
-                    let _ = tokio::fs::remove_file(&temporary).await;
-                    return Err(error);
-                }
-                if let Err(error) =
-                    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644))
-                        .and_then(|()| std::fs::rename(&temporary, &target))
-                {
-                    let _ = std::fs::remove_file(&temporary);
-                    return Err(store_unwritable(&name, &error));
-                }
-                uploaded = Some((name, kind, total, sha256));
+                // Kept until the whole body has arrived: a later part or a
+                // body cut short refuses the upload, and the image of its
+                // name must still be the one it was (code audit of
+                // 2026-10-20, AUD-19.2).
+                uploaded = Some((name, kind, total, sha256, Temporary(Some(temporary))));
             }
             Err(error) => {
                 drop(file);
@@ -368,9 +369,19 @@ async fn upload_image_inner(
         }
     }
 
-    let Some((name, kind, size, sha256)) = uploaded else {
+    let Some((name, kind, size, sha256, mut temporary)) = uploaded else {
         return Err(AppError::BadRequest("no file part found".into()));
     };
+    // The drive may have been attached to this image while it was arriving;
+    // the rename would swap the file under the target.
+    refuse_attached(state, session_token, &name).await?;
+    let arrived = temporary.0.take().expect("kept until here");
+    if let Err(error) = std::fs::set_permissions(&arrived, std::fs::Permissions::from_mode(0o644))
+        .and_then(|()| std::fs::rename(&arrived, directory.join(&name)))
+    {
+        let _ = std::fs::remove_file(&arrived);
+        return Err(store_unwritable(&name, &error));
+    }
     let (cdrom_allowed, removable_allowed, writable_allowed) = upload_allows(kind);
     let summary = MediaCatalog::upsert_image(
         &catalog_path,
