@@ -113,21 +113,64 @@ impl LoginRateLimiter {
     }
 }
 
-/// The address a request really comes from. nginx is the only client of the
-/// server's TCP port and sets `X-Forwarded-For` to exactly the peer it saw
-/// (replacing whatever the client sent), so the header is believed only when
-/// the connection itself is loopback and the value is one address. Anything
-/// else falls back to the connection's address.
-pub fn client_address(peer: std::net::SocketAddr, headers: &axum::http::HeaderMap) -> String {
-    if peer.ip().is_loopback()
-        && let Some(forwarded) = headers
-            .get("x-forwarded-for")
-            .and_then(|value| value.to_str().ok())
-        && let Ok(address) = forwarded.trim().parse::<std::net::IpAddr>()
-    {
-        return address.to_string();
+/// The address a login, a password change or a terminal unlock is counted
+/// under. nginx sets `X-Forwarded-For` to exactly the peer it saw, replacing
+/// whatever the client sent. Through the proxy socket, which serves nginx
+/// alone, that header is the client. Over TCP it is believed from a loopback
+/// peer only while no proxy socket is named (an older system's nginx), since
+/// any local process reaches the TCP port; the header must be one address.
+/// Anything else counts as the connection's own address (code audit of
+/// 2026-10-20, AUD-16.2).
+pub struct ClientSource(pub String);
+
+pub fn source_address(
+    peer: Option<std::net::SocketAddr>,
+    proxied: bool,
+    proxy_named: bool,
+    headers: &axum::http::HeaderMap,
+) -> Option<String> {
+    let forwarded = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok());
+    if proxied {
+        return Some(forwarded.map_or_else(|| "proxy".to_string(), |address| address.to_string()));
     }
-    peer.ip().to_string()
+    let peer = peer?;
+    if peer.ip().is_loopback()
+        && !proxy_named
+        && let Some(address) = forwarded
+    {
+        return Some(address.to_string());
+    }
+    Some(peer.ip().to_string())
+}
+
+impl axum::extract::FromRequestParts<crate::AppState> for ClientSource {
+    type Rejection = crate::error::AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &crate::AppState,
+    ) -> Result<Self, Self::Rejection> {
+        use axum::extract::ConnectInfo;
+        let proxied = parts
+            .extensions
+            .get::<ConnectInfo<crate::proxy_socket::ProxyPeer>>()
+            .is_some();
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<std::net::SocketAddr>>()
+            .map(|ConnectInfo(peer)| *peer);
+        source_address(
+            peer,
+            proxied,
+            state.options.proxy_socket.is_some(),
+            &parts.headers,
+        )
+        .map(ClientSource)
+        .ok_or_else(|| crate::error::AppError::Internal("the request has no peer address".into()))
+    }
 }
 
 fn key(source_ip: &str, username: &str) -> String {
@@ -152,19 +195,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_address_trusts_the_forwarded_header_only_from_loopback() {
+    fn the_forwarded_header_is_believed_from_nginx_only() {
         use axum::http::HeaderMap;
+        let source = |peer: &str, proxied: bool, proxy_named: bool, headers: &HeaderMap| {
+            source_address(peer.parse().ok(), proxied, proxy_named, headers)
+        };
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
-        let loopback: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
-        let remote: std::net::SocketAddr = "192.0.2.10:5000".parse().unwrap();
-        assert_eq!(client_address(loopback, &headers), "198.51.100.7");
-        assert_eq!(client_address(remote, &headers), "192.0.2.10");
+        let loopback = "127.0.0.1:5000";
+        let remote = "192.0.2.10:5000";
+        // Without a proxy socket (an older system): from loopback over TCP.
+        assert_eq!(
+            source(loopback, false, false, &headers).unwrap(),
+            "198.51.100.7"
+        );
+        assert_eq!(
+            source(remote, false, false, &headers).unwrap(),
+            "192.0.2.10"
+        );
+        // With one: over TCP never, through the socket always.
+        assert_eq!(
+            source(loopback, false, true, &headers).unwrap(),
+            "127.0.0.1"
+        );
+        assert_eq!(source("", true, true, &headers).unwrap(), "198.51.100.7");
+        assert_eq!(source("", true, true, &HeaderMap::new()).unwrap(), "proxy");
+        assert_eq!(source("", false, true, &headers), None);
         headers.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
-        assert_eq!(client_address(loopback, &headers), "127.0.0.1");
+        assert_eq!(
+            source(loopback, false, false, &headers).unwrap(),
+            "127.0.0.1"
+        );
         headers.insert("x-forwarded-for", "junk".parse().unwrap());
-        assert_eq!(client_address(loopback, &headers), "127.0.0.1");
-        assert_eq!(client_address(loopback, &HeaderMap::new()), "127.0.0.1");
+        assert_eq!(
+            source(loopback, false, false, &headers).unwrap(),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            source(loopback, false, false, &HeaderMap::new()).unwrap(),
+            "127.0.0.1"
+        );
     }
 
     #[test]

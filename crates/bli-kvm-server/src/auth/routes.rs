@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
-
 use axum::{
     Extension, Json,
-    extract::{ConnectInfo, State},
+    extract::State,
     http::{HeaderMap, header},
     response::IntoResponse,
 };
@@ -114,7 +112,7 @@ pub async fn setup_first_account(
 
 pub async fn login(
     State(state): State<AppState>,
-    ConnectInfo(address): ConnectInfo<SocketAddr>,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> AppResult<impl IntoResponse> {
@@ -128,7 +126,6 @@ pub async fn login(
     if request.username.len() > 64 || request.password.len() > 256 {
         return Err(AppError::BadRequest("invalid username or password".into()));
     }
-    let source = crate::auth::rate_limit::client_address(address, &headers);
     let locked = || AppError::RateLimited("account locked after repeated failures".into());
     if state
         .login_limiter
@@ -228,8 +225,7 @@ pub async fn password_state(
 
 pub async fn change_password(
     State(state): State<AppState>,
-    ConnectInfo(address): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(request): Json<AccountChangeRequest>,
 ) -> AppResult<impl IntoResponse> {
@@ -245,7 +241,6 @@ pub async fn change_password(
         .ok_or_else(|| AppError::Forbidden("the current password is required".into()))?;
     validate_credentials(&request.username, &request.password)?;
     // Checked like a login, under the same limiter.
-    let source = crate::auth::rate_limit::client_address(address, &headers);
     let limiter_key = format!("password:{}", request.username);
     let locked = || AppError::RateLimited("account locked after repeated failures".into());
     if state

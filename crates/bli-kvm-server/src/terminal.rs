@@ -6,13 +6,12 @@
 //! closes when the web session expires.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Json,
     extract::{
-        ConnectInfo, Query, State,
+        Query, State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
@@ -97,8 +96,7 @@ struct WindowSize {
 pub(crate) async fn unlock(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
-    ConnectInfo(address): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     Json(body): Json<UnlockBody>,
 ) -> AppResult<Json<ApiResponse<UnlockView>>> {
     crate::admin_features::require(AdminFeature::Terminal)?;
@@ -110,7 +108,6 @@ pub(crate) async fn unlock(
     if body.username != session.username {
         return Err(AppError::InvalidCredentials);
     }
-    let source = crate::auth::rate_limit::client_address(address, &headers);
     verify_unlock(
         &state.accounts,
         &state.login_limiter,

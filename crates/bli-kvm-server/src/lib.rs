@@ -47,6 +47,7 @@ mod network;
 mod network_ipv4;
 mod network_write;
 mod picoclaw;
+pub mod proxy_socket;
 mod quality;
 mod quic;
 mod remote_download;
@@ -203,6 +204,11 @@ pub struct ServerOptions {
     /// The only user whose process may use that socket; no value means this
     /// server's own user.
     pub quic_link_uid: Option<u32>,
+    /// The socket nginx reaches the server through, which only nginx's
+    /// account and the server may open. Named, `X-Forwarded-For` is
+    /// believed there alone, and a loopback TCP peer counts as itself (code
+    /// audit of 2026-10-20, AUD-16.2).
+    pub proxy_socket: Option<PathBuf>,
 }
 
 impl ServerOptions {
@@ -273,6 +279,7 @@ impl Default for ServerOptions {
             media_store_must_be_mounted: false,
             quic_link_socket: None,
             quic_link_uid: None,
+            proxy_socket: None,
         }
     }
 }
@@ -2136,6 +2143,43 @@ mod tests {
             .oneshot(forwarded_login("198.51.100.2", "initial password"))
             .await
             .unwrap();
+        assert_eq!(json_body(response).await["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn with_the_proxy_socket_a_loopback_tcp_peer_counts_as_itself() {
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            secure_cookies: true,
+            login_max_failures: 2,
+            proxy_socket: Some(root.path().join("proxy.sock")),
+            ..ServerOptions::default()
+        });
+        setup_and_login(&app).await;
+        // A local process names a fresh client for every guess over TCP.
+        for from in ["198.51.100.1", "198.51.100.2"] {
+            let response = app
+                .clone()
+                .oneshot(forwarded_login(from, "wrong password"))
+                .await
+                .unwrap();
+            assert_eq!(json_body(response).await["code"], -2);
+        }
+        // Both counted under the TCP peer, which is now locked.
+        let response = app
+            .clone()
+            .oneshot(forwarded_login("198.51.100.3", "initial password"))
+            .await
+            .unwrap();
+        assert_ne!(json_body(response).await["code"], 0);
+        // Through nginx's socket the forwarded client counts, and is not.
+        let mut request = forwarded_login("198.51.100.4", "initial password");
+        request.extensions_mut().remove::<ConnectInfo<SocketAddr>>();
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(crate::proxy_socket::ProxyPeer));
+        let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(json_body(response).await["code"], 0);
     }
 
