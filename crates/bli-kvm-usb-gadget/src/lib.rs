@@ -265,12 +265,16 @@ fn checked_image(metadata: &std::fs::Metadata) -> Result<(), GadgetError> {
 }
 
 /// Opens `image` without following a link at its name and checks the file
-/// it got, for `Step::PresentImage`.
+/// it got, for `Step::PresentImage`. The open does not wait: a FIFO put in
+/// the image's place after the check would otherwise hold the owner with
+/// the gadget unbound; it is refused as not a regular file (code audit of
+/// 2026-10-20, AUD-09). The kernel opens the file again through the
+/// descriptor's path, with flags of its own.
 fn open_image(image: &Path) -> Result<std::fs::File, GadgetError> {
     use std::os::unix::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(image)
         .map_err(|error| match error.raw_os_error() {
             Some(libc::ELOOP) => GadgetError::InvalidImagePath,
@@ -1094,6 +1098,29 @@ fn read_bool(root: &Path, path: &Path) -> Result<bool, GadgetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_swapped_for_a_fifo_is_refused_without_waiting() {
+        // A FIFO put in the image's place between the check and the open
+        // must not hold the owner with the gadget unbound (code audit of
+        // 2026-10-20, AUD-09).
+        use std::os::unix::ffi::OsStrExt;
+        let directory = tempfile::tempdir().unwrap();
+        let fifo = directory.path().join("image.iso");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path; mkfifo reads it only.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(open_image(&fifo).map(|_| ()));
+        });
+        assert_eq!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .ok(),
+            Some(Err(GadgetError::ImageMissing))
+        );
+    }
 
     const IMAGE_NAME: &str = "kubuntu.img";
 
