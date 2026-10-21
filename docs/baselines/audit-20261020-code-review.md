@@ -119,5 +119,48 @@ back; two IPv4 changes inside one revert window; axios 1.18.1 with a wrapped
 
 ## Fixes
 
-Filled in as the plan is carried out: each item with its commit and the
-test that failed before it, or why it was left.
+The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
+(each commit names the test that failed on the code before it and passes
+after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
+`0.1.0~dev40`, the encoder and the RAW bundle of sequence 8 carry phase Y.
+"Board" is filled in at the gates.
+
+| Item | Finding | Commit | Test that failed before | State |
+| --- | --- | --- | --- | --- |
+| S1 | AUD-06 | `689ad22` | a clock that goes back runs the fan at its failsafe duty; a policy error drives maximum cooling, or is actuation uncertain | fixed |
+| S2 | AUD-08 | `03805d6`, `eda1702` | a second change, a resolver edit, another interface and a failed change keep the window's first state; WiFi's too | fixed |
+| S3 | AUD-07 | `5d8a30d` | a slow system setting leaves HID leases answered (the lease waited 1.9 s) | fixed |
+| S4 | AUD-16.1 | `33adfe6` | parallel unlocks cannot outrun the lockout (10 checked, now at most 2); the password is bounded | fixed |
+| S5 | AUD-16.2 | `f3d7ed3` | with the proxy socket, a loopback TCP peer counts as itself | fixed; local run of the server |
+| S6 | AUD-11 | `788c6b1` | a FIFO or a link in the worker's directory reads as nothing; the install status is a small regular file | fixed (no blocking thread needed: the open cannot block) |
+| S7 | AUD-05.1 | `fa432d1` | a file still open for writing is not taken | fixed |
+| S8 | AUD-16.4 | `9a9bcef` | a session that ended hands back its lease | fixed |
+| S9 | AUD-14 | `99b7b7f` | a mode that cannot be persisted is not applied or confirmed | fixed |
+| S10 | AUD-13 | `96ad586` | parallel additions keep every entry; a damaged file is not written over (shortcuts and WoL) | fixed; the owner's `/etc/hosts` and `resolved.conf` left in place: its sandbox grants the files, not their directories |
+| S11 | AUD-20 | `6949b2c` | a replayed button release clears both pointer interfaces; a dropped driver closes its line handles | fixed |
+| S12 | AUD-09 | `f6504b7` | an image swapped for a FIFO is refused without waiting | fixed; the catalog's read not confirmed (a race between two calls, the check refuses a FIFO or a link) |
+| S13 | AUD-15 | `f7a7413` | no `http.get` wraps its parameters | fixed |
+| S14 | AUD-19.1, V2 | `72ead25` | a second connection of one session is refused | fixed; the loop's end on a lost sender by reading |
+| S15 | AUD-19.2 | `d9cdc0f` | an upload refused after its file leaves the image of its name | fixed |
+| S16 | AUD-19.3 | `12c812a` | two password changes at once leave both passwords the same | fixed |
+| S17 | AUD-05.2 | `2ddf2d9` | (the route to the installer, beside the old one) | fixed |
+| Y1 | AUD-01 | `8613c0a` | an interrupted write is undone from the backup; a record without a backup, or a backup it does not name, is refused | fixed; the page already asked to keep power: unchanged |
+| Y2 | AUD-04 | `31f12d5` | an interrupted deletion in the exec store does not stop a preparation; a staging cut before its receipt is cleaned | fixed |
+| Y3 | AUD-03 | `6392b4b` | native rollbacks beyond the journal's size are all admitted (the 81st was refused) | fixed |
+| Y4 | AUD-05.2 | `6d23177`, `eb071e8` | no image download writes a PicoClaw file; only the pinned executable is copied to be started; dev40 adds the installer | fixed |
+| Y5 | AUD-05.3 | `cfca978` | a download worker ends within its transfer budget | fixed |
+| Y6 | AUD-02 (a) | `1f43864` | the running root's system sequence counts when it is newer (supervisor and exec helper) | fixed |
+| Y7 | V1, AUD-02 (b) | `87a24c4` | a new root's nginx configuration is the image's with the carried redirect | fixed; the step on a mounted root is seen at gate Y |
+| Y8 | AUD-10 | `4a83ad3` | hyphen labels, a 3xx without Location or a 204, a cut inside a character, the special ranges | fixed |
+| Y9 | AUD-12 | `044d885` | carried owners keep accounts of the same kind; a root still mounted is not written over; one request at a time; a stale upload removed | fixed |
+| Y10 | AUD-16.2 | `de789f6`, `eb071e8` | nginx reaches the server through a socket of its own | fixed |
+| Y11 | AUD-17.3 | `90823ae` | a key request the encoder did not answer is asked again at once | fixed |
+| Y12 | AUD-18.1, 18.3 | `8618141` | a certificate set while the link comes up reaches the server; a new picture's key frame is not left out for the old one's | fixed |
+| Y13 | AUD-21 | `21e3c97` | the unit check takes every tmpfiles fragment; one that does not parse fails it | fixed |
+| Optional | AUD-16.1c, 16.3, 17.1, 17.2, 18.4 to 18.6, 19.1b, 20 (mode), 09.1b | — | — | not done: not chosen |
+
+Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the_supplied_runner`
+(its client's timeout at load 19; alone 3 of 3). The first full checks also
+found tests of this plan's own that a loaded host broke (the revert window's
+600 ms, `eda1702`) and older tests pinned to the files as they were
+(`eb071e8`); the check on `eb071e8` passed in one run.
