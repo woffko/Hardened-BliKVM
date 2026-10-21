@@ -308,6 +308,7 @@ python3 -m unittest \
   tools/test_check_agent_imports.py \
   tools/test_packaging_boundaries.py \
   tools/test_build_sd_image.py \
+  tools/test_restore_raw_backup.py \
   tools/test_build_scripts_guard.py \
   tools/test_web_api_routes.py \
   tools/test_hid_credential_service.py \

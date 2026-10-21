@@ -94,8 +94,11 @@ the repository.
    carried state. It marks the record `written` and reboots so the boot
    loader reads the new kernel and configuration. Any failure before the
    write leaves the old root untouched (`failed`); a failure during or after
-   the write, or power lost while `writing`, restores the backup the same
-   verified way (`rolled_back`). Once the backup is the root again, or
+   the write restores the backup the same verified way (`rolled_back`);
+   power lost while `writing` is restored so only in the last part of the
+   step (see "Power lost while the root is written"). A new root that cannot
+   be unmounted keeps the record at `writing` and reboots, and the next boot
+   restores the backup with nothing mounted. Once the backup is the root again, or
    nothing was written, the step removes the payload, the backup, the carried
    state and the copies of `fstab` and `shadow`; "Discard"
    (`POST /api/system-update/cancel`, allowed while the switch is off) also
@@ -112,6 +115,44 @@ the repository.
 
 Writing, reading back and backing up a 12 GiB root on the card takes up to
 about 30 minutes; the web page says so and asks to keep power connected.
+
+### Power lost while the root is written
+
+The board boots from the root partition itself: U-Boot loads the kernel and
+the initramfs from it, and the initramfs finds the root by the UUID that
+`armbianEnv.txt` names. Once the first MiB of the new image is written, the
+partition carries the image's UUID and a file system half written, so a
+board that loses power then does not reach the boot step that would restore
+the backup; only after the new root's `fstab` is merged does that step run
+again. The backup stays on the data partition, so the root is written back
+on another Linux computer, with the card in a reader:
+
+```sh
+sudo tools/image/restore_raw_backup.py /dev/sdX
+```
+
+The tool reads the update's record and `root.backup.zst` from the second
+partition, checks the backup against the record, writes it over the first
+partition and reads it back; it refuses a record with no backup to write
+(code audit of 2026-10-20, AUD-01). At the next boot the board restores the
+same backup once more and records the update as rolled back. A recovery boot
+from the data partition, which would make this automatic, is a design of its
+own.
+
+### Code audit of 2026-10-20
+
+- The new root keeps the image's `etc/hardened-blikvm/nginx.conf`, with the
+  HTTPS redirect the board's had: the carried directory brought the
+  board's file back, so no system release could change nginx on a board
+  updated by RAW (V1).
+- The update supervisor and the exec helper take the larger of their
+  carried `systemSequence` and the root's `system-sequence` file (AUD-02).
+- The carried owners are checked both ways: a project account the image
+  dropped, or a board account whose id an image's project account takes,
+  stops the step when that id owns a carried file (AUD-12).
+- The administration helper takes a lock on the staging directory for an
+  upload, a stage, a confirmation, a rollback or a cancel, and removes an
+  upload a stopped helper left before the next one (AUD-12).
 
 ## Carried state
 

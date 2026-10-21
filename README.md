@@ -21,7 +21,10 @@ H616), a signed application bundle for a board that already runs one, and
 image's system; see the
 [releases](https://github.com/woffko/Hardened-BliKVM/releases) for the files,
 how to write the card or update a board, the first boot and the known
-limitations.
+limitations. A board that loses power while a RAW update writes its root does
+not start; `tools/image/restore_raw_backup.py` writes the root back from the
+backup on the card, with the card in a reader of another Linux computer
+([`system-raw-update-v1.md`](docs/design/system-raw-update-v1.md)).
 Everything was verified on one board. Expect rough edges and report what you
 find.
 
