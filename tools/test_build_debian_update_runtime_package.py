@@ -133,7 +133,10 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             text = (Path("packaging/systemd") / server).read_text()
             self.assertIn("Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock\n", text)
             self.assertIn("Environment=BLI_KVM_QUIC_LINK_USER=hardened-blikvm-quic\n", text)
-            self.assertIn("RuntimeDirectory=hardened-blikvm-stream hardened-blikvm-quic-link\n", text)
+            self.assertIn(
+                "RuntimeDirectory=hardened-blikvm-stream hardened-blikvm-quic-link hardened-blikvm-proxy\n",
+                text,
+            )
         # Its user has a fragment of its own and no shared group; the
         # runtime's pinned identities do not change.
         users = Path("packaging/sysusers.d/hardened-blikvm-quic.conf").read_text()

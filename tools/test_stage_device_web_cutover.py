@@ -52,9 +52,13 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         for rendered in (config, validation):
             self.assertEqual(
                 sorted(re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE)),
-                ["http://127.0.0.1:18080"] * 4
+                ["http://hardened_blikvm_server"] * 4
                 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
             )
+            # The server's proxy socket first, loopback TCP as its backup
+            # (code audit of 2026-10-20, AUD-16.2).
+            self.assertIn("server unix:/run/hardened-blikvm-proxy/http.sock;", rendered)
+            self.assertIn("server 127.0.0.1:18080 backup;", rendered)
             self.assertIn("location = /api/stream/mjpeg {", rendered)
             self.assertIn("location = /api/application-update/upload {", rendered)
             self.assertIn("location = /api/download/file {", rendered)

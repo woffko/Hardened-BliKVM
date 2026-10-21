@@ -63,7 +63,9 @@ class HidTransitionServiceTests(unittest.TestCase):
             text=True,
         ).stdout.splitlines()
         self.assertIn(f"verify {UNIT_NAME}", listed)
-        self.assertIn("packaging/tmpfiles.d/hardened-blikvm-hid.conf", verifier)
+        # The verifier takes every fragment of packaging/tmpfiles.d.
+        self.assertIn("tmpfiles hardened-blikvm-hid.conf", listed)
+        self.assertIn('tmpfiles_dir=${BLI_KVM_TMPFILES_DIR:-"$project_root/packaging/tmpfiles.d"}', verifier)
 
     def test_default_prototype_bundle_excludes_the_transition_profile(self) -> None:
         default_bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
