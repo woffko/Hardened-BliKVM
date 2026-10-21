@@ -596,6 +596,15 @@ fn apply(
             write_record(staging, record)?;
             Ok(BootAction::Reboot)
         }
+        Err(error) if error.kind() == io::ErrorKind::ResourceBusy => {
+            // Written over a file system that is still mounted, the backup
+            // could be undone by its later writes: the record stays at
+            // Writing, and the next boot restores it with nothing mounted
+            // (code audit of 2026-10-20, AUD-12).
+            record.message = format!("{error}; the next boot restores the backup");
+            write_record(staging, record)?;
+            Ok(BootAction::Reboot)
+        }
         Err(error) => {
             record.message = format!("the write failed ({error}); the backup was restored");
             restore_backup(record, staging, device, tools)
@@ -817,7 +826,11 @@ pub fn canonical_uuid(value: &str) -> bool {
 /// state is restored by number while the image allocates its own users, so a
 /// different allocation would give one service's files to another (security
 /// review of 2026-10-18, N5). Works for `/etc/group` as for `/etc/passwd`.
-pub fn owners_agree(device: &str, image: &str) -> std::result::Result<(), String> {
+pub fn owners_agree(
+    device: &str,
+    image: &str,
+    carried: &std::collections::BTreeSet<u32>,
+) -> std::result::Result<(), String> {
     let entries = |text: &str| -> Vec<(String, String)> {
         text.lines()
             .filter_map(|line| {
@@ -847,7 +860,54 @@ pub fn owners_agree(device: &str, image: &str) -> std::result::Result<(), String
             return Err(format!("{name}'s {id} is {other} in the new image"));
         }
     }
+    // Ids the carried files are owned by must keep an account of the same
+    // kind: a project account the image dropped would leave them to
+    // nobody, and a board account whose id an image's project account takes
+    // would give them to that service (code audit of 2026-10-20, AUD-12).
+    let owns_carried = |id: &str| id.parse::<u32>().is_ok_and(|id| carried.contains(&id));
+    for (name, id) in &device {
+        if name.starts_with("hardened-blikvm")
+            && owns_carried(id)
+            && !image.iter().any(|(other, _)| other == name)
+        {
+            return Err(format!(
+                "{name} owns carried files and is gone from the new image"
+            ));
+        }
+    }
+    for (name, id) in &image {
+        if !name.starts_with("hardened-blikvm") || !owns_carried(id) {
+            continue;
+        }
+        if let Some((other, _)) = device
+            .iter()
+            .find(|(other, other_id)| other_id == id && other != name)
+        {
+            return Err(format!(
+                "{name} takes {id}, which owns {other}'s carried files on the board"
+            ));
+        }
+    }
     Ok(())
+}
+
+/// The user and group ids the carried state archive's files are owned by.
+fn carried_owners(
+    archive: &Path,
+) -> io::Result<(
+    std::collections::BTreeSet<u32>,
+    std::collections::BTreeSet<u32>,
+)> {
+    let mut users = std::collections::BTreeSet::new();
+    let mut groups = std::collections::BTreeSet::new();
+    let mut archive = tar::Archive::new(File::open(archive)?);
+    for entry in archive.entries()? {
+        let entry = entry?;
+        let header = entry.header();
+        users.insert(header.uid()? as u32);
+        groups.insert(header.gid()? as u32);
+    }
+    Ok((users, groups))
 }
 
 pub fn merge_shadow(new_shadow: &str, device_shadow: &str) -> String {
@@ -993,11 +1053,16 @@ impl Tools for SystemTools {
         let result = (|| -> io::Result<()> {
             // Before anything is changed: the carried owners must mean the
             // same accounts. A stage of an older runtime kept no copies.
-            for (kept, image) in [(PASSWD_FILE, "etc/passwd"), (GROUP_FILE, "etc/group")] {
+            let (users, groups) = carried_owners(&staging.join(STATE_FILE))?;
+            for (kept, image, carried) in [
+                (PASSWD_FILE, "etc/passwd", &users),
+                (GROUP_FILE, "etc/group", &groups),
+            ] {
                 if let Ok(device) = fs::read_to_string(staging.join(kept)) {
-                    owners_agree(&device, &fs::read_to_string(mount.join(image))?).map_err(
-                        |conflict| io::Error::other(format!("the accounts differ: {conflict}")),
-                    )?;
+                    owners_agree(&device, &fs::read_to_string(mount.join(image))?, carried)
+                        .map_err(|conflict| {
+                            io::Error::other(format!("the accounts differ: {conflict}"))
+                        })?;
                 }
             }
             let env = mount.join("boot/armbianEnv.txt");
@@ -1030,7 +1095,12 @@ impl Tools for SystemTools {
             Ok(())
         })();
         run("/bin/sync", &[])?;
-        run("/bin/umount", &[mount_str])?;
+        run("/bin/umount", &[mount_str]).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                format!("the new root is still mounted: {error}"),
+            )
+        })?;
         result
     }
 

@@ -28,6 +28,8 @@ struct FakeTools {
     corrupt_write: bool,
     fail_finish: bool,
     fail_archive: bool,
+    /// The new root cannot be unmounted after it was prepared.
+    still_mounted: bool,
     calls: Vec<String>,
     restored: Vec<PathBuf>,
 }
@@ -68,7 +70,14 @@ impl Tools for FakeTools {
             fs::read_to_string(staging.join("shadow"))?.trim(),
             fs::read_to_string(staging.join("fstab"))?.trim()
         ));
-        self.restore_state(device, &staging.join("state.tar"))
+        self.restore_state(device, &staging.join("state.tar"))?;
+        if self.still_mounted {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "the new root is still mounted",
+            ));
+        }
+        Ok(())
     }
 
     fn archive_state(&mut self, root: &Path, paths: &[&str], target: &Path) -> io::Result<()> {
@@ -442,14 +451,63 @@ fn carried_owners_must_name_the_same_accounts_in_the_new_image() {
     use bli_kvm_system_raw_update::owners_agree;
     let board = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\noperator-tool:x:1500:1500::/:/bin/sh\n";
     // The same allocation: the state's owners mean the same accounts.
-    assert_eq!(owners_agree(board, board), Ok(()));
+    let none = std::collections::BTreeSet::new();
+    assert_eq!(owners_agree(board, board, &none), Ok(()));
     // Another board-only account does not matter.
     let image = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
-    assert_eq!(owners_agree(board, image), Ok(()));
+    assert_eq!(owners_agree(board, image, &none), Ok(()));
     // The image gives the server's id to another account: refused.
     let swapped = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-quic:x:997:997::/:/usr/sbin/nologin\nhardened-blikvm-server:x:995:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
-    let refused = owners_agree(board, swapped).unwrap_err();
+    let refused = owners_agree(board, swapped, &none).unwrap_err();
     assert!(refused.contains("hardened-blikvm-server"), "{refused}");
+}
+
+#[test]
+fn carried_owners_must_still_be_accounts_of_the_same_kind() {
+    // A project account the image dropped, or a board account whose id an
+    // image's project account takes, would leave carried files to nobody or
+    // to the wrong service (code audit of 2026-10-20, AUD-12).
+    use bli_kvm_system_raw_update::owners_agree;
+    let carried = std::collections::BTreeSet::from([0, 980, 990]);
+    let board = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-gone:x:980:980::/:/usr/sbin/nologin\nmessagebus:x:990:990::/:/usr/sbin/nologin\n";
+    let dropped = "root:x:0:0::/root:/bin/sh\nmessagebus:x:990:990::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, dropped, &carried).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-gone"), "{refused}");
+    // Dropped, but owning no carried file: nothing is left to nobody.
+    assert_eq!(
+        owners_agree(board, dropped, &std::collections::BTreeSet::from([0, 990])),
+        Ok(())
+    );
+    let reused = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-gone:x:980:980::/:/usr/sbin/nologin\nhardened-blikvm-new:x:990:990::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, reused, &carried).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-new"), "{refused}");
+}
+
+#[test]
+fn a_new_root_that_stays_mounted_is_not_written_over() {
+    // The restore would write the backup over a file system that is still
+    // mounted; the next boot restores it with nothing mounted (code audit
+    // of 2026-10-20, AUD-12).
+    let fixture = fixture(3);
+    let mut tools = FakeTools {
+        still_mounted: true,
+        ..FakeTools::default()
+    };
+    stage_it(&fixture, &mut tools).unwrap();
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Reboot
+    );
+    assert_ne!(fs::read(&fixture.device).unwrap(), vec![0x11; PARTITION]);
+    let record = read_record(&fixture.staging).unwrap().unwrap();
+    assert_eq!(record.phase, Phase::Writing, "{}", record.message);
+    // With nothing mounted the next boot restores the old root.
+    tools.still_mounted = false;
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Reboot
+    );
+    assert_eq!(fs::read(&fixture.device).unwrap(), vec![0x11; PARTITION]);
 }
 
 #[test]

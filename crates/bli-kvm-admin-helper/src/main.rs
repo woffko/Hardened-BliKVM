@@ -133,7 +133,8 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             write_line(stream, &reply)
         }
         AdminRequest::SystemUpdateCancel {} => {
-            let reply = system_update::cancel_update()
+            let reply = system_update::lock()
+                .and_then(|_staging| system_update::cancel_update())
                 .map(|update| AdminReply::SystemUpdate { update })
                 .unwrap_or_else(|error| AdminReply::Refused {
                     reason: error.to_string(),
@@ -196,6 +197,7 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
 /// Uploads, confirmations and rollbacks of the RAW system update, with the
 /// switch already checked.
 fn system_update_request(stream: &mut UnixStream, request: AdminRequest) -> io::Result<AdminReply> {
+    let _staging = system_update::lock()?;
     let update = match request {
         AdminRequest::SystemUpdateUpload { size } => {
             system_update::check_upload(size)?;
