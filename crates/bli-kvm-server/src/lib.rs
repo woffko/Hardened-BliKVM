@@ -795,7 +795,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route("/stream/webrtc", get(webrtc::webrtc_socket))
         .route("/vm/terminal", get(terminal::connect))
-        .route("/vm/terminal/unlock", post(terminal::unlock))
+        .route(
+            "/vm/terminal/unlock",
+            post(terminal::unlock).layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT)),
+        )
         .route("/vm/script", get(scripts::list).delete(scripts::delete))
         .route("/vm/script/upload", post(scripts::upload))
         .route("/vm/script/run", post(scripts::run))
