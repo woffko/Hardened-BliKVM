@@ -214,6 +214,15 @@ impl FrameHub {
         self.key_wanted.store(true, Ordering::Relaxed);
     }
 
+    /// Gives back a request `take_key_request` answered when the encoder
+    /// made no key frame for it (a failed hardware encode returns none): it
+    /// is due again at once, without the cooldown a key frame made starts
+    /// (code audit of 2026-10-20, AUD-17).
+    pub fn give_back_key_request(&self) {
+        *self.last_key_on_request.lock().expect("key request lock") = None;
+        self.want_key();
+    }
+
     /// One client, from its connection to its end.
     fn serve(self: Arc<Self>, connection: UnixStream) {
         let client = Arc::new(Client::default());
@@ -465,6 +474,21 @@ mod tests {
         let path = std::env::temp_dir().join(format!("bk-frames-{name}"));
         std::fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn a_key_request_the_encoder_did_not_answer_is_asked_again_at_once() {
+        // A failed hardware encode returns no frame; the request it took
+        // was lost, and a still screen waited for the next refresh (code
+        // audit of 2026-10-20, AUD-17).
+        let hub = FrameHub::new();
+        hub.want_key();
+        let now = Instant::now();
+        assert!(hub.take_key_request(now));
+        assert!(!hub.key_due(now));
+        hub.give_back_key_request();
+        assert!(hub.key_due(now));
+        assert!(hub.take_key_request(now));
     }
 
     fn wait_until(what: &str, check: impl Fn() -> bool) {

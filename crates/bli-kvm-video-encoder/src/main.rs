@@ -654,9 +654,11 @@ fn encode_loop(
         // client of the frame socket may ask for one. The last key frame's
         // time is its frame's capture time, the clock of the gate that
         // admits the refresh of a still picture.
+        let asked = frames.is_some_and(|hub| hub.take_key_request(Instant::now()));
         let force_key = demand.generation() != generation
             || key_due(last_key, decoded.at, KEY_FRAME_EVERY)
-            || frames.is_some_and(|hub| hub.take_key_request(Instant::now()));
+            || asked;
+        let before = (generation, last_key);
         generation = demand.generation();
         if force_key {
             last_key = Some(decoded.at);
@@ -683,6 +685,16 @@ fn encode_loop(
         // other whenever the two clocks meet.
         if encoded.iter().any(|output| output.key_frame) {
             last_key = Some(decoded.at);
+        } else if force_key {
+            // A forced key frame the encoder did not make (a failed hardware
+            // encode returns nothing): the next frame forces it again, and a
+            // client's request is due again at once, so a still screen does
+            // not wait for the next refresh (code audit of 2026-10-20,
+            // AUD-17).
+            (generation, last_key) = before;
+            if asked && let Some(hub) = frames {
+                hub.give_back_key_request();
+            }
         }
         for packet in packets {
             // Loss is tolerated: the next key frame repairs the view.
