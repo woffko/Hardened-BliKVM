@@ -443,11 +443,32 @@ pub(crate) fn move_into_store(images: &Path, name: &str) -> io::Result<()> {
     fs::rename(at.join(name), images.join(name))
 }
 
+/// Opens a file the download worker writes, as the server reads all of
+/// them: the worker owns their directory, so a link is not followed, a
+/// FIFO cannot hold the open, and only a regular file is taken (code audit
+/// of 2026-10-20, AUD-11).
+fn open_worker_file(path: &Path) -> Option<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+        .ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
+}
+
+/// The contents of a file the worker writes, if it is no larger than
+/// `limit`, with its metadata.
+pub(crate) fn read_worker_file(path: &Path, limit: u64) -> Option<(Vec<u8>, fs::Metadata)> {
+    let file = open_worker_file(path)?;
+    let metadata = file.metadata().ok()?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= limit).then_some((bytes, metadata))
+}
+
 /// The helper's status as it wrote it.
 fn raw_status(path: &Path) -> Option<DownloadStatus> {
-    let file = File::open(path).ok()?;
-    let mut bytes = Vec::new();
-    file.take(MAX_STATUS_BYTES).read_to_end(&mut bytes).ok()?;
+    let (bytes, _) = read_worker_file(path, MAX_STATUS_BYTES)?;
     serde_json::from_slice(&bytes).ok()
 }
 
@@ -459,7 +480,7 @@ pub(crate) fn download_running() -> bool {
 
 /// True while the helper holds the download lock next to the status file.
 fn lock_held(status_path: &Path) -> bool {
-    let Ok(file) = File::open(status_path.with_file_name("download.lock")) else {
+    let Some(file) = open_worker_file(&status_path.with_file_name("download.lock")) else {
         return false;
     };
     // SAFETY: flock on a descriptor this function owns; a shared lock that
@@ -470,17 +491,10 @@ fn lock_held(status_path: &Path) -> bool {
 /// The helper's status, or idle when there is none, when a failure is old
 /// or when an `in_progress` status has no running download behind it.
 pub(crate) fn read_status(path: &Path) -> DownloadStatus {
-    let Ok(file) = File::open(path) else {
+    let Some((bytes, metadata)) = read_worker_file(path, MAX_STATUS_BYTES) else {
         return DownloadStatus::idle();
     };
-    let modified = file
-        .metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok();
-    let mut bytes = Vec::new();
-    if file.take(MAX_STATUS_BYTES).read_to_end(&mut bytes).is_err() {
-        return DownloadStatus::idle();
-    }
+    let modified = metadata.modified().ok();
     let Ok(status) = serde_json::from_slice::<DownloadStatus>(&bytes) else {
         return DownloadStatus::idle();
     };
@@ -492,6 +506,15 @@ pub(crate) fn read_status(path: &Path) -> DownloadStatus {
         "failed" if age < FAILED_STATUS_TTL => status,
         _ => DownloadStatus::idle(),
     }
+}
+
+/// A FIFO at `path`, for the tests of the reads above.
+#[cfg(test)]
+pub(crate) fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path; mkfifo reads it only.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
 }
 
 #[cfg(test)]
@@ -686,5 +709,52 @@ mod tests {
         assert_eq!(read_status(&path), failed);
         fs::write(&path, b"{not json").unwrap();
         assert_eq!(read_status(&path), DownloadStatus::idle());
+    }
+
+    /// Runs `read` on another thread and waits at most a second for it.
+    fn within_a_second<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(read());
+        });
+        receiver.recv_timeout(Duration::from_secs(1)).ok()
+    }
+
+    #[test]
+    fn a_fifo_or_a_link_in_the_workers_directory_reads_as_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        crate::remote_download::mkfifo(&path);
+        let lock = dir.path().join("download.lock");
+        crate::remote_download::mkfifo(&lock);
+        let fifo = path.clone();
+        assert_eq!(
+            within_a_second(move || read_status(&fifo)),
+            Some(DownloadStatus::idle()),
+            "a FIFO held the status read"
+        );
+        let fifo = path.clone();
+        assert_eq!(within_a_second(move || raw_status(&fifo)), Some(None));
+        let fifo = path.clone();
+        assert_eq!(within_a_second(move || lock_held(&fifo)), Some(false));
+
+        // A link to a status elsewhere is not followed.
+        let elsewhere = dir.path().join("elsewhere.json");
+        let running = DownloadStatus {
+            status: "in_progress".into(),
+            file: "https://mirror.example/a.iso".into(),
+            percentage: "12.00%".into(),
+        };
+        fs::write(&elsewhere, serde_json::to_vec(&running).unwrap()).unwrap();
+        let linked = dir.path().join("linked.json");
+        std::os::unix::fs::symlink(&elsewhere, &linked).unwrap();
+        assert_eq!(raw_status(&linked), None);
+
+        // Nor is a status beyond its size read.
+        let large = dir.path().join("large.json");
+        let mut bytes = serde_json::to_vec(&running).unwrap();
+        bytes.resize(MAX_STATUS_BYTES as usize + 1, b' ');
+        fs::write(&large, bytes).unwrap();
+        assert_eq!(raw_status(&large), None);
     }
 }

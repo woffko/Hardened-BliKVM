@@ -362,7 +362,11 @@ pub(crate) fn rfc3339_now() -> String {
 
 /// The download helper's install progress while its lock is held.
 fn install_progress() -> Option<PicoclawInstallStatus> {
-    let bytes = std::fs::read(PICOCLAW_INSTALL_STATUS).ok()?;
+    install_progress_at(Path::new(PICOCLAW_INSTALL_STATUS))
+}
+
+fn install_progress_at(path: &Path) -> Option<PicoclawInstallStatus> {
+    let (bytes, _) = crate::remote_download::read_worker_file(path, 4096)?;
     let status: PicoclawInstallStatus = serde_json::from_slice(&bytes).ok()?;
     let running = matches!(
         status.stage.as_str(),
@@ -848,6 +852,43 @@ pub(crate) async fn switched_off(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_install_status_is_read_only_as_a_small_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = serde_json::to_vec(&PicoclawInstallStatus {
+            stage: "installed".into(),
+            progress: 100,
+            error: String::new(),
+        })
+        .unwrap();
+        let path = dir.path().join("picoclaw-install.json");
+        std::fs::write(&path, &installed).unwrap();
+        assert!(install_progress_at(&path).is_some());
+        // A link to a status elsewhere is not followed.
+        let linked = dir.path().join("linked.json");
+        std::os::unix::fs::symlink(&path, &linked).unwrap();
+        assert!(install_progress_at(&linked).is_none());
+        // Nor is one larger than a status.
+        let mut large = installed.clone();
+        large.resize(8192, b' ');
+        std::fs::write(&path, large).unwrap();
+        assert!(install_progress_at(&path).is_none());
+        // A FIFO does not hold the reader.
+        let fifo = dir.path().join("fifo.json");
+        crate::remote_download::mkfifo(&fifo);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(install_progress_at(&fifo).is_none());
+        });
+        assert_eq!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .ok(),
+            Some(true),
+            "a FIFO held the install status read"
+        );
+    }
 
     #[test]
     fn the_lock_serves_one_session_and_expires() {
