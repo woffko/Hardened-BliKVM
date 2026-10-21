@@ -293,9 +293,9 @@ impl QuicTransport {
         }
     }
 
-    /// The sessions whose web session has ended, taken out of the table.
-    /// Whatever ended the web session has released its lease.
-    fn take_ended(&self) -> Vec<String> {
+    /// The sessions whose web session has ended, taken out of the table,
+    /// each with the lease it held.
+    fn take_ended(&self) -> Vec<(String, Option<HeldLease>)> {
         let mut inner = self.inner.lock().unwrap();
         let ended: Vec<String> = inner
             .sessions
@@ -303,11 +303,16 @@ impl QuicTransport {
             .filter(|(_, open)| !open.web.is_active())
             .map(|(reference, _)| reference.clone())
             .collect();
-        for reference in &ended {
-            inner.sessions.remove(reference);
-        }
+        let taken = ended
+            .into_iter()
+            .filter_map(|reference| {
+                let open = inner.sessions.remove(&reference)?;
+                let held = open.lease.map(|lease| (open.web.token, lease));
+                Some((reference, held))
+            })
+            .collect();
         self.reshare(&inner);
-        ended
+        taken
     }
 
     /// A gateway said hello on a new connection; an earlier one is replaced
@@ -772,7 +777,12 @@ async fn serve(state: AppState, transport: Arc<QuicTransport>, stream: UnixStrea
         let mut tick = tokio::time::interval(SWEEP);
         loop {
             tick.tick().await;
-            for session in transport.take_ended() {
+            for (session, held) in transport.take_ended() {
+                // Nothing else gives its lease back: the gateway's word on
+                // the session finds it gone.
+                if let Some(held) = held {
+                    release(held);
+                }
                 transport.send(
                     generation,
                     &ServerToGateway::End {
@@ -1086,8 +1096,29 @@ mod tests {
         let reference = transport.redeem(&open.token).unwrap();
         store.revoke(&session.token).await;
         assert_eq!(transport.redeem(&granted.token), Err(RedeemRefusal::Token));
-        assert_eq!(transport.take_ended(), vec![reference]);
+        assert_eq!(transport.take_ended(), vec![(reference, None)]);
         assert!(transport.take_ended().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_session_that_ended_hands_back_its_lease() {
+        // The sweep that ends it must release the lease; the gateway's
+        // later word finds nothing (code audit of 2026-10-20, AUD-16.4).
+        let store = SessionStore::new();
+        let session = store.issue("operator", 900).await;
+        let (transport, _, _queued) = transport_with_gateway().await;
+        let open = transport.grant(&session, page_time()).ok().unwrap();
+        let reference = transport.redeem(&open.token).unwrap();
+        assert!(transport.note_lease(&reference, Some("lease-1".into())));
+        store.revoke(&session.token).await;
+        assert_eq!(
+            transport.take_ended(),
+            vec![(
+                reference.clone(),
+                Some((session.token.clone(), "lease-1".into()))
+            )]
+        );
+        assert_eq!(transport.closed(&reference), None);
     }
 
     #[tokio::test]
