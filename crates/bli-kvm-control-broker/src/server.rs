@@ -1337,6 +1337,13 @@ async fn respond(
             } else {
                 None
             };
+            // Hostname, SSH, QUIC and video settings wait on systemd: the
+            // same treatment.
+            let system_settings = if crate::v2::SystemSettings::serves(&request.request) {
+                v2.lock().await.system_settings_shared()
+            } else {
+                None
+            };
             // A call to the target agent waits for its answer up to seconds:
             // it runs with the channel's handle, not the shared state's lock.
             let agent_response = match &request.request {
@@ -1410,6 +1417,22 @@ async fn respond(
                 })
                 .await
                 .map_err(|_| io::Error::other("wifi worker failed"))?
+            } else if let Some(settings) = system_settings {
+                let payload = request.request.clone();
+                let response = tokio::task::spawn_blocking(move || {
+                    settings
+                        .lock()
+                        .map(|mut state| state.dispatch(&payload))
+                        .unwrap_or(ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                        })
+                })
+                .await
+                .map_err(|_| io::Error::other("settings worker failed"))?;
+                v2.lock()
+                    .await
+                    .note_system_setting(&request.request, &response);
+                response
             } else if let Some(firewall) = firewall_state {
                 let payload = request.request.clone();
                 tokio::task::spawn_blocking(move || {
@@ -1714,6 +1737,79 @@ mod tests {
             .unwrap()
             .unwrap();
         response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_system_setting_leaves_hid_leases_answered() {
+        // hostnamed taking two seconds to answer.
+        struct Slow;
+        impl crate::tailscale::TailscaleRunner for Slow {
+            fn run(&mut self, _program: &str, _args: &[&str]) -> Result<String, String> {
+                std::thread::sleep(Duration::from_secs(2));
+                Ok(String::new())
+            }
+
+            fn path_exists(&mut self, _path: &str) -> bool {
+                true
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let hosts = directory.path().join("hosts");
+        let hostname = directory.path().join("hostname");
+        std::fs::write(&hosts, "127.0.1.1 kvm\n").unwrap();
+        std::fs::write(&hostname, "kvm\n").unwrap();
+        let mut state = ControlV2State::serving();
+        state.with_hostname(crate::hostname_settings::HostnameSettings::with_paths(
+            Box::new(Slow),
+            &hosts,
+            &hostname,
+        ));
+        let v2 = Arc::new(TokioMutex::new(state));
+        let envelope = |id: u64, request: PlatformControlRequestV2| {
+            encode_request_v2(&ControlRequestEnvelopeV2 {
+                schema_version: CONTROL_SCHEMA_VERSION_V2,
+                request_id: id,
+                operation_id: format!("{id:032x}"),
+                request,
+            })
+            .unwrap()
+        };
+        let rename = envelope(
+            1,
+            PlatformControlRequestV2::Hostname {
+                name: "desk".into(),
+            },
+        );
+        let slow = tokio::spawn({
+            let v2 = Arc::clone(&v2);
+            async move { respond(&rename, &v2).await }
+        });
+        sleep(Duration::from_millis(100)).await;
+        let lease = envelope(
+            2,
+            PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Acquire {
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    ttl_seconds: 30,
+                },
+            },
+        );
+        let started = std::time::Instant::now();
+        let answer = timeout(TEST_START_WAIT * 2, respond(&lease, &v2))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "the lease waited {:?} behind the hostname",
+            started.elapsed()
+        );
+        assert!(matches!(answer.response, ControlResponse::Rejected { .. }));
+        assert_eq!(
+            slow.await.unwrap().unwrap().response,
+            ControlResponse::Applied
+        );
     }
 
     #[tokio::test]

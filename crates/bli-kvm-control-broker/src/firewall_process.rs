@@ -1,4 +1,6 @@
-//! Bounded capture for firewall helper processes; no shell or reader threads.
+//! Bounded capture for the owner's helper processes (the firewall's, and
+//! systemd's and the other system commands the owner runs); no shell or
+//! reader threads. A helper past its deadline is killed.
 use std::{
     io::{self, Read},
     os::fd::AsRawFd,
@@ -36,7 +38,7 @@ fn read_once(pipe: &mut impl Read, output: &mut Vec<u8>, limit: usize) -> Result
         Ok(0) => Ok(true),
         Ok(count) => {
             if count > limit.saturating_sub(output.len()) {
-                return Err("firewall helper output exceeds bound".into());
+                return Err("helper output exceeds bound".into());
             }
             output.extend_from_slice(&buffer[..count]);
             Ok(false)
@@ -68,7 +70,7 @@ pub(crate) fn run(mut command: Command, timeout: Duration, limit: usize) -> Resu
     let (mut out_eof, mut err_eof) = (false, false);
     loop {
         if start.elapsed() >= timeout {
-            return Err("firewall helper timed out".into());
+            return Err("helper timed out".into());
         }
         if !out_eof {
             out_eof = read_once(&mut stdout, &mut out, limit)?;
@@ -80,7 +82,7 @@ pub(crate) fn run(mut command: Command, timeout: Duration, limit: usize) -> Resu
             if out_eof && err_eof {
                 if !status.success() {
                     return Err(if err.is_empty() {
-                        "firewall helper failed".into()
+                        "helper failed".into()
                     } else {
                         String::from_utf8_lossy(&err).trim().to_string()
                     });

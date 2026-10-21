@@ -12,10 +12,7 @@ use std::time::Instant;
 use std::time::Duration;
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
-use bli_kvm_core::{
-    AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2,
-    VideoSettingsChange,
-};
+use bli_kvm_core::{AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2};
 
 use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 
@@ -44,6 +41,80 @@ fn share_atx(engine: AtxTransitionEngine) -> SharedAtx {
     std::sync::Arc::new(tokio::sync::Mutex::new(engine))
 }
 
+/// The settings whose commands wait on systemd for seconds (a unit's
+/// restart, hostnamed): the server runs them on a blocking worker behind
+/// this lock of their own, so the shared state's lock, which HID leases and
+/// their expiry wait on, is never held for them (code audit of 2026-10-20,
+/// AUD-07).
+#[derive(Default)]
+pub struct SystemSettings {
+    video_settings: Option<crate::video_settings::VideoSettingsState>,
+    hostname: Option<crate::hostname_settings::HostnameSettings>,
+    ssh: Option<crate::ssh_settings::SshSettings>,
+    quic: Option<crate::quic_settings::QuicSettings>,
+}
+
+pub type SharedSystemSettings = std::sync::Arc<std::sync::Mutex<SystemSettings>>;
+
+impl SystemSettings {
+    /// Whether `request` is one of these settings'.
+    pub fn serves(request: &PlatformControlRequestV2) -> bool {
+        matches!(
+            request,
+            PlatformControlRequestV2::VideoSettings { .. }
+                | PlatformControlRequestV2::VideoSettingsState {}
+                | PlatformControlRequestV2::Hostname { .. }
+                | PlatformControlRequestV2::Ssh { .. }
+                | PlatformControlRequestV2::SshState {}
+                | PlatformControlRequestV2::Quic { .. }
+                | PlatformControlRequestV2::QuicState {}
+        )
+    }
+
+    pub fn dispatch(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
+        let disabled = || reject(ControlRejectionCode::CapabilityDisabled);
+        match request {
+            PlatformControlRequestV2::VideoSettings { change } => self
+                .video_settings
+                .as_mut()
+                .map_or_else(disabled, |state| state.handle(change)),
+            PlatformControlRequestV2::VideoSettingsState {} => {
+                let Some(state) = self.video_settings.as_ref() else {
+                    return disabled();
+                };
+                match state.readback() {
+                    Ok(current) => ControlResponse::VideoState {
+                        fps: current.fps,
+                        quality: current.quality,
+                        resolution: Some(current.resolution),
+                    },
+                    Err(code) => reject(code),
+                }
+            }
+            PlatformControlRequestV2::Hostname { name } => self
+                .hostname
+                .as_mut()
+                .map_or_else(disabled, |hostname| hostname.set(name)),
+            PlatformControlRequestV2::Ssh { enabled } => self
+                .ssh
+                .as_mut()
+                .map_or_else(disabled, |ssh| ssh.handle(*enabled)),
+            PlatformControlRequestV2::SshState {} => {
+                self.ssh.as_mut().map_or_else(disabled, |ssh| ssh.state())
+            }
+            PlatformControlRequestV2::Quic { enabled } => self
+                .quic
+                .as_mut()
+                .map_or_else(disabled, |quic| quic.handle(*enabled)),
+            PlatformControlRequestV2::QuicState {} => self
+                .quic
+                .as_mut()
+                .map_or_else(disabled, |quic| quic.state()),
+            _ => disabled(),
+        }
+    }
+}
+
 pub struct ControlV2State {
     enabled: bool,
     attestations: TargetAttestationRegistry,
@@ -61,14 +132,12 @@ pub struct ControlV2State {
     network_write: Option<
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
-    video_settings: Option<crate::video_settings::VideoSettingsState>,
+    system_settings: SharedSystemSettings,
     mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
     display_sleep: Option<crate::device_settings::DisplaySleepState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
-    ssh: Option<crate::ssh_settings::SshSettings>,
-    quic: Option<crate::quic_settings::QuicSettings>,
     /// The target agent's channel on the absolute mouse's device, and the
     /// operator's switch for it.
     target_agent: Option<(
@@ -78,7 +147,6 @@ pub struct ControlV2State {
     /// The record of the switches kept in system files, across a RAW update.
     system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
-    hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::SharedWifi>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::SharedFirewall>,
@@ -110,18 +178,15 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
-            video_settings: None,
+            system_settings: SharedSystemSettings::default(),
             mdns: None,
             mouse_jiggler: None,
             display_sleep: None,
             hid_only: None,
             admin_features: None,
-            ssh: None,
-            quic: None,
             target_agent: None,
             system_switches: None,
             ipv4: None,
-            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -154,7 +219,7 @@ impl ControlV2State {
 
     /// Attach the reviewed video-settings surface to the board state.
     pub fn with_video_settings(&mut self, state: crate::video_settings::VideoSettingsState) {
-        self.video_settings = Some(state);
+        self.system_settings_mut().video_settings = Some(state);
     }
 
     /// Attach the reviewed device toggles to the board state.
@@ -221,7 +286,7 @@ impl ControlV2State {
 
     /// Attach the administration feature switches to the board state.
     pub fn with_hostname(&mut self, hostname: crate::hostname_settings::HostnameSettings) {
-        self.hostname = Some(hostname);
+        self.system_settings_mut().hostname = Some(hostname);
     }
 
     pub fn with_ipv4(&mut self, ipv4: crate::ipv4_settings::Ipv4Settings) {
@@ -237,11 +302,46 @@ impl ControlV2State {
     }
 
     pub fn with_ssh(&mut self, ssh: crate::ssh_settings::SshSettings) {
-        self.ssh = Some(ssh);
+        self.system_settings_mut().ssh = Some(ssh);
     }
 
     pub fn with_quic(&mut self, quic: crate::quic_settings::QuicSettings) {
-        self.quic = Some(quic);
+        self.system_settings_mut().quic = Some(quic);
+    }
+
+    fn system_settings_mut(&mut self) -> std::sync::MutexGuard<'_, SystemSettings> {
+        self.system_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The settings that wait on systemd, for the server's blocking worker,
+    /// while enabled.
+    pub fn system_settings_shared(&self) -> Option<SharedSystemSettings> {
+        if !self.enabled {
+            return None;
+        }
+        Some(std::sync::Arc::clone(&self.system_settings))
+    }
+
+    /// Records a switch kept in system files once its change applied.
+    pub fn note_system_setting(
+        &mut self,
+        request: &PlatformControlRequestV2,
+        response: &ControlResponse,
+    ) {
+        if !matches!(response, ControlResponse::Applied) {
+            return;
+        }
+        match request {
+            PlatformControlRequestV2::Ssh { enabled } => {
+                self.note_switch(crate::system_switches::Switch::Ssh, *enabled);
+            }
+            PlatformControlRequestV2::Quic { enabled } => {
+                self.note_switch(crate::system_switches::Switch::Quic, *enabled);
+            }
+            _ => {}
+        }
     }
 
     /// Attach the target agent's channel and switch to the board state.
@@ -495,18 +595,15 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
-            video_settings: None,
+            system_settings: SharedSystemSettings::default(),
             mdns: None,
             mouse_jiggler: None,
             display_sleep: None,
             hid_only: None,
             admin_features: None,
-            ssh: None,
-            quic: None,
             target_agent: None,
             system_switches: None,
             ipv4: None,
-            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -568,13 +665,6 @@ impl ControlV2State {
     #[cfg(not(feature = "system-action-profile"))]
     fn handle_accept_post_boot(&mut self, _guards_ready: bool) -> ControlResponse {
         reject(ControlRejectionCode::CapabilityDisabled)
-    }
-
-    fn handle_video_settings(&mut self, change: &VideoSettingsChange) -> ControlResponse {
-        let Some(state) = self.video_settings.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        state.handle(change)
     }
 
     fn handle_tailscale_status(&mut self) -> ControlResponse {
@@ -830,21 +920,6 @@ impl ControlV2State {
         }
     }
 
-    fn handle_video_settings_state(&self) -> ControlResponse {
-        let Some(state) = self.video_settings.as_ref() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        let current = match state.readback() {
-            Ok(current) => current,
-            Err(code) => return reject(code),
-        };
-        ControlResponse::VideoState {
-            fps: current.fps,
-            quality: current.quality,
-            resolution: Some(current.resolution),
-        }
-    }
-
     fn handle_board_status(&self) -> ControlResponse {
         // The operator configuration is the capability: an unattached client
         // is resolved from the environment on first use, so the proxy works on
@@ -897,6 +972,14 @@ impl ControlV2State {
             return None;
         }
         self.firewall_modes.clone()
+    }
+
+    /// No surface attached, but serving requests.
+    #[cfg(test)]
+    pub(crate) fn serving() -> Self {
+        let mut state = Self::disabled();
+        state.enabled = true;
+        state
     }
 
     pub async fn handle(
@@ -955,10 +1038,17 @@ impl ControlV2State {
             PlatformControlRequestV2::NetworkWrite { request } => {
                 self.handle_network_write(request)
             }
-            PlatformControlRequestV2::VideoSettings { change } => {
-                self.handle_video_settings(change)
+            PlatformControlRequestV2::VideoSettings { .. }
+            | PlatformControlRequestV2::VideoSettingsState {}
+            | PlatformControlRequestV2::Hostname { .. }
+            | PlatformControlRequestV2::Ssh { .. }
+            | PlatformControlRequestV2::SshState {}
+            | PlatformControlRequestV2::Quic { .. }
+            | PlatformControlRequestV2::QuicState {} => {
+                let response = self.system_settings_mut().dispatch(request);
+                self.note_system_setting(request, &response);
+                response
             }
-            PlatformControlRequestV2::VideoSettingsState {} => self.handle_video_settings_state(),
             PlatformControlRequestV2::Mdns { enabled } => self.handle_mdns(*enabled),
             PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
@@ -975,20 +1065,6 @@ impl ControlV2State {
                     None => reject(ControlRejectionCode::CapabilityDisabled),
                 }
             }
-            PlatformControlRequestV2::Ssh { enabled } => match self.ssh.as_mut() {
-                Some(ssh) => {
-                    let response = ssh.handle(*enabled);
-                    if matches!(response, ControlResponse::Applied) {
-                        self.note_switch(crate::system_switches::Switch::Ssh, *enabled);
-                    }
-                    response
-                }
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Hostname { name } => match self.hostname.as_mut() {
-                Some(hostname) => hostname.set(name),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
             PlatformControlRequestV2::NetworkInfo {}
             | PlatformControlRequestV2::Ipv4Set { .. }
             | PlatformControlRequestV2::Ipv6Set { .. }
@@ -997,24 +1073,6 @@ impl ControlV2State {
                     Ok(mut ipv4) => ipv4.dispatch(request),
                     Err(_) => reject(ControlRejectionCode::BackendRejected),
                 },
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::SshState {} => match self.ssh.as_mut() {
-                Some(ssh) => ssh.state(),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Quic { enabled } => match self.quic.as_mut() {
-                Some(quic) => {
-                    let response = quic.handle(*enabled);
-                    if matches!(response, ControlResponse::Applied) {
-                        self.note_switch(crate::system_switches::Switch::Quic, *enabled);
-                    }
-                    response
-                }
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::QuicState {} => match self.quic.as_mut() {
-                Some(quic) => quic.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::TargetAgent { enabled } => {

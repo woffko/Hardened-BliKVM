@@ -20,20 +20,17 @@ pub trait VideoRestartRunner: Send {
     fn restart(&mut self, unit: &str) -> Result<(), String>;
 }
 
-/// Runs `systemctl restart <unit>`, bounded by the unit's own start timeout.
+/// Runs `systemctl restart <unit>`, killed past the owner's deadline for
+/// system commands.
 pub struct ExecVideoRestartRunner;
 
 impl VideoRestartRunner for ExecVideoRestartRunner {
     fn restart(&mut self, unit: &str) -> Result<(), String> {
-        let status = std::process::Command::new("/usr/bin/systemctl")
-            .args(["restart", unit])
-            .status()
-            .map_err(|error| error.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("systemctl restart {unit} exited with {status}"))
-        }
+        let mut command = std::process::Command::new("/usr/bin/systemctl");
+        command.args(["restart", unit]);
+        crate::firewall_process::run(command, crate::tailscale::SYSTEM_COMMAND_TIMEOUT, 64 * 1024)
+            .map(|_| ())
+            .map_err(|reason| format!("systemctl restart {unit} failed: {reason}"))
     }
 }
 
