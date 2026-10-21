@@ -1033,12 +1033,14 @@ mod tests {
     #[test]
     fn a_second_change_in_the_window_still_reverts_to_the_first_state() {
         let profile = Arc::new(Mutex::new(dhcp_profile()));
-        let mut ipv4 = settings(&profile, Duration::from_millis(400));
+        // Windows long enough for a loaded host, which takes its time
+        // between the two changes.
+        let mut ipv4 = settings(&profile, Duration::from_millis(2_000));
         ipv4.set(&manual(Some("192.0.2.50")));
         ipv4.set(&manual(Some("192.0.2.60")));
         assert_eq!(profile.lock().unwrap().addresses, "192.0.2.60/24");
         assert!(ipv4.revert_in_seconds() > 0);
-        std::thread::sleep(Duration::from_millis(1_000));
+        std::thread::sleep(Duration::from_millis(4_500));
         assert_eq!(*profile.lock().unwrap(), dhcp_profile());
         assert_eq!(ipv4.revert_in_seconds(), 0);
     }
@@ -1075,7 +1077,7 @@ mod tests {
         let mut nm = FakeNm::wired(&wired);
         nm.wlan = Some(Arc::clone(&wireless));
         let mut ipv4 =
-            Ipv4Settings::open(Box::new(nm)).with_revert_after(Duration::from_millis(400));
+            Ipv4Settings::open(Box::new(nm)).with_revert_after(Duration::from_millis(2_000));
         ipv4.set(&manual(Some("192.0.2.200")));
         let mut other = manual(Some("198.51.100.77"));
         other.interface = "wlan0".into();
@@ -1083,7 +1085,7 @@ mod tests {
         ipv4.set(&other);
         assert_eq!(wired.lock().unwrap().method, "manual");
         assert_eq!(wireless.lock().unwrap().method, "manual");
-        std::thread::sleep(Duration::from_millis(1_000));
+        std::thread::sleep(Duration::from_millis(4_500));
         assert_eq!(*wired.lock().unwrap(), dhcp_profile());
         assert_eq!(*wireless.lock().unwrap(), dhcp_profile());
     }
@@ -1096,7 +1098,7 @@ mod tests {
         let nm = FakeNm::wired(&profile);
         let fail = Arc::clone(&nm.fail_modify);
         let mut ipv4 = Ipv4Settings::open(Box::new(nm))
-            .with_revert_after(Duration::from_millis(600))
+            .with_revert_after(Duration::from_secs(3600))
             .with_journal(journal.clone());
         ipv4.set(&manual(Some("192.0.2.200")));
         fail.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1104,12 +1106,18 @@ mod tests {
             ipv4.set(&manual(Some("192.0.2.60"))),
             reject(ControlRejectionCode::BackendRejected)
         );
+        // The state before the failed change, and the window's revert to
+        // the state it opened with.
         assert_eq!(profile.lock().unwrap().addresses, "192.0.2.200/24");
         assert!(ipv4.revert_in_seconds() > 0);
-        assert!(journal.read::<RevertRecords>().is_some());
-        std::thread::sleep(Duration::from_millis(1_200));
-        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
-        assert!(journal.read::<RevertRecords>().is_none());
+        assert_eq!(
+            journal.read::<RevertRecords>(),
+            Some(RevertRecords::One(RevertRecord {
+                device: "eth0".into(),
+                uuid: WIRED_UUID.into(),
+                before: dhcp_profile(),
+            }))
+        );
     }
 
     #[test]

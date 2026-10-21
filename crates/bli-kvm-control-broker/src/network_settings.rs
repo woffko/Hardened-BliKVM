@@ -1511,9 +1511,10 @@ mod tests {
         // WiFi first, then Ethernet again before a confirmation: the state
         // the window started from is back, and nothing reverts to WiFi.
         let (state, fake) = fixture(&answers);
+        // A window long enough for a loaded host between the two changes.
         let mut state = state
             .with_journal(journal.clone())
-            .with_revert_after(Duration::from_millis(200));
+            .with_revert_after(Duration::from_millis(2_000));
         assert_eq!(state.prefer(true), ControlResponse::Applied);
         fake.lock()
             .unwrap()
@@ -1524,7 +1525,7 @@ mod tests {
             .unwrap()
             .answers
             .insert(metric.clone(), Ok("-1\n".into()));
-        std::thread::sleep(Duration::from_millis(600));
+        std::thread::sleep(Duration::from_millis(4_500));
         assert_eq!(
             fake.lock().unwrap().calls.last().cloned(),
             Some("device reapply eth0".into())
@@ -1544,7 +1545,7 @@ mod tests {
         let (state, fake) = fixture(&answers);
         let mut state = state
             .with_journal(journal.clone())
-            .with_revert_after(Duration::from_millis(400));
+            .with_revert_after(Duration::from_secs(3600));
         assert_eq!(state.prefer(true), ControlResponse::Applied);
         {
             let mut fake = fake.lock().unwrap();
