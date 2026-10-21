@@ -189,6 +189,30 @@ impl GadgetHidExecutor {
         Ok(())
     }
 
+    /// Replays the releases a ledger kept. This executor started with no
+    /// pointer interface selected, and the absolute one is its default, while
+    /// the button may have been pressed through the relative one: a button
+    /// release clears both (code audit of 2026-10-20, AUD-20).
+    async fn replay_releases(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
+        self.execute_batch(events).await?;
+        if !events
+            .iter()
+            .any(|event| matches!(event, KvmdHidEvent::MouseButton { pressed: false, .. }))
+        {
+            return Ok(());
+        }
+        let mut absolute = self
+            .absolute
+            .lock()
+            .map_err(|_| gadget_error("gadget HID absolute pointer state is unavailable"))?;
+        let mut relative = self
+            .relative
+            .lock()
+            .map_err(|_| gadget_error("gadget HID relative pointer state is unavailable"))?;
+        self.write_absolute(&absolute.release_all())?;
+        self.write_relative(&relative.release_all())
+    }
+
     fn write_keyboard(&self, report: &[u8; 8]) -> Result<(), HidExecutorError> {
         bli_kvm_usb_gadget::write_report(
             &self.config.hidg_dir,
@@ -278,6 +302,15 @@ pub enum HidExecutor {
 }
 
 impl HidExecutor {
+    async fn replay_releases(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
+        match self {
+            #[cfg(feature = "gadget-hid-profile")]
+            HidExecutor::Gadget(executor) => executor.replay_releases(events).await,
+            #[allow(unreachable_patterns)]
+            _ => self.execute_batch(events).await,
+        }
+    }
+
     async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
         match self {
             #[cfg(feature = "kvmd-hid-profile")]
@@ -463,7 +496,7 @@ impl HidTransitionEngine {
             return Ok(());
         }
         self.executor
-            .execute_batch(&self.pending_releases)
+            .replay_releases(&self.pending_releases)
             .await
             .map_err(HidTransitionError::Backend)?;
         self.ledger.store(&[])?;
@@ -854,6 +887,44 @@ mod tests {
         let bytes = std::fs::read(directory.join(name)).unwrap();
         assert!(bytes.len() >= length, "{name} has no report yet");
         bytes[bytes.len() - length..].to_vec()
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn a_replayed_button_release_clears_both_pointer_interfaces() {
+        // A restart finds a button release in the ledger; the relative
+        // mouse may have been the one that pressed it (code audit of
+        // 2026-10-20, AUD-20).
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["hidg0", "hidg1", "hidg2"] {
+            std::fs::write(directory.path().join(name), b"").unwrap();
+        }
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        ledger
+            .store(&[KvmdHidEvent::MouseButton {
+                button: bli_kvm_hid_adapter::KvmdMouseButton::Left,
+                pressed: false,
+            }])
+            .unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().to_path_buf(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
+            })),
+            ledger,
+        )
+        .unwrap();
+        assert_eq!(engine.pending_release_count(), 1);
+        engine
+            .acquire(identity(1), Instant::now(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(engine.pending_release_count(), 0);
+        assert_eq!(last_report(directory.path(), "hidg2", 5), vec![0; 5]);
+        assert_eq!(last_report(directory.path(), "hidg1", 7)[0], 0);
     }
 
     #[cfg(feature = "gadget-hid-profile")]
