@@ -2274,6 +2274,39 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertGreater(seconds, max(budgets))
         self.assertLessEqual(seconds, max(budgets) + 600)
 
+    def test_a_failed_native_boot_is_tried_again(self) -> None:
+        # At gate Y of the code audit of 2026-10-20 the board's first boot on
+        # the new system failed its composition attempt early in the boot and
+        # nothing tried again: the application stayed down until started by
+        # hand, when the same attempt succeeded.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-update-native-boot.service").read_text()
+        unit_section, service_section = unit.split("[Service]\n", 1)
+
+        def value(section: str, key: str) -> str:
+            values = [
+                line.removeprefix(f"{key}=")
+                for line in section.splitlines()
+                if line.startswith(f"{key}=")
+            ]
+            self.assertEqual(len(values), 1, (key, values))
+            return values[0]
+
+        def seconds(text: str) -> int:
+            self.assertRegex(text, r"^\d+s?$")
+            return int(text.removesuffix("s"))
+
+        self.assertEqual(value(service_section, "Restart"), "on-failure")
+        delay = seconds(value(service_section, "RestartSec"))
+        attempt = seconds(value(service_section, "TimeoutStartSec"))
+        burst = int(value(unit_section, "StartLimitBurst"))
+        interval = seconds(value(unit_section, "StartLimitIntervalSec"))
+        self.assertGreaterEqual(delay, 5)
+        self.assertLessEqual(delay, 60)
+        self.assertIn(burst, range(2, 6))
+        # Every attempt fits in the window, so the limit, not the window,
+        # ends a cause that does not pass.
+        self.assertGreaterEqual(interval, burst * (attempt + delay))
+
     def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
         # The worker fetches remote data; it ran as the web server, could
         # write the image store and the catalog and pass the root admin

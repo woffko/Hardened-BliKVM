@@ -328,7 +328,6 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
     def test_dev40_adds_picoclaws_installer_to_dev39(self) -> None:
         # The fixes of the code audit of 2026-10-20: PicoClaw's installer has a
         # unit, a socket and an account of its own (AUD-05.2).
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev40")
         dev40 = dict(package.file_map("0.1.0~dev40"))
         added = {
             "share/systemd/hardened-blikvm-picoclaw-install.socket",
@@ -339,6 +338,12 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         for source in added:
             del dev40[source]
         self.assertEqual(dev40, package.file_map("0.1.0~dev39"))
+
+    def test_dev41_carries_the_files_of_dev40(self) -> None:
+        # dev41 changes only the native boot unit, which tries a failed
+        # attempt again (code audit of 2026-10-20, gate Y).
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev41")
+        self.assertEqual(package.file_map("0.1.0~dev41"), package.file_map("0.1.0~dev40"))
 
     def test_dev37_to_dev39_carry_the_files_of_dev36(self) -> None:
         # The QUIC gateway of the transport's protocol 2, then the fixes of the
@@ -359,7 +364,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev40")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev41")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -412,7 +417,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev40")
+        self.assertEqual(current["version"], "0.1.0~dev41")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertIs(previous["systemUpdateIncluded"], False)
         self.assertIs(previous["kernelModuleIncluded"], False)

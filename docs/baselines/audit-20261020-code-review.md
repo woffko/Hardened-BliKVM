@@ -122,7 +122,8 @@ back; two IPv4 changes inside one revert window; axios 1.18.1 with a wrapped
 The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
 (each commit names the test that failed on the code before it and passes
 after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
-`0.1.0~dev40`, the encoder and the RAW bundle of sequence 8 carry phase Y.
+`0.1.0~dev41`, the encoder and the RAW bundle of sequence 8 carry phase Y
+(dev40 was staged at gate Y; dev41 adds GY1, found there).
 "Board" is filled in at the gates.
 
 | Item | Finding | Commit | Test that failed before | State |
@@ -157,6 +158,7 @@ after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
 | Y11 | AUD-17.3 | `90823ae` | a key request the encoder did not answer is asked again at once | fixed |
 | Y12 | AUD-18.1, 18.3 | `8618141` | a certificate set while the link comes up reaches the server; a new picture's key frame is not left out for the old one's | fixed |
 | Y13 | AUD-21 | `21e3c97` | the unit check takes every tmpfiles fragment; one that does not parse fails it | fixed |
+| GY1 | gate Y | (below) | a failed native boot is tried again (after 15 s, at most four attempts in ten minutes) | fixed; dev41 |
 | Optional | AUD-16.1c, 16.3, 17.1, 17.2, 18.4 to 18.6, 19.1b, 20 (mode), 09.1b | — | — | not done: not chosen |
 
 Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the_supplied_runner`
