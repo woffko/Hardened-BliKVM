@@ -5,7 +5,6 @@
 //! field, keeps at most a fixed number of entries, writes atomically and never
 //! executes anything.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use axum::{Json, extract::State};
@@ -69,15 +68,36 @@ impl ShortcutStore {
                 return Err(ShortcutError::Unavailable);
             }
         }
-        let store = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Store>(&text).ok())
-            .unwrap_or_default();
+        // A file that cannot be read is not taken for an empty one: a change
+        // would write over what it holds.
+        let store = match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                serde_json::from_str::<Store>(&text).map_err(|_| ShortcutError::Unavailable)?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Store::default(),
+            Err(_) => return Err(ShortcutError::Unavailable),
+        };
         Ok(Self { path, store })
     }
 
     pub fn list(&self) -> Vec<Shortcut> {
         self.store.shortcuts.clone()
+    }
+
+    /// Opens the store and applies `change` while no other change runs,
+    /// answering with the list after it: two requests at once cannot each
+    /// write the list they read (code audit of 2026-10-20, AUD-13).
+    pub fn change<T>(
+        state_dir: &Path,
+        change: impl FnOnce(&mut Self) -> Result<T, ShortcutError>,
+    ) -> Result<(T, Vec<Shortcut>), ShortcutError> {
+        static CHANGES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _change = CHANGES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut store = Self::open(state_dir)?;
+        let value = change(&mut store)?;
+        Ok((value, store.list()))
     }
 
     pub fn add(&mut self, keys: Vec<ShortcutKey>) -> Result<Shortcut, ShortcutError> {
@@ -138,9 +158,14 @@ impl ShortcutStore {
         if text.len() as u64 > MAX_FILE_BYTES {
             return Err(ShortcutError::Unavailable);
         }
-        std::fs::write(&self.path, text).map_err(|_| ShortcutError::Unavailable)?;
-        std::fs::set_permissions(&self.path, PermissionsExt::from_mode(0o600))
-            .map_err(|_| ShortcutError::Unavailable)
+        let name = self.path.file_name().ok_or(ShortcutError::Unavailable)?;
+        crate::state_file::replace(
+            parent,
+            ".shortcuts-",
+            &name.to_string_lossy(),
+            text.as_bytes(),
+        )
+        .map_err(|_| ShortcutError::Unavailable)
     }
 }
 
@@ -197,12 +222,11 @@ pub(crate) async fn add(
     State(state): State<AppState>,
     Json(body): Json<ShortcutKeysBody>,
 ) -> AppResult<Json<ApiResponse<ShortcutOutcome>>> {
-    let mut store = open(&state)?;
-    match store.add(body.keys) {
-        Ok(shortcut) => Ok(Json(ApiResponse::ok(ShortcutOutcome {
+    match ShortcutStore::change(&state.options.state_dir, |store| store.add(body.keys)) {
+        Ok((shortcut, shortcuts)) => Ok(Json(ApiResponse::ok(ShortcutOutcome {
             applied: true,
             id: Some(shortcut.id),
-            shortcuts: store.list(),
+            shortcuts,
         }))),
         Err(ShortcutError::TooManyKeys) => Err(AppError::BadRequest(
             "a shortcut needs one to four keys".into(),
@@ -223,12 +247,11 @@ pub(crate) async fn delete(
     State(state): State<AppState>,
     Json(body): Json<ShortcutIdBody>,
 ) -> AppResult<Json<ApiResponse<ShortcutOutcome>>> {
-    let mut store = open(&state)?;
-    match store.delete(&body.id) {
-        Ok(()) => Ok(Json(ApiResponse::ok(ShortcutOutcome {
+    match ShortcutStore::change(&state.options.state_dir, |store| store.delete(&body.id)) {
+        Ok(((), shortcuts)) => Ok(Json(ApiResponse::ok(ShortcutOutcome {
             applied: true,
             id: Some(body.id),
-            shortcuts: store.list(),
+            shortcuts,
         }))),
         Err(ShortcutError::NotFound) => Err(AppError::NotFound("shortcut not found".into())),
         Err(_) => Err(AppError::ServiceUnavailable(
@@ -240,6 +263,7 @@ pub(crate) async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn key(code: &str) -> ShortcutKey {
         ShortcutKey {
@@ -273,6 +297,43 @@ mod tests {
         store.delete(&added.id).expect("the entry exists");
         assert!(store.list().is_empty());
         assert_eq!(store.delete(&added.id), Err(ShortcutError::NotFound));
+    }
+
+    #[test]
+    fn parallel_additions_keep_every_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let adders: Vec<_> = (0..2)
+            .map(|_| {
+                let state_dir = directory.path().to_path_buf();
+                std::thread::spawn(move || {
+                    for _ in 0..MAX_SHORTCUTS / 2 {
+                        ShortcutStore::change(&state_dir, |store| store.add(vec![key("KeyA")]))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for adder in adders {
+            adder.join().unwrap();
+        }
+        assert_eq!(
+            ShortcutStore::open(directory.path()).unwrap().list().len(),
+            MAX_SHORTCUTS
+        );
+    }
+
+    #[test]
+    fn a_damaged_file_is_not_written_over() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        std::fs::write(&path, "{\"shortcuts\":[{\"id\":").unwrap();
+        assert!(
+            ShortcutStore::change(directory.path(), |store| store.add(vec![key("KeyA")])).is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"shortcuts\":[{\"id\":"
+        );
     }
 
     #[test]
