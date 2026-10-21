@@ -356,6 +356,14 @@ async fn write_frames(
     }
 }
 
+/// Whether a key frame is left out because the page still waits for the
+/// one before it. `new_picture` is a key frame of another stream or size.
+/// The wait of an earlier picture does not count: its streams are given up
+/// as the new one starts (code audit of 2026-10-20, AUD-18).
+fn skips_key(new_picture: bool, key_waited: Option<Duration>) -> bool {
+    !new_picture && key_waited.is_some_and(|waited| waited > SLOW_KEY && waited <= MAX_KEY_WAIT)
+}
+
 /// Sends the frames of `subscription` to the session until the encoder's
 /// socket ends or the session does. `events` carries what the page is told
 /// on its control stream.
@@ -429,7 +437,11 @@ pub async fn serve(
                     continue;
                 };
                 let picture = (header.stream, header.width, header.height);
-                if announced != Some(picture) {
+                let new_picture = announced != Some(picture);
+                if new_picture {
+                    // What is on its way of the picture before is of no use
+                    // to a page that starts this one.
+                    groups.give_up();
                     announced = Some(picture);
                     let _ = events
                         .send(GatewayControl::Video {
@@ -441,7 +453,7 @@ pub async fn serve(
                         })
                         .await;
                 }
-                if key_waited.is_some_and(|waited| waited > SLOW_KEY && waited <= MAX_KEY_WAIT) {
+                if skips_key(new_picture, key_waited) {
                     // The page still waits for the key frame before: this one
                     // would only wait behind it, and is left out with the
                     // frames that refer to it, the group before finished.
@@ -532,4 +544,21 @@ pub async fn serve(
             reason: Some("encoder".into()),
         })
         .await;
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_pictures_key_frame_is_not_left_out_for_the_old_ones() {
+        // The wait belonged to the old stream's key frame, which the page
+        // gives up with its stream; the new stream's first key frame was
+        // left out, and its picture waited for the next one (code audit of
+        // 2026-10-20, AUD-18).
+        let slow = Some(SLOW_KEY + Duration::from_millis(100));
+        assert!(skips_key(false, slow));
+        assert!(!skips_key(true, slow));
+        assert!(!skips_key(false, None));
+    }
 }

@@ -275,6 +275,7 @@ impl Link {
     async fn connection(&self) -> Option<bool> {
         let stream = UnixStream::connect(&self.0.path).await.ok()?;
         let (mut reader, mut writer) = stream.into_split();
+        let sent = self.certificate().sha256;
         writer
             .write_all(&link::encode(&self.hello()).ok()?)
             .await
@@ -292,6 +293,12 @@ impl Link {
         let (outbox, mut queued) = mpsc::channel::<Vec<u8>>(OUTBOX);
         self.0.state.lock().unwrap().outbox = Some(outbox);
         eprintln!("quic gateway: the server link is up");
+        // A certificate set while the server's Hello was awaited found no
+        // link to go out on: it goes now (code audit of 2026-10-20,
+        // AUD-18).
+        if self.certificate().sha256 != sent {
+            self.send(&self.hello());
+        }
         let write = async {
             while let Some(bytes) = queued.recv().await {
                 if writer.write_all(&bytes).await.is_err() {
@@ -350,4 +357,58 @@ async fn read_message(reader: &mut tokio::net::unix::OwnedReadHalf) -> Option<Se
     let mut body = vec![0u8; length];
     reader.read_exact(&mut body).await.ok()?;
     link::decode(&body).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::UnixListener;
+
+    async fn read_from_gateway(reader: &mut UnixStream) -> Option<GatewayToServer> {
+        let mut prefix = [0u8; 4];
+        reader.read_exact(&mut prefix).await.ok()?;
+        let length = link::body_length(prefix).ok()?;
+        let mut body = vec![0u8; length];
+        reader.read_exact(&mut body).await.ok()?;
+        link::decode(&body).ok()
+    }
+
+    fn certificate(sha256: &str) -> CertificateInfo {
+        CertificateInfo {
+            sha256: sha256.into(),
+            not_before: 10,
+            not_after: 20,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_certificate_set_while_the_link_comes_up_reaches_the_server() {
+        // Set between the gateway's Hello and the server's, it was dropped:
+        // the server kept the old hash and WebTransport failed its check
+        // until the link reconnected (code audit of 2026-10-20, AUD-18).
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("link.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let link = Link::spawn(path, 443, certificate(&"aa".repeat(32)));
+        let (mut server, _) = listener.accept().await.unwrap();
+        let first = read_from_gateway(&mut server).await.unwrap();
+        assert!(matches!(
+            first,
+            GatewayToServer::Hello { ref certificate_sha256, .. } if *certificate_sha256 == "aa".repeat(32)
+        ));
+        link.set_certificate(certificate(&"bb".repeat(32)));
+        server
+            .write_all(&link::encode(&ServerToGateway::Hello { protocol: PROTOCOL }).unwrap())
+            .await
+            .unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(2), read_from_gateway(&mut server))
+            .await
+            .expect("the new certificate never reached the server")
+            .unwrap();
+        assert!(matches!(
+            next,
+            GatewayToServer::Hello { ref certificate_sha256, .. } if *certificate_sha256 == "bb".repeat(32)
+        ));
+        link.leave();
+    }
 }
