@@ -1,4 +1,5 @@
 from pathlib import Path, PurePosixPath
+import os
 import re
 import shutil
 import subprocess
@@ -2411,6 +2412,39 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertFalse(
                 [line for line in lines if line.startswith(namespaced)], namespaced
             )
+
+    def test_the_unit_check_takes_every_tmpfiles_fragment(self) -> None:
+        # It installed six of the ten fragments into its test root, and only
+        # printed them, which passes a fragment that does not parse (code
+        # audit of 2026-10-20, AUD-21).
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.splitlines()
+        fragments = sorted(path.name for path in (ROOT / "packaging/tmpfiles.d").glob("*.conf"))
+        self.assertEqual(
+            sorted(line.split()[1] for line in listed if line.startswith("tmpfiles ")),
+            fragments,
+        )
+
+    def test_a_tmpfiles_fragment_that_does_not_parse_fails_the_unit_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fragments = Path(directory)
+            for path in (ROOT / "packaging/tmpfiles.d").glob("*.conf"):
+                shutil.copy(path, fragments / path.name)
+            (fragments / "zz-broken.conf").write_text("d /run/x 0755 nosuchuser - -\nbogus line\n")
+            result = subprocess.run(
+                ["sh", str(ROOT / "scripts/verify-systemd-units.sh")],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env={**os.environ, "BLI_KVM_TMPFILES_DIR": str(fragments)},
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tmpfiles", result.stderr)
 
     def test_the_unit_check_covers_every_unit(self) -> None:
         # scripts/verify-systemd-units.sh named its units, and six were never

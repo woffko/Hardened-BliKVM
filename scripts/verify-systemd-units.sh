@@ -7,6 +7,10 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # cannot pass unchecked (security review of 2026-10-18, LOW-07).
 units=$(cd "$project_root/packaging/systemd" && ls -1 -- *.service *.socket *.timer)
 services=$(cd "$project_root/packaging/systemd" && ls -1 -- *.service native/*.service)
+# Every tmpfiles fragment goes into the test root and must parse there (code
+# audit of 2026-10-20, AUD-21); a test names another directory of them.
+tmpfiles_dir=${BLI_KVM_TMPFILES_DIR:-"$project_root/packaging/tmpfiles.d"}
+fragments=$(cd "$tmpfiles_dir" && ls -1 -- *.conf)
 # The exposure a service may have (systemd-analyze security, tenths); 20
 # unless named here with its reason.
 exposure_limit() {
@@ -25,6 +29,7 @@ exposure_limit() {
 }
 if [ "${1:-}" = --list ]; then
   for unit in $units; do printf 'verify %s\n' "$unit"; done
+  for fragment in $fragments; do printf 'tmpfiles %s\n' "$fragment"; done
   for service in $services; do
     printf 'exposure %s %s\n' "$service" "$(exposure_limit "${service##*/}")"
   done
@@ -92,14 +97,9 @@ install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm-download.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-ve.conf" \
   "$test_root/usr/lib/sysusers.d/"
-install -m 0644 \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-hid.conf" \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-media.conf" \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-gadget.conf" \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-system-actions.conf" \
-  "$project_root/packaging/tmpfiles.d/hardened-blikvm-diagnostics.conf" \
-  "$test_root/usr/lib/tmpfiles.d/"
+for fragment in $fragments; do
+  install -m 0644 "$tmpfiles_dir/$fragment" "$test_root/usr/lib/tmpfiles.d/"
+done
 : > "$test_root/usr/share/hardened-blikvm/web/index.html"
 printf '%s\n' \
   '[Service]' \
@@ -119,6 +119,21 @@ done
 
 systemd-sysusers --root="$test_root"
 systemd-tmpfiles --cat-config --root="$test_root" >/dev/null
+# --cat-config only prints the fragments. --create reads every line and
+# answers 65 (EX_DATAERR) for one it cannot use or a user it does not know;
+# 73, a path it may not give to another user, is what a run without root
+# meets here.
+tmpfiles_status=0
+systemd-tmpfiles --create --root="$test_root" >/dev/null 2>"$test_root/tmpfiles.err" ||
+  tmpfiles_status=$?
+case "$tmpfiles_status" in
+  0 | 73) ;;
+  *)
+    grep -v 'Operation not permitted' "$test_root/tmpfiles.err" >&2 || true
+    echo "tmpfiles fragments do not parse ($tmpfiles_status)" >&2
+    exit 1
+    ;;
+esac
 install -d -m 0755 \
   "$test_root/var/lib/hardened-blikvm-slots/current/bin" \
   "$test_root/var/lib/hardened-blikvm-slots/current/share/web"
