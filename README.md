@@ -144,6 +144,7 @@ and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
 agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261020-code-review.md`](docs/baselines/audit-20261020-code-review.md),
 [`audit-20261018-security-review.md`](docs/baselines/audit-20261018-security-review.md),
 [`audit-20261017-review.md`](docs/baselines/audit-20261017-review.md),
 [`audit-20261014-target-agent.md`](docs/baselines/audit-20261014-target-agent.md),
