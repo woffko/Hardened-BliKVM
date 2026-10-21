@@ -87,6 +87,15 @@ reverted after 60 seconds unless confirmed. The page confirms it right after
 the change answers, which proves the page still reaches the board; the state
 reports the seconds left while a change is pending.
 
+A second change inside the window keeps the state the window opened with as
+the one its revert restores, and a change back to that state ends the
+window. A change that fails puts back the state before it and leaves the
+pending revert and its record as they were. An IPv4 change does the same for
+its interface: each interface keeps the state from before its first
+unconfirmed change, a change of the resolvers alone inside the window keeps
+the revert (and starts its time again), and the journal holds one record for
+each interface still pending (code audit of 2026-10-20, AUD-08).
+
 Link aggregation of Ethernet and Wi-Fi is not offered: a Wi-Fi client cannot
 be bonded with Ethernet in a balancing mode, and the two links usually sit
 in different subnets. "Both" is therefore both connected, one main and one
