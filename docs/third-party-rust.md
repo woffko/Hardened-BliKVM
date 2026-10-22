@@ -312,3 +312,22 @@ the server are Unix sockets), so the three about clients do not apply, and
 the fourth needs `rustls`'s `brotli` feature, which the lock does not have
 (no `brotli` package). A system release would take `rustls` 0.23.46 and
 `time` 0.3.47.
+
+## RustSec scan for 0.1.0-beta.9 (2026-10-22)
+
+An application, a card image and a RAW system update, made of the fixes of
+the security review of 2026-10-18 and the code audit of 2026-10-20, with the
+target agent's Windows program beside them. The lock has 317 packages and
+takes `rustls` 0.23.46 and `time` 0.3.47 for the QUIC gateway (E15), so
+RUSTSEC-2026-0009 and the four `rustls` advisories of beta.8 are gone.
+`cargo audit --deny warnings`, run without fetching (the database as
+fetched on 2026-10-22, 1,349 advisories), reports one: RUSTSEC-2026-0382 of
+2026-10-20 in `rustls-webpki` 0.103.15 (a certificate chain may be accepted
+through a distrusted intermediate), fixed in 0.103.16. It is linked only
+into `bli-kvm-quic-gateway` (through `rustls`, `quinn` and `wtransport`),
+part of the system (update runtime `0.1.0~dev41`), not of the application
+bundle nor of the agent. It is not reachable there: the gateway is only a
+QUIC server and its TLS configuration has no client authentication
+(`wtransport`'s `with_no_client_auth`), so it verifies no certificate
+chain; its links to the server are Unix sockets. The next system build
+takes 0.103.16.

@@ -18,6 +18,15 @@ The development server binds to loopback and refuses a public bind. Passwords
 are sent only over the TLS/reverse-proxy boundary; BLi-KVM
 does not use a fixed browser-side key as reversible password obfuscation.
 
+On the board nginx reaches the server through a Unix socket of its own,
+which the server accepts only from nginx's worker user. The server believes
+the forwarded client address only on that socket; a request over the
+loopback TCP port, from the QUIC gateway, Janus, an encoder or PicoClaw's
+runtime, counts as its own address for the login, password and terminal
+limiters (code audit of 2026-10-20, AUD-16.2). A system that names no
+proxy socket keeps the older rule: the header is believed from a loopback
+peer.
+
 ## Privileged broker
 
 The broker accepts typed operations over a permission-restricted Unix socket.
@@ -456,6 +465,20 @@ component identities, source/artifact/license-text hashes, pinned revisions,
 corresponding source, reviewed `cleared` status, and exact SPDX 3.0.1 offline
 resource bindings. It does not make a legal decision or parse the full SPDX
 license grammar; the pinned offline validator remains mandatory.
+
+## Administration features
+
+The web terminal, scripts, remote image download, PicoClaw and RAW system
+updates stay off until their switches are turned on, and each switch is
+enforced below the web server by socket-activated helpers that serve one
+request each (`docs/design/admin-features-v1.md`). An image download's
+worker runs as an account of its own: of the image store it can write only
+the one file the server prepared for it, never the catalog, and on the
+board itself it reaches the local resolver only. PicoClaw is installed by
+an installer with an account and a socket of its own; no image download
+writes PicoClaw's files, and its unit starts only a copy that a root step
+checked against the pinned release's size and SHA-256 (code audit of
+2026-10-20, AUD-05.2).
 
 ## Media and transport processes
 

@@ -110,7 +110,7 @@ processes instead, each as its own systemd unit with a sandbox:
 
 | Process | Runs as | What it does |
 | --- | --- | --- |
-| nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server |
+| nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server, which it reaches through a Unix socket that serves nginx alone |
 | `bli-kvm-server` | `hardened-blikvm-server`, from the active signed slot | login, sessions, the API and its policy, the web interface, WebRTC signalling, the QUIC gateway's link; no device access of its own |
 | board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the target agent's channel and drive, the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
 | `bli-kvm-boardd` | root | the fan and the board's peripherals |
@@ -119,8 +119,8 @@ processes instead, each as its own systemd unit with a sandbox:
 | encoder driver (`hardened-blikvm-ve-enc`) | kernel module, loaded by its own unit | gives the H.264 encoder the video engine, to one opener at a time |
 | Janus | dynamic user | WebRTC media, streaming plugin only |
 | QUIC gateway (`bli-kvm-quic-gateway`) | `hardened-blikvm-quic` | QUIC and TLS on UDP 443 while its switch is on; it holds no authority and passes on what the server allows |
-| update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back |
-| administration and download helpers | socket-activated, per request | the features behind the switches |
+| update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back; start the application at boot, again after a failed attempt |
+| administration helpers | socket-activated, per request; an image download and PicoClaw's installer each as an account of its own | the features behind the switches; PicoClaw starts only from a copy checked against its pinned release |
 
 ```text
 Browser
@@ -176,6 +176,10 @@ large temporary frontend dependencies. Override it with the task-specific
 `BLI_KVM_PNPM_STORE` variable when that path is unavailable.
 
 The development server binds to `127.0.0.1:18080` and refuses non-loopback
-binds. Device exposure must use a separately hardened TLS reverse proxy. Do not
-place device images, credentials, private evidence, or extracted root
-filesystems in this repository.
+binds. Device exposure must use a separately hardened TLS reverse proxy. On
+the board nginx reaches the server through a Unix socket
+(`BLI_KVM_PROXY_SOCKET`) that serves only nginx's worker user
+(`BLI_KVM_PROXY_USER`); the server believes the forwarded client address
+there and nowhere else, so another local process counts as itself for the
+login limiter. Do not place device images, credentials, private evidence, or
+extracted root filesystems in this repository.
