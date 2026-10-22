@@ -124,7 +124,7 @@ The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
 after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
 `0.1.0~dev41`, the encoder and the RAW bundle of sequence 8 carry phase Y
 (dev40 was staged at gate Y; dev41 adds GY1, found there).
-"Board" is filled in at the gates.
+What the board showed is in "Gates" below.
 
 | Item | Finding | Commit | Test that failed before | State |
 | --- | --- | --- | --- | --- |
@@ -151,18 +151,117 @@ after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
 | Y4 | AUD-05.2 | `6d23177`, `eb071e8` | no image download writes a PicoClaw file; only the pinned executable is copied to be started; dev40 adds the installer | fixed |
 | Y5 | AUD-05.3 | `cfca978` | a download worker ends within its transfer budget | fixed |
 | Y6 | AUD-02 (a) | `1f43864` | the running root's system sequence counts when it is newer (supervisor and exec helper) | fixed |
-| Y7 | V1, AUD-02 (b) | `87a24c4` | a new root's nginx configuration is the image's with the carried redirect | fixed; the step on a mounted root is seen at gate Y |
+| Y7 | V1, AUD-02 (b) | `87a24c4` | a new root's nginx configuration is the image's with the carried redirect | fixed; at gate Y the RAW boot kept the image's file |
 | Y8 | AUD-10 | `4a83ad3` | hyphen labels, a 3xx without Location or a 204, a cut inside a character, the special ranges | fixed |
 | Y9 | AUD-12 | `044d885` | carried owners keep accounts of the same kind; a root still mounted is not written over; one request at a time; a stale upload removed | fixed |
 | Y10 | AUD-16.2 | `de789f6`, `eb071e8` | nginx reaches the server through a socket of its own | fixed |
 | Y11 | AUD-17.3 | `90823ae` | a key request the encoder did not answer is asked again at once | fixed |
 | Y12 | AUD-18.1, 18.3 | `8618141` | a certificate set while the link comes up reaches the server; a new picture's key frame is not left out for the old one's | fixed |
 | Y13 | AUD-21 | `21e3c97` | the unit check takes every tmpfiles fragment; one that does not parse fails it | fixed |
-| GY1 | gate Y | (below) | a failed native boot is tried again (after 15 s, at most four attempts in ten minutes) | fixed; dev41 |
+| GY1 | gate Y | `fd8222e` | a failed native boot is tried again (after 15 s, at most four attempts in ten minutes) | fixed; dev41 |
 | Optional | AUD-16.1c, 16.3, 17.1, 17.2, 18.4 to 18.6, 19.1b, 20 (mode), 09.1b | — | — | not done: not chosen |
 
 Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the_supplied_runner`
-(its client's timeout at load 19; alone 3 of 3). The first full checks also
+(its client's timeout at load 19; alone 3 of 3), and in the checks on
+`fd8222e` the page contracts `quic_share_contract.mjs` (15.8 frames a second
+under its floor at load 17) and `screen_area_contract.mjs` (a point sent
+before the page dropped a cleared layout; alone 3 of 3); the third run
+passed in full. The first full checks also
 found tests of this plan's own that a loaded host broke (the revert window's
 600 ms, `eda1702`) and older tests pinned to the files as they were
 (`eb071e8`); the check on `eb071e8` passed in one run.
+
+Design notes (W2): `board-daemon-v1.md` (S1), `wifi-v1.md` (S2: the revert
+window of IPv4 and Wi-Fi is described there; `network-writes-v1.md`, which
+the plan named, covers DNS and IPv6 only), `system-raw-update-v1.md` (Y1,
+Y6, Y7, Y9), `admin-features-v1.md` (S17, Y4, Y10) and
+`native-execution-helper-v1.md` (GY1); the README names the restore tool
+(Y1).
+
+## Gates
+
+What was shown on the test board, at the operator's word for each install
+(evidence under `evidence/private/code-audit-20261020`, `fix-log.md`).
+
+**Gate S** (2026-10-21). Read before: no failed unit, file leases enabled,
+the image store on ext4, the exec store's `current` slot 99, PicoClaw not
+installed. Slot 100 (`eda1702`, phase S) was built from a clean tree but not
+installed: at the operator's choice the board took slot 101 (0.1.0-beta.9,
+`eb071e8`, archive `fb7972c2…d408`, manifest `5497e3c4…`), which carries
+phase S and the server's halves of phase Y. Installed through the API and
+confirmed; the exec store's `current` became slot 101; no failed unit;
+boardd and the fan running (the composition's readiness accepts boardd
+only with its fan active and driven, or latched at full duty, and its
+thermal sensor read, as at every later start below); the operator's state
+as before but for the slot and the clock; the watching
+probes passed (the GUI walk on desktop and phone, WebRTC H.264 and VP8,
+QUIC video, the touch reach).
+
+**Gate Y, the staged system** (2026-10-21). Update runtime dev40
+(`efac9930…2dec`), PicoClaw's installer account (`hardened-blikvm-pico-install`),
+the server units with the proxy socket, the gadget's tmpfiles, nginx's
+configuration from packaging (`nginx -t` passed), the encoder of Y11 and an
+initramfs with dev40's boot step were staged by hand, then the board was
+rebooted. The first native boot of that boot failed (GY1): its helper
+session ran under the boot's load and was refused with the coarse
+`Controller` error; nothing tried again, so the board owner, boardd, the
+video proxy and the server stayed down. A copy of the board's exec and slot
+stores, run on the host through the same garbage collection and
+preparation, passed, which points to the load, not the stores. At the
+operator's word the unit was started once by hand and the composition came
+up on slot 101 (the collection then removed slot 98). After it: no failed
+unit; the server listened on the proxy socket, and during the probes nginx
+reached it only there (279 of 400 one-second samples with connections on
+the socket, none on the loopback port); the installer socket listened; the
+root named system sequence 7; the six watching probes passed; the state as
+before but for the IPv6 privacy addresses, renewed by the reboot, and the
+clock; the application journal unchanged (84 records, 25,846 bytes).
+
+GY1 (`fd8222e`) makes update runtime dev41, whose files are dev40's but the
+native boot unit (every program byte for byte the same, the RAW boot step
+included); the check on it passed in full on its third run (two page
+contracts named above as flaky under load). At the operator's word dev41
+was installed over dev40 without a reboot.
+
+**Gate Y, the image** (2026-10-22). Read from the board with the KVM pages
+closed, release 0.1.0-beta.9, system sequence 8: card image
+`c472df64…226d` (`.zst` `f352a918…a8b`), root file system `9f14e1cc…778`
+(`.zst` `de3e34da…763`); the archive unpacks to the image and its first
+partition is the root file system. Inspected: dev41; the installer's and
+the download worker's accounts; nginx's configuration equal to packaging,
+with the proxy socket; the server units with the proxy socket; the native
+boot unit's retry; the installer socket enabled; system sequence 8; the
+gadget's tmpfiles equal to packaging, the catalog empty, the image store
+01770; no jiggler or revert files; no SSH host keys; the exec store's
+`current` slot 101. The image's initramfs, built on the board as it was
+read, holds the same files with the same digests as the board's own, so
+the board's RAW boot step is the image's.
+
+**Gate Y, the RAW install** (2026-10-22). The RAW bundle of sequence 8
+(0.1.0-beta.9, `fd8222e`, `91fbb05c…ca15`) was built from the image's root
+and its signature verified. With root's home saved, it was uploaded,
+staged, written and booted (the board was back after 35 minutes), and kept
+the certificate, the SSH host keys, the account, the slot, the hostname,
+the session lock and the SSH setting. On the new root: no failed unit; the
+native boot ready at its first attempt; dev41 and system sequence 8; the
+server on the proxy socket and the installer socket listening; nginx's
+configuration the image's (Y7; this board carries no port-80 redirect);
+the boot step the image's; the exec store slots 99 and 101 with `current`
+on 101; the application journal unchanged. The operator's state as before
+the install, but for the RAW sequence and the clock (the H.264 engine's
+report appears once an H.264 viewer starts it; the engine choice was kept).
+Confirmed: sequence 8, floor 9. Root's home restored. The six watching
+probes passed again, none asked for the HID lease, and nginx reached the
+server only through the proxy socket (275 of 400 samples, none on the
+loopback port). PicoClaw is not installed on the board, so its checked copy
+was shown by the host tests only (Y4).
+
+A status worker's instance failed while its client, the server, left
+during a page walk, as at gate E; it was reset. It comes back after page
+walks and is left to a later item: a worker whose client has left should
+end without a failure.
+
+The board ends with slot 101 and the system of sequence 8 (floor 9), the
+operator's switches and settings as found (the RAW switch was on and stays
+on), root's home as it was, no failed unit, and nothing of this work left
+on its data partition.

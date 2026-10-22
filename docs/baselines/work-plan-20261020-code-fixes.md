@@ -61,7 +61,11 @@ done.
    bundle of sequence 8), which also carries `7ffd42a`. Both join the
    unpublished 2026-10-18 work in one release, published only at the
    operator's word. Alternative: Y2 and Y3 (availability) first, as a system
-   build of their own.
+   build of their own. Changed by the operator on 2026-10-21 ("dev41"): the
+   system build is update runtime `0.1.0~dev41`, which adds GY1, found at
+   gate Y (a failed native boot is tried again); dev40 was staged on the
+   board for the gate's first reboot. The slot became 101 (100 was built
+   but not installed; see the review note's gates).
 2. AUD-01. The RAW install's page says that the board must keep power while
    its root is written. A host tool writes the backup kept on the data
    partition back to the root partition, with the card in a reader, and the
