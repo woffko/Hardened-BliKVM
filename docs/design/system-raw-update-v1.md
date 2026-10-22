@@ -145,6 +145,17 @@ own.
   HTTPS redirect the board's had: the carried directory brought the
   board's file back, so no system release could change nginx on a board
   updated by RAW (V1).
+- That rule acts only where the board's own boot step has it. A board's
+  older boot step (every published release up to 0.1.0-beta.8) still
+  carries its `nginx.conf` over the new system's, so the system also puts
+  its file back before every start of nginx: update runtime 0.1.0~dev42
+  keeps the file at `/usr/share/hardened-blikvm/nginx/hardened-blikvm.conf`,
+  outside the carried directory, and a drop-in of nginx's unit has the
+  administration helper write it over `/etc/hardened-blikvm/nginx.conf`
+  with the same rule (the redirect the board's file has) before nginx's own
+  check. A board's file that already is the system's is left alone, and a
+  failed step leaves the board's file and does not stop nginx. Changes made
+  to the file by hand do not outlive a restart of nginx (gate Y).
 - The update supervisor and the exec helper take the larger of their
   carried `systemSequence` and the root's `system-sequence` file (AUD-02).
 - The carried owners are checked both ways: a project account the image

@@ -93,6 +93,11 @@ install -m 0644 \
   "$project_root"/packaging/systemd/*.socket \
   "$project_root"/packaging/systemd/*.timer \
   "$test_root/usr/lib/systemd/system/"
+# nginx's drop-in: the system's configuration before every start.
+install -d -m 0755 "$test_root/usr/lib/systemd/system/hardened-blikvm-nginx.service.d"
+install -m 0644 \
+  "$project_root/packaging/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf" \
+  "$test_root/usr/lib/systemd/system/hardened-blikvm-nginx.service.d/"
 install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-diagnostics.conf" \

@@ -166,6 +166,10 @@ install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
   "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
+install -d -m 0755 "$stage/share/systemd/hardened-blikvm-nginx.service.d"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf \
+  "$stage/share/systemd/hardened-blikvm-nginx.service.d/"
 bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \

@@ -159,6 +159,7 @@ What the board showed is in "Gates" below.
 | Y12 | AUD-18.1, 18.3 | `8618141` | a certificate set while the link comes up reaches the server; a new picture's key frame is not left out for the old one's | fixed |
 | Y13 | AUD-21 | `21e3c97` | the unit check takes every tmpfiles fragment; one that does not parse fails it | fixed |
 | GY1 | gate Y | `fd8222e` | a failed native boot is tried again (after 15 s, at most four attempts in ten minutes) | fixed; dev41 |
+| GY2 | gate Y, before publishing | (below) | nginx starts with the system's configuration: a board's file carried by an older boot step is replaced, the redirect kept | fixed; dev42 |
 | Optional | AUD-16.1c, 16.3, 17.1, 17.2, 18.4 to 18.6, 19.1b, 20 (mode), 09.1b | — | — | not done: not chosen |
 
 Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the_supplied_runner`

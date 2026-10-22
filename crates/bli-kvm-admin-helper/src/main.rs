@@ -11,9 +11,11 @@
 //! `--picoclaw` it manages the PicoClaw configuration as the runtime's own
 //! user; `--require-feature NAME` exits non-zero while that switch is off and
 //! `--picoclaw-prepare` makes the checked copy the runtime starts (pre-start
-//! steps of the PicoClaw runtime, as root).
+//! steps of the PicoClaw runtime, as root); `--nginx-config` puts the
+//! system's nginx configuration back before nginx starts.
 
 mod download;
+mod nginx_config;
 mod picoclaw;
 mod picoclaw_exec;
 mod root_password;
@@ -34,8 +36,8 @@ use std::time::Duration;
 
 use bli_kvm_admin_helper::{
     AdminReply, AdminRequest, DOWNLOAD_STATUS, DownloadStatus, FRAME_DATA, FRAME_RESIZE,
-    PICOCLAW_BINARY, PICOCLAW_BINARY_BYTES, PICOCLAW_BINARY_SHA256, PICOCLAW_EXEC_DIR,
-    PICOCLAW_INSTALLER_STATUS, PICOCLAW_RELEASE_BYTES, PICOCLAW_RELEASE_SHA256,
+    NGINX_CONF, NGINX_REFERENCE, PICOCLAW_BINARY, PICOCLAW_BINARY_BYTES, PICOCLAW_BINARY_SHA256,
+    PICOCLAW_EXEC_DIR, PICOCLAW_INSTALLER_STATUS, PICOCLAW_RELEASE_BYTES, PICOCLAW_RELEASE_SHA256,
     PICOCLAW_RELEASE_URL, PICOCLAW_RUNTIME_DIR, PICOCLAW_SERVICE, PICOCLAW_STATE, decode_resize,
     encode_frame, read_frame, read_line, validate_remote_iso, write_line, write_reply,
 };
@@ -72,6 +74,19 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Some("--nginx-config") if arguments.next().is_none() => {
+            return match nginx_config::render(Path::new(NGINX_REFERENCE), Path::new(NGINX_CONF)) {
+                Ok(true) => {
+                    eprintln!("admin helper: nginx's configuration is the system's again");
+                    ExitCode::SUCCESS
+                }
+                Ok(false) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("admin helper: nginx's configuration is left as it is: {error}");
+                    ExitCode::from(1)
+                }
+            };
+        }
         Some("--require-feature") => {
             let feature = arguments.next();
             let enabled = AdminFeature::ALL.into_iter().find(|candidate| {
@@ -96,7 +111,7 @@ fn main() -> ExitCode {
         (Some("--peer-user"), Some(user), None) => user,
         _ => {
             eprintln!(
-                "usage: bli-kvm-admin-helper [--download | --picoclaw | --picoclaw-install] --peer-user USER\n       bli-kvm-admin-helper --require-feature NAME\n       bli-kvm-admin-helper --picoclaw-prepare"
+                "usage: bli-kvm-admin-helper [--download | --picoclaw | --picoclaw-install] --peer-user USER\n       bli-kvm-admin-helper --require-feature NAME\n       bli-kvm-admin-helper --picoclaw-prepare\n       bli-kvm-admin-helper --nginx-config"
             );
             return ExitCode::from(2);
         }

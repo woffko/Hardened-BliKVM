@@ -52,6 +52,11 @@ pub const PICOCLAW_BINARY_SHA256: &str =
     "d5eebc3b12485da97b45884199ec6a1598e1576f292db84c9f8a8bab0e6f7db2";
 pub const PICOCLAW_BINARY_BYTES: u64 = 30_671_032;
 pub const PICOCLAW_EXEC_DIR: &str = "/run/hardened-blikvm-picoclaw-exec";
+/// nginx's configuration, which a RAW update carries with the rest of
+/// `/etc/hardened-blikvm`, and the system's own copy of it, which it does not
+/// (code audit of 2026-10-20, gate Y).
+pub const NGINX_CONF: &str = "/etc/hardened-blikvm/nginx.conf";
+pub const NGINX_REFERENCE: &str = "/usr/share/hardened-blikvm/nginx/hardened-blikvm.conf";
 pub const PICOCLAW_SERVICE: &str = "hardened-blikvm-picoclaw.service";
 pub const PICOCLAW_GATEWAY_PORT: u16 = 18790;
 /// Header carrying the internal token on the runtime's KVM calls.

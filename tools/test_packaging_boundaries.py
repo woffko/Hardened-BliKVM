@@ -2307,6 +2307,46 @@ class PackagingBoundaryTests(unittest.TestCase):
         # ends a cause that does not pass.
         self.assertGreaterEqual(interval, burst * (attempt + delay))
 
+    def test_nginx_starts_with_the_systems_configuration(self) -> None:
+        # A RAW update written by a board's older boot step carries the
+        # board's nginx.conf over the new system's, so a board updated from
+        # beta.8 kept proxying over loopback TCP, which the server's proxy
+        # socket rule then counts as one address (code audit of 2026-10-20,
+        # gate Y). The system puts its own file back before nginx starts.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-nginx.service").read_text()
+        drop_in = (
+            ROOT / "packaging/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf"
+        ).read_text()
+        pre_start = [
+            line for line in unit.splitlines() if line.startswith("ExecStartPre=")
+        ]
+        given = [
+            line for line in drop_in.splitlines() if line.startswith("ExecStartPre=")
+        ]
+        render = (
+            "ExecStartPre=-+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --nginx-config"
+        )
+        # The list is given again with the step before the check, so nginx
+        # is checked and started with the file it was given; a failed step
+        # leaves the board's file and does not stop nginx.
+        test = "ExecStartPre=/usr/sbin/nginx -t -c /etc/hardened-blikvm/nginx.conf"
+        self.assertEqual(pre_start[-1], test)
+        self.assertEqual(given, ["ExecStartPre=", *pre_start[:-1], render, test])
+        # The system's copy is the packaged configuration, outside the
+        # carried directory.
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        self.assertIn(
+            'pub const NGINX_REFERENCE: &str = "/usr/share/hardened-blikvm/nginx/hardened-blikvm.conf";',
+            helper,
+        )
+        builder = (ROOT / "tools/build_debian_update_runtime_package.py").read_text()
+        self.assertIn('"share/nginx/hardened-blikvm.conf": (', builder)
+        self.assertIn('"usr/share/hardened-blikvm/nginx/hardened-blikvm.conf"', builder)
+        self.assertIn(
+            '"lib/systemd/system/hardened-blikvm-nginx.service.d/50-system-config.conf"',
+            builder,
+        )
+
     def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
         # The worker fetches remote data; it ran as the web server, could
         # write the image store and the catalog and pass the root admin

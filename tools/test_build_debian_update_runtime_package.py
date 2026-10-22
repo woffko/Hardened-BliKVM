@@ -342,8 +342,23 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
     def test_dev41_carries_the_files_of_dev40(self) -> None:
         # dev41 changes only the native boot unit, which tries a failed
         # attempt again (code audit of 2026-10-20, gate Y).
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev41")
         self.assertEqual(package.file_map("0.1.0~dev41"), package.file_map("0.1.0~dev40"))
+
+    def test_dev42_adds_the_systems_nginx_configuration_to_dev41(self) -> None:
+        # The system's own nginx configuration, outside the directory a RAW
+        # update carries, and the step that puts it back before nginx starts
+        # (code audit of 2026-10-20, gate Y).
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev42")
+        dev42 = dict(package.file_map("0.1.0~dev42"))
+        added = {
+            "share/nginx/hardened-blikvm.conf":
+                "usr/share/hardened-blikvm/nginx/hardened-blikvm.conf",
+            "share/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf":
+                "lib/systemd/system/hardened-blikvm-nginx.service.d/50-system-config.conf",
+        }
+        for source, destination in added.items():
+            self.assertEqual(dev42.pop(source), destination)
+        self.assertEqual(dev42, package.file_map("0.1.0~dev41"))
 
     def test_dev37_to_dev39_carry_the_files_of_dev36(self) -> None:
         # The QUIC gateway of the transport's protocol 2, then the fixes of the
@@ -364,7 +379,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev41")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev42")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -417,7 +432,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev41")
+        self.assertEqual(current["version"], "0.1.0~dev42")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertIs(previous["systemUpdateIncluded"], False)
         self.assertIs(previous["kernelModuleIncluded"], False)

@@ -24,8 +24,8 @@ from tools import ve_module
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev41"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39", "0.1.0~dev40", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev42"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39", "0.1.0~dev40", "0.1.0~dev41", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -199,6 +199,15 @@ FILE_MAP.update({
         "usr/share/doc/hardened-blikvm-update-runtime/examples/"
         "hardened-blikvm-picoclaw-install-sysusers.conf"
     ),
+    # dev42: the system's own nginx configuration, outside the directory a
+    # RAW update carries, and the step that puts it back before nginx starts
+    # (code audit of 2026-10-20, gate Y).
+    "share/nginx/hardened-blikvm.conf": (
+        "usr/share/hardened-blikvm/nginx/hardened-blikvm.conf"
+    ),
+    "share/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf": (
+        "lib/systemd/system/hardened-blikvm-nginx.service.d/50-system-config.conf"
+    ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
         "lib/systemd/system/hardened-blikvm-hid-gadget.service"
@@ -317,6 +326,8 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-picoclaw-install.socket": 37,
         "hardened-blikvm-picoclaw-install@.service": 37,
         "hardened-blikvm-picoclaw-install.conf": 37,
+        # dev42 is the 39th.
+        "50-system-config.conf": 39,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,
@@ -333,6 +344,9 @@ def file_map(version: str) -> dict[str, str]:
         # The driver and its source, by their directory.
         if source.startswith("share/ve/"):
             return 33
+        # nginx's file shares its name with the base sysusers fragment.
+        if source.startswith("share/nginx/"):
+            return 39
         return introduced.get(source.rsplit("/", 1)[-1], 1)
 
     return {source: destination for source, destination in FILE_MAP.items()
