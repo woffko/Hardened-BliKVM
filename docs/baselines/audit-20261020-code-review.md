@@ -310,3 +310,27 @@ The board ends with slot 101 and the system of sequence 9 (floor 10), the
 operator's switches and settings as found (the RAW switch was on and stays
 on), root's home as it was, no failed unit, and nothing of this work left
 on its data partition.
+
+## Release 0.1.0-beta.9
+
+Published on 2026-10-23 at the operator's word ("публикуй"), together with
+the unpublished work of the security review of 2026-10-18, as the
+pre-release
+[`v0.1.0-beta.9`](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.9)
+(the annotated tag on `9e9a00d`, which adds only documents to the sources
+named below). Its files, as uploaded and as GitHub reports them (SHA-256):
+
+| File | From | SHA-256 |
+| --- | --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.9-seq101.tar` | slot 101, `eb071e8` | `fb7972c297f5101e4f3579d1c3906f0273c5d8a8da9c4278a1aee49cadc6d408` |
+| `hardened-blikvm-system-0.1.0-beta.9-seq9.tar` | RAW system update of sequence 9, update runtime `0.1.0~dev42`, `4d40461` | `1eab85f42b9d9f93b945c3147e0c50798d16c0c9fea716269c7dbc2191a361a3` |
+| `hardened-blikvm-h616-sd.img.zst` | the card image of that system with slot 101 | `7a0db6ae0f06c5f519645e0030501c9053b466aa96d5de6ae91efada8316d2e4` |
+| `IMAGE-INFO.txt` | the image's description | `5532fb225cf58d213f3f14268a48b2b6996c913d8bbe07442e272eb67f17ab28` |
+| `hardened-blikvm-agent.exe` | the target agent, the same bytes as on slot 101's drive | `1265ac120ef29f6f88b53654cce61c43334ccc78bf36f365eec8217ed487395a` |
+| `SHA256SUMS` | the checksums above and the unpacked image's (`dc62d428466034575ac6d681203f5085c11b13269cd419a037657337e8d959c1`) | |
+
+What was checked is in the gates above: `scripts/check.sh` passed in one
+run on `9e9a00d`; `cargo audit` reports RUSTSEC-2026-0382, not reachable
+(`docs/third-party-rust.md`). beta.8's and beta.4's notes now say that
+beta.9 supersedes them. The test board is left with this release's
+application and system, the operator's settings and switches as found.
