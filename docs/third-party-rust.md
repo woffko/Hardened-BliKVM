@@ -325,7 +325,7 @@ fetched on 2026-10-22, 1,349 advisories), reports one: RUSTSEC-2026-0382 of
 2026-10-20 in `rustls-webpki` 0.103.15 (a certificate chain may be accepted
 through a distrusted intermediate), fixed in 0.103.16. It is linked only
 into `bli-kvm-quic-gateway` (through `rustls`, `quinn` and `wtransport`),
-part of the system (update runtime `0.1.0~dev41`), not of the application
+part of the system (update runtime `0.1.0~dev42`), not of the application
 bundle nor of the agent. It is not reachable there: the gateway is only a
 QUIC server and its TLS configuration has no client authentication
 (`wtransport`'s `with_no_client_auth`), so it verifies no certificate

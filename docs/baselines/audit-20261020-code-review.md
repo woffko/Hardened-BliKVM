@@ -122,8 +122,9 @@ back; two IPv4 changes inside one revert window; axios 1.18.1 with a wrapped
 The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
 (each commit names the test that failed on the code before it and passes
 after). Slot 101 (0.1.0-beta.9, `eb071e8`) carries phase S; update runtime
-`0.1.0~dev41`, the encoder and the RAW bundle of sequence 8 carry phase Y
-(dev40 was staged at gate Y; dev41 adds GY1, found there).
+`0.1.0~dev42`, the encoder and the RAW bundle of sequence 9 carry phase Y
+(dev40 was staged at gate Y; dev41 adds GY1, found there, and dev42 GY2,
+found before publishing; the RAW bundle of sequence 8 carried dev41).
 What the board showed is in "Gates" below.
 
 | Item | Finding | Commit | Test that failed before | State |
@@ -159,7 +160,7 @@ What the board showed is in "Gates" below.
 | Y12 | AUD-18.1, 18.3 | `8618141` | a certificate set while the link comes up reaches the server; a new picture's key frame is not left out for the old one's | fixed |
 | Y13 | AUD-21 | `21e3c97` | the unit check takes every tmpfiles fragment; one that does not parse fails it | fixed |
 | GY1 | gate Y | `fd8222e` | a failed native boot is tried again (after 15 s, at most four attempts in ten minutes) | fixed; dev41 |
-| GY2 | gate Y, before publishing | (below) | nginx starts with the system's configuration: a board's file carried by an older boot step is replaced, the redirect kept | fixed; dev42 |
+| GY2 | gate Y, before publishing | `4d40461` | nginx starts with the system's configuration: a board's file carried by an older boot step is replaced, the redirect kept | fixed; dev42 |
 | Optional | AUD-16.1c, 16.3, 17.1, 17.2, 18.4 to 18.6, 19.1b, 20 (mode), 09.1b | — | — | not done: not chosen |
 
 Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the_supplied_runner`
@@ -167,7 +168,11 @@ Flaky tests, named as the plan's rules ask: `gpio_atx_profile_pulses_through_the
 `fd8222e` the page contracts `quic_share_contract.mjs` (15.8 frames a second
 under its floor at load 17) and `screen_area_contract.mjs` (a point sent
 before the page dropped a cleared layout; alone 3 of 3); the third run
-passed in full. The first full checks also
+passed in full. In the checks on `4d40461` `screen_area_contract.mjs` again,
+`quic_video_contract.mjs` (the page's frame count started again under load;
+alone 2 of 2) and `vp8_range_contract.mjs` (its test source under 3 frames a
+second) twice, all under another project's build; the fifth run passed in
+full. The first full checks also
 found tests of this plan's own that a loaded host broke (the revert window's
 600 ms, `eda1702`) and older tests pinned to the files as they were
 (`eb071e8`); the check on `eb071e8` passed in one run.
@@ -262,7 +267,46 @@ during a page walk, as at gate E; it was reset. It comes back after page
 walks and is left to a later item: a worker whose client has left should
 end without a failure.
 
-The board ends with slot 101 and the system of sequence 8 (floor 9), the
+**GY2, before publishing** (2026-10-22 and 23). Preparing the release
+showed that a board on beta.8 would not get the new nginx configuration: its
+RAW update is written by its own boot step, beta.4's, which carries the
+board's `nginx.conf` over the new system's (Y7's rule acts only from a boot
+step that has it). The board would keep proxying over loopback TCP while the
+new server units name the proxy socket, so the server would count every
+login through nginx as one address, and a few wrong passwords from anyone
+would lock everyone out; the TLS 1.2 ciphers of E13 would not arrive. The
+test board did not show it: its configuration was staged by hand. At the
+operator's word ("Сначала исправить") GY2 (`4d40461`) puts the system's
+file back before every start of nginx; the check on it passed in full on its
+fifth run (the first four stopped at page contracts under another project's
+build, named above; the operator chose to wait for it to end).
+
+At the operator's word update runtime dev42 (`275fa816…7bee`; against dev41
+the administration helper, nginx's drop-in and reference file, every other
+program byte for byte the same) was installed without a reboot. beta.8's
+`nginx.conf` (beta.4's, proxying to the loopback port) was put in place and
+nginx restarted: its start put the system's file back (the step's journal
+line; the file the reference's, root's, 0600), and a login probe reached the
+server only through the proxy socket.
+
+The card image was read again with the KVM pages closed, release
+0.1.0-beta.9, system sequence 9: card image `dc62d428…59c1` (`.zst`
+`7a0db6ae…d2e4`), root file system `b088ffcf…1e32` (`.zst`
+`2175fa93…1942`); inspected as above, with dev42, the reference file
+(0644 root) beside `nginx.conf` (both packaging's) and nginx's drop-in; its
+initramfs holds the same files as the board's. The RAW bundle of sequence 9
+(`4d40461`, `1eab85f4…61a3`) was built from it, its signature verified, and
+installed at the operator's word with root's home saved: back after 34
+minutes, everything carried as before; on the new root no failed unit, the
+native boot ready at its first attempt, dev42 and sequence 9, nginx's file
+the system's, the exec store 99 and 101 with `current` on 101, the
+application journal unchanged. Confirmed: sequence 9, floor 10. Root's home
+restored; the six watching probes passed, none asked for the HID lease, and
+nginx reached the server only through the proxy socket (281 of 400
+samples). The status worker's instance failed once more during the probes
+and was reset.
+
+The board ends with slot 101 and the system of sequence 9 (floor 10), the
 operator's switches and settings as found (the RAW switch was on and stays
 on), root's home as it was, no failed unit, and nothing of this work left
 on its data partition.

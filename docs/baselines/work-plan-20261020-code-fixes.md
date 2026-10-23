@@ -65,7 +65,10 @@ done.
    system build is update runtime `0.1.0~dev41`, which adds GY1, found at
    gate Y (a failed native boot is tried again); dev40 was staged on the
    board for the gate's first reboot. The slot became 101 (100 was built
-   but not installed; see the review note's gates).
+   but not installed; see the review note's gates). Changed again by the
+   operator on 2026-10-22 ("Сначала исправить"): the release waits for GY2
+   (nginx starts with the system's configuration), so the system build is
+   update runtime `0.1.0~dev42` with a RAW bundle of sequence 9.
 2. AUD-01. The RAW install's page says that the board must keep power while
    its root is written. A host tool writes the backup kept on the data
    partition back to the root partition, with the card in a reader, and the
