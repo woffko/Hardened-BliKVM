@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
+import { releaseControl, takeControl } from "./take_control.mjs";
 
 const browser = await launchChromium();
 const feature = (availability) => ({
@@ -160,8 +161,7 @@ async function open({
     return route.continue();
   });
   await page.goto(app.baseUrl, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
+  await takeControl(page);
   await page.locator("svg.lucide-smartphone").first().locator("..").tap();
   await page.getByTestId("key-helper").waitFor();
   return { context, page, errors, sent };
@@ -376,9 +376,8 @@ try {
     await failure.waitFor();
     assert.match(await failure.textContent(), /take control first/);
     assert.deepEqual(layoutCalls(sent), [{ set_layout: { id: RUSSIAN.id } }]);
-    await page.getByRole("button", { name: "Disable remote control" }).tap();
-    await page.getByRole("button", { name: "Enable remote control" }).tap();
-    await page.getByRole("button", { name: "Confirm and control" }).tap();
+    await releaseControl(page);
+    await takeControl(page);
     assert.ok(
       await eventually(() => layoutCalls(sent).length === 2),
       JSON.stringify(layoutCalls(sent)),

@@ -11,6 +11,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
+import { takeControl } from "./take_control.mjs";
 
 const start = await import(
   pathToFileURL(
@@ -131,16 +132,13 @@ try {
   await button.waitFor();
   assert.equal(await button.isDisabled(), true);
   await page
-    .getByText("Enable remote control to start the agent from here")
+    .getByText(
+      "Click the screen and confirm remote control to start the agent from here",
+    )
     .waitFor();
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.click();
-  await page.waitForTimeout(300);
-  if (await confirm.isVisible()) await confirm.click();
-  await confirm.waitFor({ state: "hidden" });
+  await takeControl(page);
 
   // Without the board's agent's digest nothing is typed: the button says why.
   agentSha256 = "";

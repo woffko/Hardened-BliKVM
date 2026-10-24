@@ -14,6 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { controlIsOn, takeControl } from "./take_control.mjs";
+
 const [baseUrl, username, modelBase, outputValue] = process.argv.slice(2);
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
@@ -130,11 +132,9 @@ try {
   const page = await context.newPage();
   await page.goto(`${url.origin}/`);
   await page.waitForSelector("#screen", { timeout: 20000 });
-  const toggle = page.locator('button[aria-label$="remote control"]');
-  await toggle.first().click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
+  await takeControl(page);
   step("control", {
-    pressed: await toggle.first().getAttribute("aria-pressed"),
+    pressed: (await controlIsOn(page)) ? "true" : "false",
   });
 
   // Drive the real assistant sidebar and watch its gateway frames.
@@ -211,7 +211,7 @@ try {
       }),
   );
   for (let i = 0; i < 240 && !chat.final; i += 1) await sleep(500);
-  chat.controlAfter = await toggle.first().getAttribute("aria-pressed");
+  chat.controlAfter = (await controlIsOn(page)) ? "true" : "false";
   chat.types = [...new Set(chat.types)];
   step("chat", chat);
   await sleep(1500);

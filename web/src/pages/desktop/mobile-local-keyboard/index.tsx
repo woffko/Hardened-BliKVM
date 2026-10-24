@@ -3,6 +3,7 @@ import {
   CompositionEvent,
   FormEvent,
   KeyboardEvent,
+  useCallback,
   useEffect,
   useRef,
   useState
@@ -24,7 +25,7 @@ import {
 } from '@/lib/sticky-modifiers.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.ts';
-import { focusConfirmedAtom } from '@/jotai/restricted-control.ts';
+import { focusConfirmedAtom, leaseEndedAtom } from '@/jotai/restricted-control.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 import { readAgentKeyboard, switchTargetLayout } from '@/hooks/useTargetAgent.ts';
@@ -60,6 +61,7 @@ export const MobileLocalKeyboard = () => {
   const releaseTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const { restricted, reportHid, hold, drained } = useHidLease();
   const controlConfirmed = useAtomValue(focusConfirmedAtom);
+  const leasesEnded = useAtomValue(leaseEndedAtom);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -73,13 +75,19 @@ export const MobileLocalKeyboard = () => {
     input.blur();
   }, [isLocalKeyboardOpen]);
 
-  // Without control nothing is held on the target any more.
-  useEffect(() => {
-    if (!restricted || controlConfirmed) return;
+  // Without control nothing is held on the target any more, nor once a lease
+  // ended (the window lost focus, the lease was taken again).
+  const letGoHeld = useCallback(() => {
     for (const timer of releaseTimersRef.current.values()) clearTimeout(timer);
     releaseTimersRef.current.clear();
     if (modifiersRef.current.reset()) setModifierModes({});
-  }, [restricted, controlConfirmed]);
+  }, []);
+  useEffect(() => {
+    if (restricted && !controlConfirmed) letGoHeld();
+  }, [restricted, controlConfirmed, letGoHeld]);
+  useEffect(() => {
+    if (restricted && leasesEnded > 0) letGoHeld();
+  }, [restricted, leasesEnded, letGoHeld]);
 
   useEffect(() => {
     const timers = releaseTimersRef.current;

@@ -43,6 +43,13 @@ const OPERATION_ID_BYTES = 16;
 export const ASSISTANT_ACTIVE = 'assistant_active';
 const RENEW_FRACTION = 0.5;
 
+/**
+ * The board answered an acquire with a refusal: another session controls the
+ * target, or the board allows no control now. Unlike a lease lost on the way
+ * (a QUIC session that reconnected), asking again at once does not help.
+ */
+export class LeaseNotGranted extends Error {}
+
 export function newOperationId(): string {
   const bytes = new Uint8Array(OPERATION_ID_BYTES);
   crypto.getRandomValues(bytes);
@@ -84,7 +91,7 @@ export class HidLeaseSession {
       throw new DOMException('HID lease start was cancelled', 'AbortError');
     }
     if (!response.data.applied || !response.data.leaseId) {
-      throw new Error(response.data.rejection ?? 'HID lease was not granted');
+      throw new LeaseNotGranted(response.data.rejection ?? 'HID lease was not granted');
     }
     this.leaseId = response.data.leaseId;
     this.scheduleRenew(response.data.ttlSeconds ?? ttlSeconds);

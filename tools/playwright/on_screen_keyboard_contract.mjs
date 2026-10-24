@@ -1,11 +1,12 @@
 // The page's on-screen keyboard (web/src/pages/desktop/virtual-keyboard), on a phone and on a desktop, through the
 // built page and the lease. A modifier tapped stays pressed for the next key: its report goes first, then the key
 // with it, then the key up and the modifiers up, as on a keyboard; no report names a modifier as a key, which the
-// board refuses (and a refused report turns remote control off). Ctrl+V, Shift+A and Ctrl+Shift+Esc are typed so, a
+// board refuses (and a refused report ends the lease). Ctrl+V, Shift+A and Ctrl+Shift+Esc are typed so, a
 // modifier tapped twice is pressed and let go alone (the Windows key opens Start), and remote control stays on. A
 // pressed modifier reads white on blue, not white on white.
 import assert from "node:assert/strict";
 import { startApp } from "./app_harness.mjs";
+import { controlIsOn, takeControl } from "./take_control.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
 
 const browser = await launchChromium();
@@ -84,12 +85,7 @@ async function open(phone) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(app.baseUrl, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.click();
-  await page.waitForTimeout(300);
-  if (await confirm.isVisible()) await confirm.click();
-  await confirm.waitFor({ state: "hidden" });
+  await takeControl(page);
   const menu = page
     .locator("svg.lucide-keyboard:not(:has(+ svg.lucide-smartphone))")
     .first();
@@ -177,8 +173,8 @@ try {
       JSON.stringify(reports()),
     );
     assert.equal(
-      await page.getByRole("button", { name: "Enable remote control" }).count(),
-      0,
+      await controlIsOn(page),
+      true,
       `${where}: remote control turned off`,
     );
     if (phone) {

@@ -634,22 +634,36 @@ the lease like a client that vanished.
   server remembers which QUIC session acquired it and gives it back when
   that session's connection closes, when the link goes, or when another
   gateway takes the place; it gives back nothing the session did not take
-  and nothing that a later acquire has replaced.
+  and nothing that a later acquire has replaced. A session that renews or
+  reports through a lease takes it over: after a reconnect the page goes on
+  with the lease it took over the earlier session, which therefore gives it
+  back no more when it closes (2026-10-24: remote control turned off a few
+  seconds after each reconnect, the next renewal refused as
+  `LeaseConflict`). An `/api/ws` socket that closes gives the web session's
+  lease back only if none of the session's sockets is open again within
+  10 s, and at once when the session ends or the server stops.
 - **Order**: the server works through the lease requests of a link one at a
   time, in the order they arrived, and a session's release on its end waits
   behind the requests it made. A request that has reached the owner is
   finished and accounted for even if the link ends meanwhile.
-- **The page** chooses the lease's transport when remote control is
-  enabled: the QUIC session if one is open, HTTPS otherwise
+- **The page** chooses the lease's transport when it takes the lease:
+  the QUIC session if one is open, HTTPS otherwise
   (`web/src/hooks/useHidLease.ts`, `web/src/lib/quic/lease.ts`). Mouse,
   keyboard, the phone keyboard and its extra keys, the on-screen keyboard,
   paste and shortcuts all send through that one lease, so nothing else
   changes: one mouse report in flight, movement merged behind it, keyboard
-  reports in order. A request waits 8 s for its answer, as over HTTPS. A
-  session that is lost fails the lease's requests, which turns control off
-  like any failure; enabled again, control takes HTTPS while QUIC is away.
-  Control that was enabled over HTTPS stays there when a session opens, and
-  Settings say which of the two carries the input.
+  reports in order. A request waits 8 s for its answer, as over HTTPS.
+  Remote control itself is the operator's confirmation, asked by the first
+  press on the screen or the first key (the press does not reach the
+  target) and kept for the page's life; it is given back from the Mouse
+  menu. A window that loses focus gives the lease back, and the next input
+  takes it again without asking. A report that meets a lost lease (a QUIC
+  session that reconnected, a socket opened again) takes the lease again
+  once, over the transport that is there now, and is sent with it; other
+  failures leave the confirmation and let input try again after 1 s. Only
+  a lease the board refuses (another session controls the target) turns
+  control off, with a notice. A lease taken over HTTPS stays there when a
+  session opens, and Settings say which of the two carries the input.
 - **The gateway** serves one input stream per session: the stream the page
   opens after its control stream. It passes one request to the server at a
   time and writes the server's answer back under the page's number; if the

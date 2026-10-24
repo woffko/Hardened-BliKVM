@@ -6,12 +6,7 @@ import { ChevronDownIcon, GripVerticalIcon } from 'lucide-react';
 import Draggable, { DraggableData, DraggableEvent } from 'react-draggable';
 import { useTranslation } from 'react-i18next';
 
-import {
-  isAvailable,
-  supportsMenuItem,
-  supportsRestrictedControls,
-  type CapabilityMenuItem
-} from '@/lib/capabilities.ts';
+import { isAvailable, supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
 import { HARDENED_LOGO_SRC, HARDENED_NAME, HARDENED_SHORT_NAME } from '@/lib/hardened.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { menuBarOccupiesTopAtom, menuDisabledItemsAtom } from '@/jotai/settings.ts';
@@ -30,7 +25,6 @@ import { Collapse, Expand } from './operations';
 import { Picoclaw } from './picoclaw';
 import { Power } from './power';
 import { QualityMonitorButton } from './quality-monitor-button.tsx';
-import { RemoteControl } from './remote-control.tsx';
 import { Screen } from './screen';
 import { Script } from './script';
 import { Settings } from './settings';
@@ -44,7 +38,6 @@ export const Menu = () => {
 
   const capabilities = useAtomValue(capabilitiesAtom);
   const hidAvailable = Boolean(capabilities && isAvailable(capabilities.hid.status));
-  const restrictedHid = supportsRestrictedControls(capabilities);
   const menuDisabledItems = useAtomValue(menuDisabledItemsAtom);
 
   const {
@@ -160,7 +153,6 @@ export const Menu = () => {
 
             <Screen />
             {isEnabled('qualityMonitor') && <QualityMonitorButton />}
-            {restrictedHid && <RemoteControl />}
             {hidAvailable && <LocalKeyboardButton />}
             {hidAvailable && <Keyboard />}
             {hidAvailable && <Mouse />}

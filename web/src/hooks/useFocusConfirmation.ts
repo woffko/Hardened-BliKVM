@@ -31,10 +31,13 @@ export function useFocusConfirmation() {
     if (confirmed) {
       confirmedGlobal = true;
     }
+    // The state has no button of its own any more; the document says it.
+    document.documentElement.dataset.remoteControl = confirmed ? 'on' : 'off';
   }, [confirmed]);
 
-  // Input handlers are passive: only the explicit enable action may open the
-  // confirmation modal. This also makes Cancel sticky across queued reports.
+  // Queued reports only read the decision; a press without it asks through
+  // requestConfirmation, and the reports that follow the press while the
+  // modal is open wait for the same answer (useHidLease).
   const ensureConfirmed = useCallback(async () => confirmedGlobal, []);
 
   const requestConfirmation = useCallback(async () => {

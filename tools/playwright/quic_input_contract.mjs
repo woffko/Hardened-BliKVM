@@ -8,6 +8,7 @@
 // path serves the next time.
 import assert from "node:assert/strict";
 import { startApp } from "./app_harness.mjs";
+import { controlIsOn, releaseControl, takeControl } from "./take_control.mjs";
 import {
   Board,
   connected,
@@ -46,17 +47,11 @@ const keys = (requests) => {
 };
 const typed = (codes) => codes.flatMap((code) => [code, 0]);
 
-async function enableControl(page) {
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
-  await page
-    .getByRole("button", { name: "Disable remote control" })
-    .waitFor({ state: "visible" });
-}
+const enableControl = (page) => takeControl(page);
 const controlIsOff = (page) =>
-  page
-    .getByRole("button", { name: "Enable remote control" })
-    .waitFor({ state: "visible" });
+  page.waitForFunction(
+    () => document.documentElement.dataset.remoteControl === "off",
+  );
 
 // A page whose QUIC session is open, with Settings closed again.
 async function openConnected() {
@@ -135,7 +130,7 @@ try {
     );
     await closeSettings(page);
 
-    await page.getByRole("button", { name: "Disable remote control" }).click();
+    await releaseControl(page);
     await until("the lease is released over the link", () =>
       actions(overQuic()).at(-1) === "release" ? true : null,
     );
@@ -176,27 +171,50 @@ try {
     await finish(page, context);
   }
 
-  // The server refuses, as it does without a confirmation of the target:
-  // control turns off, as it does over HTTPS, and nothing more is sent.
+  // The server refuses, as it does without a current confirmation of the
+  // target (a socket opened again clears it): control stays on, nothing more
+  // is sent at once, and a key a moment later confirms the target again and
+  // takes the lease.
   {
     board.leaseAnswer = () => ({
       status: 200,
       body: { code: -1, msg: "a current focus confirmation is required" },
     });
     const { context, page, errors } = await openConnected();
-    await page.getByRole("button", { name: "Enable remote control" }).click();
-    await page.getByRole("button", { name: "Confirm and control" }).click();
+    await enableControl(page);
+    const focusBefore = app.requests.filter((request) =>
+      request.endsWith("POST /api/hid/focus"),
+    ).length;
     await page.keyboard.press("KeyA");
     await until("the acquire reaches the link", () =>
       overQuic().length >= 1 ? true : null,
     );
-    await controlIsOff(page);
     await page.keyboard.press("KeyB");
     await sleep(300);
     assert.deepEqual(actions(overQuic()), ["acquire"]);
     assert.deepEqual(overHttps(), []);
+    assert.equal(
+      await controlIsOn(page),
+      true,
+      "the refusal turned control off",
+    );
+    board.leaseAnswer = null;
+    await sleep(800);
+    await page.keyboard.press("KeyC");
+    await until("a later key takes the lease again", () =>
+      actions(overQuic()).filter((action) => action === "acquire").length >= 2
+        ? true
+        : null,
+    );
+    assert.ok(
+      app.requests.filter((request) => request.endsWith("POST /api/hid/focus"))
+        .length > focusBefore,
+      "the target was not confirmed again",
+    );
 
-    // A lease that is not granted ends it the same way.
+    // A lease that is not granted turns control off with a notice, and the
+    // next press asks again.
+    await releaseControl(page);
     board.leases.length = 0;
     board.leaseAnswer = () => ({
       status: 200,
@@ -206,22 +224,27 @@ try {
         data: { applied: false, rejection: "lease_conflict" },
       },
     });
-    await page.getByRole("button", { name: "Enable remote control" }).click();
-    await page.getByRole("button", { name: "Confirm and control" }).click();
+    await enableControl(page);
     await page.keyboard.press("KeyA");
     await until("the acquire reaches the link", () =>
       overQuic().length >= 1 ? true : null,
     );
     await controlIsOff(page);
+    await page.getByText("Another session controls the target").waitFor();
+    assert.deepEqual(actions(overQuic()), ["acquire"]);
+    await page.keyboard.press("KeyB");
+    await page
+      .getByRole("button", { name: "Confirm and control" })
+      .waitFor({ state: "visible" });
     assert.deepEqual(actions(overQuic()), ["acquire"]);
     board.leaseAnswer = null;
     assert.deepEqual(errors, []);
     await finish(page, context);
   }
 
-  // The transport is chosen when control is enabled. Control that was
-  // enabled over HTTPS stays there when the session opens, and Settings say
-  // so; enabled again, it goes over the session.
+  // The transport is chosen when the lease is taken. A lease taken over
+  // HTTPS stays there when the session opens, and Settings say so; taken
+  // again, it goes over the session.
   {
     const httpsBefore = overHttps().length;
     const { context, page, errors } = await open();
@@ -248,7 +271,7 @@ try {
     assert.deepEqual(keys(overHttps().slice(httpsBefore)), typed([4, 5]));
     assert.deepEqual(overQuic(), []);
 
-    await page.getByRole("button", { name: "Disable remote control" }).click();
+    await releaseControl(page);
     await until("the lease is released over HTTPS", () =>
       actions(overHttps().slice(httpsBefore)).at(-1) === "release"
         ? true
@@ -266,8 +289,9 @@ try {
     await finish(page, context);
   }
 
-  // The session is lost while control is on: control turns off, and enabled
-  // again it works over HTTPS while QUIC is away.
+  // The session is lost while control is on: the key that finds no session
+  // takes the lease again over HTTPS and is sent with it, and control stays
+  // on, without asking (2026-10-24: control turned off at every reconnect).
   {
     const { context, page, errors } = await openConnected();
     await enableControl(page);
@@ -279,16 +303,28 @@ try {
     await board.stopGateway();
     // The next key finds no session.
     await page.keyboard.press("KeyB");
-    await controlIsOff(page);
-    assert.deepEqual(keys(overQuic()), typed([4]));
-
-    await enableControl(page);
-    await page.keyboard.press("KeyC");
-    await until("the report goes over HTTPS", () =>
-      keys(overHttps().slice(httpsBefore)).length >= 2 ? true : null,
+    await until("the key goes over HTTPS", () =>
+      keys(overHttps().slice(httpsBefore)).length >= 1 ? true : null,
     );
-    assert.deepEqual(keys(overHttps().slice(httpsBefore)), typed([6]));
+    assert.deepEqual(keys(overQuic()), typed([4]));
     assert.equal(actions(overHttps().slice(httpsBefore))[0], "acquire");
+    assert.equal(
+      await controlIsOn(page),
+      true,
+      "the lost session took control",
+    );
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Confirm and control" })
+        .isVisible(),
+      false,
+      "the lost session asked for control again",
+    );
+    await page.keyboard.press("KeyC");
+    await until("the next report goes over HTTPS", () =>
+      keys(overHttps().slice(httpsBefore)).length >= 4 ? true : null,
+    );
+    assert.deepEqual(keys(overHttps().slice(httpsBefore)), typed([5, 6]));
     board.startGateway();
     await board.gatewayOnTheLink();
     assert.deepEqual(errors, []);
@@ -304,8 +340,7 @@ try {
       body: { code: -401, msg: "unauthorized" },
     });
     board.loggedOut = true;
-    await page.getByRole("button", { name: "Enable remote control" }).click();
-    await page.getByRole("button", { name: "Confirm and control" }).click();
+    await enableControl(page);
     await page.keyboard.press("KeyA");
     await until("the page asks for a login", () =>
       /\/auth\/login/.test(page.url()),

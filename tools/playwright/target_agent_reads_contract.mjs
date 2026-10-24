@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
+import { takeControl } from "./take_control.mjs";
 
 const browser = await launchChromium();
 const feature = (availability) => ({
@@ -302,19 +303,15 @@ try {
   await monitorsMenu.click();
   await page
     .getByTestId("agent-monitors-unread")
-    .getByText("Enable remote control to read the target's monitors")
+    .getByText(
+      "Click the screen and confirm remote control to read the target's monitors",
+    )
     .waitFor();
   await monitorsMenu.click();
   await page.waitForTimeout(1500);
   assert.deepEqual(calls, []);
 
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.click();
-  // A click while the confirmation still opens can be lost.
-  await page.waitForTimeout(300);
-  if (await confirm.isVisible()) await confirm.click();
-  await confirm.waitFor({ state: "hidden" });
+  await takeControl(page);
 
   // Under remote control and before any input, the Monitors menu takes the
   // lease and reads the monitors; a read the board refuses says why, and

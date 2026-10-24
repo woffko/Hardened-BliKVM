@@ -36,7 +36,8 @@ find.
   [`docs/design/screen-area-v1.md`](docs/design/screen-area-v1.md)), a touch
   layout for phones with an on-screen keyboard and a row of extra keys, the
   ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
-  storage).
+  storage). Remote control is taken by the first click, tap or key on the
+  screen after a confirmation, and given back from the Mouse menu.
 - **Video**, chosen in the Screen menu: MJPEG (the capture passed through),
   H.264 and VP8 (libvpx) over WebRTC with a choice of quality, and H.264
   over the QUIC transport. H.264 is encoded by the H616's video engine

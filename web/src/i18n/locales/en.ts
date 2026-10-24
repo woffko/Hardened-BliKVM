@@ -283,6 +283,10 @@ const en = {
         }
       }
     },
+    control: {
+      otherSession: 'Another session controls the target',
+      refused: 'Remote control was refused: {{reason}}'
+    },
     mouse: {
       title: 'Mouse',
       cursor: 'Cursor style',
@@ -337,6 +341,7 @@ const en = {
       },
       requestPointer: 'Using relative mode. Please click desktop to get mouse pointer.',
       resetHid: 'Reset HID',
+      releaseControl: 'Release remote control',
       autostart: {
         title: 'Autostart',
         empty: 'No autostart scripts. Uploads are owner-only.',
@@ -646,7 +651,8 @@ const en = {
           chooseBoardHint:
             "No monitor is known as the board's: choose the one whose picture the board shows, and the mouse is kept on it",
           monitorsUnderControl: 'The monitors are read while you control the target',
-          monitorsNeedControl: "Enable remote control to read the target's monitors",
+          monitorsNeedControl:
+            "Click the screen and confirm remote control to read the target's monitors",
           monitorsReading: "Reading the target's monitors…",
           targetLayout: "Target's layout: {{name}}",
           layoutSync:
@@ -657,7 +663,8 @@ const en = {
           startExplain:
             "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the agent from the board's drive BLIKVMAGENT. The target must be signed in, with an English (US) keyboard layout in front.",
           startHint: 'Types Win+R and a line that starts the agent from the board’s drive',
-          startNeedsControl: 'Enable remote control to start the agent from here',
+          startNeedsControl:
+            'Click the screen and confirm remote control to start the agent from here',
           startNoDigest:
             "The board does not name its agent's checksum, so it is not started from here",
           startWaiting: 'Typed; waiting for the agent to connect',

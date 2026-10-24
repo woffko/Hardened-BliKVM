@@ -24,6 +24,7 @@ import { HidMode } from './hid-mode.tsx';
 import { MobilePointerMode as MobilePointerModeMenu } from './mobile-pointer-mode.tsx';
 import { MouseMode } from './mouse-mode.tsx';
 import { PointerSensitivity } from './pointer-sensitivity.tsx';
+import { ReleaseControl } from './release-control.tsx';
 import { ResetHid } from './reset-hid.tsx';
 import { Speed } from './speed.tsx';
 
@@ -81,6 +82,7 @@ export const Mouse = () => {
 
       {!restricted && <HidMode />}
       {!restricted && <ResetHid />}
+      {restricted && <ReleaseControl />}
     </div>
   );
 
@@ -92,6 +94,7 @@ export const Mouse = () => {
       <Speed />
       <Divider style={{ margin: '10px 0' }} />
       {!restricted && <ResetHid />}
+      {restricted && <ReleaseControl />}
     </div>
   );
 

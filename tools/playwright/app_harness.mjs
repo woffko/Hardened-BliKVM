@@ -127,6 +127,9 @@ export async function startApp({
   dist,
   manifest = defaultManifest(),
   hidLeaseApplied = true,
+  // The first reports refused as a lease that ended under the page (a QUIC
+  // session that reconnected): the page takes the lease again.
+  lostReports = 0,
   // Serves `/api/stream/mjpeg` as `(request, response)`: a stream that goes
   // on, where a page route can answer only with a whole body.
   mjpeg = null,
@@ -190,21 +193,32 @@ export async function startApp({
         return;
       }
       if (route === "/api/hid/lease" && request.method === "POST") {
-        json(
-          hidLeaseApplied
-            ? {
-                code: 0,
-                data: {
-                  applied: true,
-                  leaseId: "b".repeat(32),
-                  ttlSeconds: 20,
+        // The body is read first: the answer may depend on the action.
+        request.on("end", () => {
+          if (detail.body?.action === "report" && lostReports > 0) {
+            lostReports -= 1;
+            json({
+              code: 0,
+              data: { applied: false, rejection: "lease_conflict" },
+            });
+            return;
+          }
+          json(
+            hidLeaseApplied
+              ? {
+                  code: 0,
+                  data: {
+                    applied: true,
+                    leaseId: "b".repeat(32),
+                    ttlSeconds: 20,
+                  },
+                }
+              : {
+                  code: 0,
+                  data: { applied: false, rejection: "backend_unavailable" },
                 },
-              }
-            : {
-                code: 0,
-                data: { applied: false, rejection: "backend_unavailable" },
-              },
-        );
+          );
+        });
         return;
       }
       if (route === "/api/application-power" && request.method === "POST") {

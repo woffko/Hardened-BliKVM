@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { startApp } from "./app_harness.mjs";
+import { takeControl } from "./take_control.mjs";
 
 const { chromium } = await import(
   pathToFileURL(
@@ -76,8 +77,7 @@ async function open(stored = {}) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(app.baseUrl, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
+  await takeControl(page);
   await page.locator("svg.lucide-smartphone").first().locator("..").tap();
   await page.getByTestId("key-helper").waitFor();
   return { context, page, errors };

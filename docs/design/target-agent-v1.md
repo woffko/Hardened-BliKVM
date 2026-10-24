@@ -229,7 +229,8 @@ through the owner; the platform names the feature `target_agent`.
   monitors with "This is the board's" beside the others. Opened under
   remote control it reads the monitors again, taking the keyboard's and
   mouse's lease without input if no input took it yet, and says why a
-  read failed; without remote control it says to enable it. A change from
+  read failed; without remote control it says to take it (a press on the
+  screen and the confirmation). A change from
   the menu or the settings waits in the page's one dialog, which counts
   down to the agent's putting it back and says how long the change took
   (decision 3). Keep takes the lease first, as every call does, and the
