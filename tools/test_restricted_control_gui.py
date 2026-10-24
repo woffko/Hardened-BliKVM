@@ -164,7 +164,9 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("generation !== queueGeneration", hook)
         self.assertIn("startingSession", hook)
         self.assertIn("!confirmedRef.current", hook)
-        self.assertIn("window.addEventListener('blur', stopControl)", hook)
+        # A window without focus gives the lease back and keeps the
+        # confirmation (2026-10-24).
+        self.assertIn("window.addEventListener('blur', releaseLease)", hook)
         self.assertIn("document.visibilityState === 'hidden'", hook)
 
     def test_mouse_uses_the_lease_path_when_advertised(self) -> None:
@@ -238,9 +240,13 @@ class RestrictedControlGuiTests(unittest.TestCase):
         hid_hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
         self.assertIn("useFocusConfirmation", hid_hook)
         self.assertIn("ensureConfirmed", hid_hook)
-        control = (ROOT / "web/src/pages/desktop/menu/remote-control.tsx").read_text()
-        self.assertIn("Enable remote control", control)
-        self.assertIn("disableControl", control)
+        # The first press asks; the toolbar has no button for it, and the
+        # Mouse menu gives control back (2026-10-24).
+        self.assertIn("if (isPress(report)) void requestConfirmation();", hid_hook)
+        self.assertFalse((ROOT / "web/src/pages/desktop/menu/remote-control.tsx").exists())
+        release = (ROOT / "web/src/pages/desktop/menu/mouse/release-control.tsx").read_text()
+        self.assertIn("disableControl", release)
+        self.assertIn("t('mouse.releaseControl')", release)
 
 
 if __name__ == "__main__":
