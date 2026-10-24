@@ -270,6 +270,30 @@ impl QuicTransport {
         }
     }
 
+    /// Notes that a session renewed or reported through a lease: after a
+    /// reconnect the page goes on with the lease it took over the earlier
+    /// session, so that session must not give it back when it closes. The
+    /// lease is this session's now, and no other session of the web session
+    /// names it. `false` if the session is no longer there.
+    fn adopt_lease(&self, reference: &str, lease: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(token) = inner
+            .sessions
+            .get(reference)
+            .map(|open| open.web.token.clone())
+        else {
+            return false;
+        };
+        for (other, open) in inner.sessions.iter_mut() {
+            if other == reference {
+                open.lease = Some(lease.to_string());
+            } else if open.web.token == token && open.lease.as_deref() == Some(lease) {
+                open.lease = None;
+            }
+        }
+        true
+    }
+
     /// Holds the encoder's demand for a session that watches, or (`None`)
     /// lets it go. `false` if the session is no longer there; the demand is
     /// then let go with the guard.
@@ -589,6 +613,11 @@ async fn serve_lease(
         );
     };
     let releases = matches!(request, crate::hid::HidLeaseBody::Release { .. });
+    let used = match &request {
+        crate::hid::HidLeaseBody::Renew { lease_id, .. }
+        | crate::hid::HidLeaseBody::Report { lease_id, .. } => Some(lease_id.clone()),
+        _ => None,
+    };
     match crate::hid::serve_lease(state, &session, request).await {
         Ok(response) => {
             if let Some(lease) = response.lease_id.as_ref() {
@@ -598,6 +627,8 @@ async fn serve_lease(
                 }
             } else if releases && response.applied {
                 transport.note_lease(reference, None);
+            } else if let (Some(lease), true) = (used, response.applied) {
+                transport.adopt_lease(reference, &lease);
             }
             lease_answer(StatusCode::OK, ApiResponse::ok(response))
         }
@@ -1147,6 +1178,33 @@ mod tests {
         assert!(second.recv().await.is_some());
         transport.disconnected(later);
         assert_eq!(transport.port(), None);
+    }
+
+    /// After a reconnect the page renews and reports through the lease it
+    /// took over the earlier session; that session's late close must not
+    /// give the lease back (2026-10-24: remote control turned off a few
+    /// seconds after each reconnect, with a renewal refused as LeaseConflict).
+    #[tokio::test]
+    async fn a_lease_used_over_a_later_session_stays_when_the_earlier_one_closes() {
+        let (transport, session, _queued) = transport_with_gateway().await;
+        let open = |transport: &QuicTransport| {
+            let token = transport.grant(&session, page_time()).ok().unwrap().token;
+            transport.redeem(&token).unwrap()
+        };
+        let lease = "5a".repeat(16);
+        let earlier = open(&transport);
+        assert!(transport.note_lease(&earlier, Some(lease.clone())));
+        let later = open(&transport);
+        assert!(transport.adopt_lease(&later, &lease));
+        assert_eq!(transport.closed(&earlier), None);
+        assert_eq!(
+            transport.closed(&later),
+            Some((session.token.clone(), lease.clone()))
+        );
+        assert!(
+            !transport.adopt_lease(&later, &lease),
+            "the session is gone"
+        );
     }
 
     /// A session that ends says which lease it held, once, whatever ends
