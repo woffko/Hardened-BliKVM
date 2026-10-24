@@ -200,6 +200,7 @@ pub async fn serve(
     } else {
         None
     };
+    let why = ending(reason.as_ref(), connection.quic_connection().close_reason());
     if let Some(reason) = reason {
         farewell(
             &connection,
@@ -210,7 +211,22 @@ pub async fn serve(
     }
     connection.close(VarInt::from_u32(0), b"");
     link.closed(&session);
-    eprintln!("quic gateway: session from {peer} ended");
+    eprintln!("quic gateway: session from {peer} ended ({why})");
+}
+
+/// Why a session ended, as the journal says it: the gateway's reason, or the
+/// connection's (a path silent for the idle timeout reads "timed out"), or
+/// the page's own end, its bye or its control stream (2026-10-24: a phone's
+/// sessions ended every 30 to 60 s, and the journal did not say why).
+fn ending(
+    reason: Option<&Closing>,
+    connection: Option<wtransport::quinn::ConnectionError>,
+) -> String {
+    match (reason, connection) {
+        (Some(closing), _) => format!("the gateway ended it: {closing:?}"),
+        (None, Some(error)) => format!("its connection: {error}"),
+        (None, None) => "the page ended it".to_owned(),
+    }
 }
 
 /// Stops a task when the session that started it ends.
@@ -462,6 +478,19 @@ async fn farewell(connection: &Connection, control: &mut Control, message: &Gate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_journal_says_why_a_session_ended() {
+        assert_eq!(
+            ending(None, Some(wtransport::quinn::ConnectionError::TimedOut)),
+            "its connection: timed out"
+        );
+        assert_eq!(
+            ending(Some(&Closing::Session), None),
+            "the gateway ended it: Session"
+        );
+        assert_eq!(ending(None, None), "the page ended it");
+    }
 
     #[test]
     fn only_the_boards_own_page_may_open_a_session() {
