@@ -100,6 +100,8 @@ pub(crate) struct AppState {
     pub control: Option<Arc<bli_kvm_control_client::ControlClient>>,
     pub focus: Arc<Mutex<hid::FocusChallengeStore>>,
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
+    /// The open `/api/ws` sockets of each web session.
+    pub ws_sockets: Arc<ws::OpenSockets>,
     pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
     pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
     #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
@@ -563,6 +565,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }),
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
         hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
+        ws_sockets: Arc::new(ws::OpenSockets::default()),
         terminal_tickets: Arc::new(Mutex::new(terminal::TicketStore::new())),
         picoclaw: picoclaw_available(&options).then(|| {
             Arc::new(picoclaw::Picoclaw::new(
