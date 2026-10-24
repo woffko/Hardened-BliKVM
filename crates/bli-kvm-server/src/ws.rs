@@ -199,6 +199,8 @@ pub(crate) async fn hid_socket(
 async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket) {
     state.ws_sockets.opened(&session.token);
     serve_socket(&state, &session, &mut socket).await;
+    // The socket ends now; only the lease's release may wait.
+    drop(socket);
     let others = state.ws_sockets.closed(&session.token);
     match release_after_close(
         state.options.shutdown.is_stopping(),
