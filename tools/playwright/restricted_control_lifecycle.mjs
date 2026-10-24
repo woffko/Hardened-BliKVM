@@ -86,6 +86,16 @@ try {
   await page.waitForTimeout(100);
   assert.equal(await confirm.isVisible(), false, "a move asked for control");
   assert.deepEqual(hidActions(), [], "input after Cancel reached HID");
+  // A click on the screen that closes an open menu asks nothing.
+  await page.locator("svg.lucide-mouse").first().click();
+  await page.locator(".ant-popover:not(.ant-popover-hidden)").first().waitFor();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(400);
+  assert.equal(
+    await confirm.isVisible(),
+    false,
+    "a click closing a menu asked",
+  );
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await confirm.waitFor({ state: "visible" });
   await confirm.click();

@@ -242,7 +242,8 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("ensureConfirmed", hid_hook)
         # The first press asks; the toolbar has no button for it, and the
         # Mouse menu gives control back (2026-10-24).
-        self.assertIn("if (isPress(report)) void requestConfirmation();", hid_hook)
+        self.assertIn("isPress(report) && (report.mode === 'keyboard' || !pressClosesMenu())", hid_hook)
+        self.assertIn("void requestConfirmation();", hid_hook)
         self.assertFalse((ROOT / "web/src/pages/desktop/menu/remote-control.tsx").exists())
         release = (ROOT / "web/src/pages/desktop/menu/mouse/release-control.tsx").read_text()
         self.assertIn("disableControl", release)

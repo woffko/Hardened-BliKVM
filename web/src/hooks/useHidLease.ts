@@ -12,6 +12,7 @@ import { quicSession } from '@/lib/quic/session.ts';
 import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { leaseEndedAtom } from '@/jotai/restricted-control.ts';
+import { submenuOpenCountAtom } from '@/jotai/settings.ts';
 import { leaseTransportAtom } from '@/jotai/transport.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
@@ -38,6 +39,21 @@ const mouseQueue = new MouseQueue(
 let consumers = 0;
 let lifecycleCleanup: (() => void) | null = null;
 let retryAt = 0;
+// When the last open menu closed: a menu closes on the press that lands on
+// the screen before the screen hears it, so that press only closed it.
+const MENU_CLOSING_MS = 150;
+let menuClosedAt = -Infinity;
+getDefaultStore().sub(submenuOpenCountAtom, () => {
+  if (getDefaultStore().get(submenuOpenCountAtom) === 0) menuClosedAt = performance.now();
+});
+
+/** Whether a pointer's press now only closes a menu. */
+function pressClosesMenu(): boolean {
+  return (
+    getDefaultStore().get(submenuOpenCountAtom) > 0 ||
+    performance.now() - menuClosedAt < MENU_CLOSING_MS
+  );
+}
 
 /** Gives the lease back and ends the reports queued for it. */
 function cancelSharedSession() {
@@ -219,8 +235,11 @@ export function useHidLease() {
     (report: HidReport) => {
       if (!manifestRef.current) return;
       if (!confirmedRef.current) {
-        // The first press asks for control; it does not reach the target.
-        if (isPress(report)) void requestConfirmation();
+        // The first press asks for control; it does not reach the target. A
+        // press while a menu is open only closes the menu.
+        if (isPress(report) && (report.mode === 'keyboard' || !pressClosesMenu())) {
+          void requestConfirmation();
+        }
         return;
       }
       if (report.mode === 'keyboard') {

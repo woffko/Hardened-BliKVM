@@ -8,16 +8,27 @@
  * confirms.
  */
 export async function takeControl(page, { tap = false } = {}) {
-  if (tap) {
-    const screen = page.locator("#screen").first();
-    await screen.waitFor({ state: "visible" });
-    const box = await screen.boundingBox();
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-  } else {
-    await page.keyboard.press("Shift");
-  }
   const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.waitFor({ state: "visible", timeout: 5000 });
+  // A page that has not loaded what it offers yet hears no press: it is
+  // pressed again until the confirmation opens.
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    if (tap) {
+      const screen = page.locator("#screen").first();
+      await screen.waitFor({ state: "visible" });
+      const box = await screen.boundingBox();
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    } else {
+      await page.keyboard.press("Shift");
+    }
+    const opened = await confirm
+      .waitFor({ state: "visible", timeout: 1000 })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) break;
+    if (Date.now() > deadline)
+      throw new Error("no confirmation of remote control opened");
+  }
   if (tap) await confirm.tap();
   else await confirm.click();
   await confirm.waitFor({ state: "hidden" });
