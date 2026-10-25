@@ -6,13 +6,12 @@
 //! closes when the web session expires.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Json,
     extract::{
-        ConnectInfo, Query, State,
+        Query, State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
@@ -97,8 +96,7 @@ struct WindowSize {
 pub(crate) async fn unlock(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
-    ConnectInfo(address): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     Json(body): Json<UnlockBody>,
 ) -> AppResult<Json<ApiResponse<UnlockView>>> {
     crate::admin_features::require(AdminFeature::Terminal)?;
@@ -110,38 +108,60 @@ pub(crate) async fn unlock(
     if body.username != session.username {
         return Err(AppError::InvalidCredentials);
     }
-    let source = crate::auth::rate_limit::client_address(address, &headers);
-    let limiter_key = format!("terminal:{}", session.username);
-    let locked = || AppError::RateLimited("terminal unlock locked after repeated failures".into());
-    if state
-        .login_limiter
-        .lock()
-        .await
-        .is_locked(&source, &limiter_key)
-    {
-        return Err(locked());
-    }
-    let permit = state.accounts.verification_permit().await;
-    let verified = crate::auth::password::verify_blocking(
-        state.accounts.clone(),
-        session.username.clone(),
-        body.password.clone(),
+    verify_unlock(
+        &state.accounts,
+        &state.login_limiter,
+        &session.username,
+        &source,
+        &body.password,
     )
     .await?;
-    drop(permit);
-    let mut limiter = state.login_limiter.lock().await;
-    if !verified {
-        let _ = limiter.record_failure(&source, &limiter_key);
-        return Err(AppError::InvalidCredentials);
-    }
-    limiter.record_success(&source, &limiter_key);
-    drop(limiter);
     let ticket = state.terminal_tickets.lock().await.issue(&session.token);
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|now| (now + TICKET_TTL).as_secs())
         .unwrap_or(0);
     Ok(Json(ApiResponse::ok(UnlockView { ticket, expires_at })))
+}
+
+/// Checks the session's password for an unlock through the login limiter, as
+/// a login is checked: a password longer than a login's is refused before the
+/// limiter or the hash see it, and the lockout is checked again once a
+/// verification place is free, so parallel guesses from one session cannot
+/// outrun it (code audit of 2026-10-20, AUD-16.1).
+async fn verify_unlock(
+    accounts: &std::sync::Arc<crate::auth::password::AccountStore>,
+    limiter: &tokio::sync::Mutex<crate::auth::rate_limit::LoginRateLimiter>,
+    username: &str,
+    source: &str,
+    password: &str,
+) -> AppResult<()> {
+    if password.len() > 256 {
+        return Err(AppError::BadRequest("invalid username or password".into()));
+    }
+    let limiter_key = format!("terminal:{username}");
+    let locked = || AppError::RateLimited("terminal unlock locked after repeated failures".into());
+    if limiter.lock().await.is_locked(source, &limiter_key) {
+        return Err(locked());
+    }
+    let permit = accounts.verification_permit().await;
+    if limiter.lock().await.is_locked(source, &limiter_key) {
+        return Err(locked());
+    }
+    let verified = crate::auth::password::verify_blocking(
+        accounts.clone(),
+        username.to_string(),
+        password.to_string(),
+    )
+    .await?;
+    drop(permit);
+    let mut limiter = limiter.lock().await;
+    if !verified {
+        let _ = limiter.record_failure(source, &limiter_key);
+        return Err(AppError::InvalidCredentials);
+    }
+    limiter.record_success(source, &limiter_key);
+    Ok(())
 }
 
 pub(crate) async fn connect(
@@ -317,6 +337,70 @@ async fn open_terminal(socket: &std::path::Path) -> Result<tokio::net::UnixStrea
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn store_and_limiter() -> (
+        tempfile::TempDir,
+        std::sync::Arc<crate::auth::password::AccountStore>,
+        tokio::sync::Mutex<crate::auth::rate_limit::LoginRateLimiter>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::auth::password::AccountStore::new(dir.path().join("account.json"));
+        store
+            .create_initial("operator", "initial password")
+            .unwrap();
+        let limiter =
+            tokio::sync::Mutex::new(crate::auth::rate_limit::LoginRateLimiter::new(1, 600));
+        (dir, std::sync::Arc::new(store), limiter)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn parallel_unlocks_from_one_session_cannot_outrun_the_lockout() {
+        let (_dir, store, limiter) = store_and_limiter();
+        let limiter = std::sync::Arc::new(limiter);
+        let guesses = (0..10).map(|index| {
+            let store = std::sync::Arc::clone(&store);
+            let limiter = std::sync::Arc::clone(&limiter);
+            tokio::spawn(async move {
+                verify_unlock(
+                    &store,
+                    &limiter,
+                    "operator",
+                    "192.0.2.10",
+                    &format!("wrong guess {index}"),
+                )
+                .await
+            })
+        });
+        let mut checked = 0;
+        for guess in guesses.collect::<Vec<_>>() {
+            match guess.await.unwrap() {
+                Err(AppError::InvalidCredentials) => checked += 1,
+                Err(AppError::RateLimited(_)) => {}
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        // Two verifications run at once; once one has failed the rest are
+        // refused, not checked.
+        assert!(checked <= 2, "{checked} guesses were checked");
+    }
+
+    #[tokio::test]
+    async fn an_unlock_password_is_bounded_as_a_login_password() {
+        let (_dir, store, limiter) = store_and_limiter();
+        assert!(matches!(
+            verify_unlock(&store, &limiter, "operator", "192.0.2.10", &"x".repeat(300)).await,
+            Err(AppError::BadRequest(_))
+        ));
+        verify_unlock(
+            &store,
+            &limiter,
+            "operator",
+            "192.0.2.10",
+            "initial password",
+        )
+        .await
+        .unwrap();
+    }
 
     #[test]
     fn tickets_are_single_use_and_bound_to_the_session() {

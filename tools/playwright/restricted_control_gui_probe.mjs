@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { takeControl } from "./take_control.mjs";
+
 const [
   modulePath,
   executablePath,
@@ -92,10 +94,7 @@ try {
   });
 
   phase = "enable-control";
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.waitFor({ state: "visible", timeout: 5000 });
-  await confirm.click();
+  await takeControl(page);
 
   phase = "key";
   await page.keyboard.press("KeyA");

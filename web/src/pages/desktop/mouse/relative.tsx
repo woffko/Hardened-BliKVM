@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { MouseReportRelative } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { pointerSensitivityAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, screenElementAtom } from '@/jotai/screen.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import {
@@ -23,6 +23,8 @@ export const Relative = () => {
   const { restricted, reportHid } = useHidLease();
 
   const resolution = useAtomValue(resolutionAtom);
+  // The element the view draws on; input binds to it again when it changes.
+  const screenFromView = useAtomValue(screenElementAtom);
   const scrollDirection = useAtomValue(scrollDirectionAtom);
   const scrollInterval = useAtomValue(scrollIntervalAtom);
   const pointerSensitivity = useAtomValue(pointerSensitivityAtom);
@@ -38,7 +40,7 @@ export const Relative = () => {
   showMessageRef.current = showMessage;
 
   useEffect(() => {
-    const screen = document.getElementById('screen');
+    const screen = screenFromView ?? document.getElementById('screen');
     if (!screen) return;
     const target = document.getElementById('kvm-pointer-surface') ?? screen;
 
@@ -148,7 +150,7 @@ export const Relative = () => {
       target.removeEventListener('contextmenu', disableEvent);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [resolution, scrollDirection, scrollInterval, pointerSensitivity]);
+  }, [screenFromView, resolution, scrollDirection, scrollInterval, pointerSensitivity]);
 
   // Mouse handler
   function handleMouseEvent(event: MouseRelativeEvent) {

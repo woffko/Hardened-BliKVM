@@ -13,6 +13,7 @@ import { Oled } from './oled.tsx';
 import { Reboot } from './reboot.tsx';
 import { SessionLock } from './session-lock.tsx';
 import { Ssh } from './ssh.tsx';
+import { TargetAgent } from './target-agent.tsx';
 import { VirtualDevices } from './virtual-devices.tsx';
 
 export const Device = () => {
@@ -33,8 +34,13 @@ export const Device = () => {
         {has('device_hid_only') && (
           <HidOnly readOnly={!boardFeatureIsWritable(capabilities, 'device_hid_only')} />
         )}
+        {has('target_agent') && (
+          <TargetAgent readOnly={!boardFeatureIsWritable(capabilities, 'target_agent')} />
+        )}
         {has('device_virtual_devices') && <VirtualDevices />}
-        {has('device_oled') && <Oled />}
+        {has('device_oled') && (
+          <Oled readOnly={!boardFeatureIsWritable(capabilities, 'device_oled')} />
+        )}
         {has('device_mouse_jiggler') && (
           <MouseJiggler readOnly={!boardFeatureIsWritable(capabilities, 'device_mouse_jiggler')} />
         )}

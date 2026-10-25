@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 
 import { startApp } from "./app_harness.mjs";
+import {
+  controlIsOn,
+  releaseControl,
+  serveStillPicture,
+  takeControl,
+} from "./take_control.mjs";
 
 // A release request is asynchronous; poll for it instead of assuming a fixed
 // delay, which a loaded host can exceed.
@@ -43,78 +49,110 @@ async function openDesktop(options = {}) {
     },
   ]);
   const page = await context.newPage();
+  await page.goto("about:blank");
+  await serveStillPicture(page);
   await page.goto(`${baseUrl}/#/`, { waitUntil: "networkidle" });
   await page.waitForFunction(
     () => document.title === "Remote Desktop - Hardened BliKVM",
+  );
+  await page.waitForFunction(
+    () => document.querySelector("img#screen")?.naturalWidth > 0,
   );
   return { context, page };
 }
 
 try {
   const { context, page } = await openDesktop();
-  const enable = page.getByRole("button", { name: "Enable remote control" });
-  await enable.waitFor({ state: "visible" });
-
-  await page.keyboard.press("KeyA");
-  await page.waitForTimeout(50);
-  assert.deepEqual(
-    hidActions(),
-    [],
-    "input before explicit enable reached HID",
+  const confirm = page.getByRole("button", { name: "Confirm and control" });
+  const count = (action) =>
+    hidActions().filter((candidate) => candidate === action).length;
+  assert.equal(
+    await page.getByRole("button", { name: "Enable remote control" }).count(),
+    0,
+    "the toolbar still has a control button",
   );
 
-  await enable.click();
-  const confirmation = page.getByRole("button", {
-    name: "Confirm and control",
-  });
+  // A key before any confirmation asks for control and reaches nothing.
+  await page.keyboard.press("KeyA");
+  await confirm.waitFor({ state: "visible" });
+  assert.deepEqual(hidActions(), [], "the press that asked reached HID");
   await page.getByRole("button", { name: "Cancel" }).click();
-  await confirmation.waitFor({ state: "hidden" });
-  await page.keyboard.press("KeyA");
-  await page.waitForTimeout(50);
-  assert.deepEqual(
-    hidActions(),
-    [],
-    "input after Cancel reopened or reached HID",
-  );
-  assert.equal(await confirmation.isVisible(), false, "Cancel was not sticky");
-
-  await enable.click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
-  await page.keyboard.press("KeyA");
-  await page.waitForFunction(() =>
-    performance
-      .getEntriesByType("resource")
-      .some((entry) => entry.name.includes("/api/hid/lease")),
-  );
-  await page.getByRole("button", { name: "Disable remote control" }).click();
+  await confirm.waitFor({ state: "hidden" });
+  // A move asks nothing; the next press asks again.
+  const screen = page.locator("#screen").first();
+  const box = await screen.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3);
   await page.waitForTimeout(100);
-  assert.ok(hidActions().includes("acquire"));
-  assert.ok(hidActions().includes("report"));
-  assert.ok(hidActions().includes("release"));
+  assert.equal(await confirm.isVisible(), false, "a move asked for control");
+  assert.deepEqual(hidActions(), [], "input after Cancel reached HID");
+  // A click on the screen that closes an open menu asks nothing.
+  await page.locator("svg.lucide-mouse").first().click();
+  await page.locator(".ant-popover:not(.ant-popover-hidden)").first().waitFor();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(400);
+  assert.equal(
+    await confirm.isVisible(),
+    false,
+    "a click closing a menu asked",
+  );
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await confirm.waitFor({ state: "visible" });
+  await confirm.click();
+  await confirm.waitFor({ state: "hidden" });
+  assert.deepEqual(hidActions(), [], "the press that asked reached HID");
+  assert.equal(await controlIsOn(page), true);
 
-  const releasesBeforeBlur = hidActions().filter(
-    (action) => action === "release",
-  ).length;
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
+  await page.keyboard.press("KeyA");
+  assert.ok(
+    await eventually(() => count("report") > 0),
+    "a key after confirming was not sent",
+  );
+  assert.ok(hidActions().includes("acquire"));
+
+  // A window without focus gives the lease back but keeps the
+  // confirmation: the next key takes the lease again without asking.
   await page.keyboard.down("KeyB");
   await page.waitForTimeout(100);
+  const releasesBeforeBlur = count("release");
+  const acquiresBeforeBlur = count("acquire");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   assert.ok(
-    await eventually(
-      () =>
-        hidActions().filter((action) => action === "release").length >
-        releasesBeforeBlur,
-    ),
+    await eventually(() => count("release") > releasesBeforeBlur),
     "blur did not release the active lease",
   );
   await page.keyboard.up("KeyB");
+  assert.equal(await controlIsOn(page), true, "blur took the confirmation");
+  await page.keyboard.press("KeyC");
+  assert.ok(
+    await eventually(() => count("acquire") > acquiresBeforeBlur),
+    "the key after blur did not take the lease again",
+  );
+  assert.equal(
+    await confirm.isVisible(),
+    false,
+    "the key after blur asked again",
+  );
 
-  const releasesBeforeUnmount = hidActions().filter(
-    (action) => action === "release",
-  ).length;
-  await page.getByRole("button", { name: "Enable remote control" }).click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
+  // The Mouse menu gives control back; the next press asks again.
+  const releasesBeforeMenu = count("release");
+  await releaseControl(page);
+  assert.ok(
+    await eventually(() => count("release") > releasesBeforeMenu),
+    "Release remote control did not release the lease",
+  );
+  const reportsAfterRelease = count("report");
+  await page.keyboard.press("KeyD");
+  await confirm.waitFor({ state: "visible" });
+  assert.equal(
+    count("report"),
+    reportsAfterRelease,
+    "a key after the release was sent",
+  );
+  await confirm.click();
+  await confirm.waitFor({ state: "hidden" });
+
+  const releasesBeforeUnmount = count("release");
   await page.keyboard.press("KeyC");
   await page.waitForTimeout(100);
   await page.evaluate(() => {
@@ -122,15 +160,12 @@ try {
   });
   await page.waitForURL(`${baseUrl}/#/auth/login`);
   assert.ok(
-    await eventually(
-      () =>
-        hidActions().filter((action) => action === "release").length >
-        releasesBeforeUnmount,
-    ),
+    await eventually(() => count("release") > releasesBeforeUnmount),
     "desktop unmount did not release the active lease",
   );
   await context.close();
 
+  // A phone: a tap on the screen asks; Cancel contacts nothing.
   await new Promise((resolve) => setTimeout(resolve, 200));
   const mobileStart = requestDetails.length;
   const mobile = await openDesktop({
@@ -138,11 +173,13 @@ try {
     isMobile: true,
     hasTouch: true,
   });
-  const mobileEnable = mobile.page.getByRole("button", {
-    name: "Enable remote control",
-  });
-  await mobileEnable.waitFor({ state: "visible" });
-  await mobileEnable.click();
+  const mobileScreen = mobile.page.locator("#screen").first();
+  await mobileScreen.waitFor({ state: "visible" });
+  const mobileBox = await mobileScreen.boundingBox();
+  await mobile.page.touchscreen.tap(
+    mobileBox.x + mobileBox.width / 2,
+    mobileBox.y + mobileBox.height / 2,
+  );
   await mobile.page.getByRole("button", { name: "Cancel" }).click();
   await mobile.page.waitForTimeout(50);
   assert.deepEqual(
@@ -158,6 +195,73 @@ try {
   );
   await mobile.context.close();
 
+  // A lease that ended under the page (a QUIC session that reconnected) is
+  // taken again by the report that met it, which is sent again: no key is
+  // lost and nothing asks.
+  const lostApp = await startApp({ lostReports: 1 });
+  apps.push(lostApp);
+  const lostContext = await browser.newContext();
+  await lostContext.addCookies([
+    {
+      name: "hardened-blikvm-csrf",
+      value: "fixture-csrf",
+      url: lostApp.baseUrl,
+    },
+  ]);
+  const lostPage = await lostContext.newPage();
+  await lostPage.goto(`${lostApp.baseUrl}/#/`, { waitUntil: "networkidle" });
+  await takeControl(lostPage);
+  await lostPage.keyboard.press("KeyA");
+  const lostActions = () =>
+    lostApp.requestDetails
+      .filter((request) => request.route === "/api/hid/lease" && request.body)
+      .map((request) => request.body.action);
+  assert.ok(
+    await eventually(
+      () =>
+        lostActions().filter((action) => action === "acquire").length >= 2 &&
+        lostActions().filter((action) => action === "report").length >= 3,
+    ),
+    `the lost lease was not taken again: ${lostActions().join(",")}`,
+  );
+  assert.equal(
+    await controlIsOn(lostPage),
+    true,
+    "a lost lease took the confirmation",
+  );
+  await lostContext.close();
+
+  // A lease that cannot be had back: after its tries the report is not
+  // dropped silently; control turns off with a notice.
+  const goneApp = await startApp({ lostReports: 1000 });
+  apps.push(goneApp);
+  const goneContext = await browser.newContext();
+  await goneContext.addCookies([
+    {
+      name: "hardened-blikvm-csrf",
+      value: "fixture-csrf",
+      url: goneApp.baseUrl,
+    },
+  ]);
+  const gonePage = await goneContext.newPage();
+  await gonePage.goto(`${goneApp.baseUrl}/#/`, { waitUntil: "networkidle" });
+  await takeControl(gonePage);
+  await gonePage.keyboard.press("KeyA");
+  await gonePage
+    .getByText("Remote control was lost: the board did not answer")
+    .waitFor({ timeout: 15000 });
+  await gonePage.waitForFunction(
+    () => document.documentElement.dataset.remoteControl === "off",
+  );
+  const goneReports = goneApp.requestDetails.filter(
+    (request) =>
+      request.route === "/api/hid/lease" && request.body?.action === "report",
+  ).length;
+  assert.ok(goneReports >= 5, `the report was tried ${goneReports} times`);
+  await goneContext.close();
+
+  // A board that refuses the lease: control turns off with a notice, and
+  // the next press asks again.
   const rejectedApp = await startApp({ hidLeaseApplied: false });
   apps.push(rejectedApp);
   const rejectedContext = await browser.newContext();
@@ -172,22 +276,22 @@ try {
   await rejectedPage.goto(`${rejectedApp.baseUrl}/#/`, {
     waitUntil: "networkidle",
   });
-  await rejectedPage
-    .getByRole("button", { name: "Enable remote control" })
-    .click();
-  await rejectedPage
-    .getByRole("button", { name: "Confirm and control" })
-    .click();
+  await takeControl(rejectedPage);
   await rejectedPage.keyboard.press("KeyA");
   await rejectedPage
-    .getByRole("button", { name: "Enable remote control" })
-    .waitFor({ state: "visible" });
+    .getByText("Remote control was refused: backend_unavailable")
+    .waitFor();
+  await rejectedPage.waitForFunction(
+    () => document.documentElement.dataset.remoteControl === "off",
+  );
   const rejectedCalls = rejectedApp.requestDetails.filter(
     (request) => request.route === "/api/hid/lease",
   ).length;
   assert.ok(rejectedCalls >= 1, "the rejected acquire was not attempted");
   await rejectedPage.keyboard.press("KeyB");
-  await rejectedPage.waitForTimeout(100);
+  await rejectedPage
+    .getByRole("button", { name: "Confirm and control" })
+    .waitFor({ state: "visible" });
   assert.equal(
     rejectedApp.requestDetails.filter(
       (request) => request.route === "/api/hid/lease",

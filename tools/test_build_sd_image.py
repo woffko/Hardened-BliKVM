@@ -31,6 +31,19 @@ class BuildSdImageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.script = BUILDER.read_text(encoding="utf-8")
 
+    def test_the_encoder_driver_is_checked_against_the_images_kernel(self) -> None:
+        # The check runs on the tree the image is made of, before the file
+        # system is: a driver for another kernel stops the build.
+        check = 'python3 "$script_dir/../ve_module.py" image "$staging"\n'
+        self.assertEqual(self.script.count(check), 1)
+        self.assertLess(self.script.index(check), self.script.index('root_img="$work/root.ext4"'))
+        self.assertLess(self.script.index("tar --numeric-owner --no-acls --no-xattrs"), self.script.index(check))
+        self.assertTrue((ROOT / "tools/ve_module.py").is_file())
+        # The module lives outside the directories the fetch leaves out.
+        fetch = self.script[self.script.index("fetch() {") : self.script.index("assemble() {")]
+        self.assertNotIn("--exclude=./usr/lib/hardened-blikvm", fetch)
+        self.assertNotIn("--exclude=./usr", fetch)
+
     def test_the_image_store_is_mounted_after_tmpfiles_with_its_new_uuid(self) -> None:
         board = (
             "UUID=a / ext4 defaults,noatime 0 1\n"
@@ -59,11 +72,23 @@ class BuildSdImageTests(unittest.TestCase):
             ],
         )
 
+    def test_the_root_names_its_system_sequence(self) -> None:
+        # A card written from the image refuses older system bundles by it
+        # (security review of 2026-10-18, MED-07); the RAW bundle builder
+        # checks it against its own sequence.
+        self.assertIn("SYSTEM_SEQUENCE=${BLI_KVM_IMAGE_SYSTEM_SEQUENCE:-}", self.script)
+        self.assertIn('*[!0-9]*) echo "BLI_KVM_IMAGE_SYSTEM_SEQUENCE is invalid"', self.script)
+        self.assertIn(
+            '> "$staging/usr/share/hardened-blikvm/system-update/system-sequence"',
+            self.script,
+        )
+        self.assertIn('"$IMAGE_RELEASE" "$SYSTEM_SEQUENCE"', self.script)
+
     def test_the_image_store_root_takes_the_store_mode_and_group(self) -> None:
-        self.assertIn('set_inode_field / mode 040770" "$work/msd.ext4"', self.script)
+        self.assertIn('set_inode_field / mode 041770" "$work/msd.ext4"', self.script)
         self.assertIn('set_inode_field / gid $store_gid" "$work/msd.ext4"', self.script)
         # The result is checked, not assumed.
-        self.assertIn('grep -q "Mode:  0770"', self.script)
+        self.assertIn('grep -q "Mode:  01770"', self.script)
         self.assertIn("the image store's owner could not be set", self.script)
         self.assertIn('$1 == "hardened-blikvm" { print $3 }', self.script)
 
@@ -76,8 +101,18 @@ class BuildSdImageTests(unittest.TestCase):
             "atx-journal.json",
             "hid-ledger.json",
             "hid-only.env",
+            "display-sleep.env",
+            # The target agent is off on a new card.
+            "target-agent.env",
+            # The owner's record of the switches kept in system files: a new
+            # card records its own at its first start.
+            "system-switches.json",
         ):
             self.assertIn(f'"$gadget_state/{name}"', self.script, name)
+            self.assertIn(f"-name {name}", self.script, name)
+        # The source target's monitors are not the new card's.
+        self.assertIn('"$staging/var/lib/hardened-blikvm/screen-area.json"', self.script)
+        self.assertIn('leftover="$leftover screen-area.json"', self.script)
         for leftover in ("kvmd-backup-*", "unit-owner-*", "update-trust-*.json", "web-pre-*"):
             self.assertIn(f'"$gadget_state"/{leftover}', self.script, leftover)
         self.assertIn('"$staging"/etc/hardened-blikvm/update-supervisor-*.json', self.script)
@@ -87,6 +122,43 @@ class BuildSdImageTests(unittest.TestCase):
         # The firewall's configuration (not its confirmed mode) stays.
         self.assertIn('-not -path "$staging/etc/hardened-blikvm/firewall-mode.json"', self.script)
         self.assertIn("source board state remains", self.script)
+
+    def test_a_new_card_has_an_empty_system_action_journal(self) -> None:
+        # The source board's reboots, one perhaps still pending, would refuse
+        # a new card's first reboot or fill its sixteen places.
+        journal = "$staging/var/lib/hardened-blikvm-system-actions"
+        self.assertIn(f'"{journal}/journal-a.bin"', self.script)
+        self.assertIn(f'"{journal}/journal-b.bin"', self.script)
+        self.assertIn(f'find "{journal}" -type f', self.script)
+        self.assertIn("source board state remains: the system-action journal", self.script)
+        # The owner makes it at its first start: the units that name it are
+        # not held to it by the image's check of the paths units need.
+        self.assertIn(
+            'created_at_first_boot="$created_at_first_boot '
+            '/var/lib/hardened-blikvm-system-actions/journal-a.bin"',
+            self.script,
+        )
+        # The directory stays: the owner's store wants it, and the image's
+        # reviewed state under var/lib names it.
+        self.assertIn(
+            " hardened-blikvm-system-actions ",
+            self.script.split('known_state="', 1)[1].split('"', 1)[0],
+        )
+
+    def test_the_quic_gateway_is_disabled_on_a_new_card(self) -> None:
+        # The board's QUIC switch is the unit's enablement: the link a source
+        # board with QUIC switched on carries must not reach the image.
+        self.assertIn(
+            'rm -f "$staging/etc/systemd/system/multi-user.target.wants/'
+            'hardened-blikvm-quic.service"',
+            self.script,
+        )
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-quic.service").read_text(encoding="utf-8")
+        self.assertIn("WantedBy=multi-user.target", unit)
+        # The gateway keeps nothing on disk, so the list of reviewed state
+        # under var/lib needs no entry for it.
+        self.assertNotIn("StateDirectory=", unit)
+        self.assertNotIn("hardened-blikvm-quic ", self.script.split('known_state="', 1)[1].split('"', 1)[0])
 
     def test_optional_feature_state_is_removed_and_var_lib_is_an_allowlist(self) -> None:
         for path in (
@@ -171,9 +243,28 @@ class BuildSdImageTests(unittest.TestCase):
         program = self.script[start:end].replace(QUOTE, "")
         self.assertNotIn("'", program)
 
+    def test_the_source_boards_jiggler_and_revert_records_stay_behind(self) -> None:
+        # LOW-04: both were kept in the image.
+        self.assertIn('"$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json', self.script)
+        self.assertIn(
+            '-name mouse-jiggler.env -o -name "network-revert-*.json"', self.script
+        )
+        self.assertIn("the mouse jiggler or a network revert record", self.script)
+
+    def test_nginx_conf_comes_from_packaging(self) -> None:
+        self.assertIn(
+            'install -m 0600 -o 0 -g 0 "$script_dir/../../packaging/nginx/hardened-blikvm.conf"',
+            self.script,
+        )
+        self.assertNotIn("s#/etc/kvmd/nginx/ssl/server.crt;#", self.script)
+        # The first-boot TLS pair is still checked.
+        self.assertIn('grep -q "ssl_certificate /etc/hardened-blikvm/tls.crt;"', self.script)
+
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)
         self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)
+        # Only in its former place, for tmpfiles to copy (CRIT-01).
+        self.assertIn('rm -rf "$staging/var/lib/hardened-blikvm-gadget/catalog"', self.script)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ class SafeOutputTests(unittest.TestCase):
             self.assertTrue(refuses(str(link)), "a symlink")
 
     def test_both_scripts_call_the_guard_before_deleting(self) -> None:
-        for name in ("build-x264.sh", "build-libvpx.sh"):
+        for name in ("build-x264.sh", "build-libvpx.sh", "build-libjpeg-turbo.sh"):
             text = (ROOT / "scripts" / name).read_text()
             self.assertIn("safe-output.sh", text, name)
             self.assertLess(

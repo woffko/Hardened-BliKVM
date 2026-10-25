@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
 use bli_kvm_platform_bli::{BOARD_CONSUMER, GpioDriver, LineDirection, LineRequest};
@@ -155,7 +155,10 @@ pub struct ChardevGpioDriver {
     consumer: [u8; CONSUMER_LABEL_LEN],
     /// Line count reported by the chip; the reviewed bound for every offset.
     chip_lines: u32,
-    handles: BTreeMap<u16, RawFd>,
+    /// Owned, so that a driver dropped on any path (a daemon giving up a
+    /// peripheral it could not bring up) gives its lines back (code audit of
+    /// 2026-10-20, AUD-20).
+    handles: BTreeMap<u16, OwnedFd>,
 }
 
 impl ChardevGpioDriver {
@@ -180,7 +183,7 @@ impl ChardevGpioDriver {
         })
     }
 
-    fn request(&mut self, request: &LineRequest) -> Result<RawFd, GpioChardevError> {
+    fn request(&mut self, request: &LineRequest) -> Result<OwnedFd, GpioChardevError> {
         if u32::from(request.offset) >= self.chip_lines {
             return Err(GpioChardevError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -206,19 +209,26 @@ impl ChardevGpioDriver {
         if result < 0 {
             return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
         }
-        Ok(payload.fd)
+        // SAFETY: the kernel answered a new line-handle descriptor that
+        // nothing else owns.
+        Ok(unsafe { OwnedFd::from_raw_fd(payload.fd) })
     }
 
     fn handle(&self, offset: u16) -> Result<RawFd, GpioChardevError> {
         self.handles
             .get(&offset)
-            .copied()
+            .map(AsRawFd::as_raw_fd)
             .ok_or(GpioChardevError::NotRequested)
     }
 }
 
 #[cfg(test)]
 impl ChardevGpioDriver {
+    /// Takes `file` as the handle of a line, as a request would.
+    pub(crate) fn adopt_for_test(&mut self, offset: u16, file: File) {
+        self.handles.insert(offset, OwnedFd::from(file));
+    }
+
     /// Test-only constructor: the chip-info ioctl cannot run against a plain
     /// file, so the tests supply the line count directly.
     pub(crate) fn with_chip_lines(
@@ -270,7 +280,8 @@ impl GpioDriver for ChardevGpioDriver {
 
     fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error> {
         if let Some(fd) = self.handles.remove(&request.offset) {
-            let result = unsafe { libc::close(fd) };
+            // Closed here rather than dropped, so a failed close is reported.
+            let result = unsafe { libc::close(fd.into_raw_fd()) };
             if result < 0 {
                 return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
             }
@@ -329,6 +340,27 @@ mod tests {
             ChardevGpioDriver::open(Path::new("/nonexistent/gpiochip")),
             Err(GpioChardevError::Io(_))
         ));
+    }
+
+    #[test]
+    fn a_dropped_driver_closes_its_line_handles() {
+        // A daemon that gives up a peripheral on an init failure drops its
+        // driver; the lines must not stay busy until the process ends (code
+        // audit of 2026-10-20, AUD-20).
+        let chip_path = std::env::temp_dir().join(format!(
+            "hardened-blikvm-gpio-chardev-drop-{}",
+            std::process::id()
+        ));
+        std::fs::write(&chip_path, b"").unwrap();
+        let mut driver = ChardevGpioDriver::with_chip_lines(&chip_path, 512).unwrap();
+        let line = File::open(&chip_path).unwrap();
+        let fd = line.as_raw_fd();
+        driver.adopt_for_test(7, line);
+        drop(driver);
+        // SAFETY: F_GETFD only asks whether the number is open.
+        let open = unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0;
+        let _ = std::fs::remove_file(&chip_path);
+        assert!(!open, "the line handle outlived its driver");
     }
 
     #[test]

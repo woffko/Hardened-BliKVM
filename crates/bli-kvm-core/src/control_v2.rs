@@ -289,6 +289,13 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the accepted jiggler state.
     MouseJigglerState {},
+    /// How long the board's display stays lit without activity, in seconds
+    /// (one of `DISPLAY_SLEEP_CHOICES`; 0 is never).
+    DisplaySleep {
+        seconds: u32,
+    },
+    /// Read back the display's sleep time.
+    DisplaySleepState {},
     /// Present HID only and refuse every virtual-media attach.
     HidOnly {
         enabled: bool,
@@ -308,6 +315,28 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the OpenSSH server state.
     SshState {},
+    /// Enable and start, or stop and disable, the QUIC gateway.
+    Quic {
+        enabled: bool,
+    },
+    /// Read back the QUIC gateway's state.
+    QuicState {},
+    /// Switch the target agent on (the absolute mouse's interface gets the
+    /// agent's collection) or off.
+    TargetAgent {
+        enabled: bool,
+    },
+    /// The target agent's switch, its channel and the agent connected to it.
+    TargetAgentState {},
+    /// One call to the connected target agent, answered within
+    /// `timeout_ms` (1 to `MAX_TARGET_AGENT_CALL_MS`). A call other than a
+    /// ping reads from the target (or acts on it), and is made only under
+    /// the operator's current HID lease, as typing is.
+    TargetAgentCall {
+        call: bli_kvm_agent_protocol::Call,
+        timeout_ms: u32,
+        lease: Option<TargetAgentLease>,
+    },
     /// The connected interfaces' IPv4 addressing and DNS.
     NetworkInfo {},
     /// Set one interface to DHCP, or to manual DNS with an optional static
@@ -440,6 +469,23 @@ pub enum ControlV2ValidationError {
     InvalidFirewallRulesOffset,
     #[error("WiFi network or profile is invalid")]
     InvalidWifiNetwork,
+    #[error("display sleep time is not one of the choices")]
+    InvalidDisplaySleep,
+    #[error("target agent call or its timeout is invalid")]
+    InvalidTargetAgentCall,
+}
+
+/// The longest a target agent call may wait for its answer.
+pub const MAX_TARGET_AGENT_CALL_MS: u32 = 10_000;
+
+/// The HID lease a target agent call that reads or acts is made under: the
+/// identity the lease was granted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetAgentLease {
+    pub lease_id: [u8; 16],
+    pub session_binding: u64,
+    pub target_binding: [u8; 32],
 }
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
@@ -598,12 +644,48 @@ impl PlatformControlRequestV2 {
             Self::MdnsState {} => Ok(()),
             Self::MouseJiggler { .. } => Ok(()),
             Self::MouseJigglerState {} => Ok(()),
+            Self::DisplaySleep { seconds } => {
+                if crate::display_sleep::display_sleep_is_choice(*seconds) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidDisplaySleep)
+                }
+            }
+            Self::DisplaySleepState {} => Ok(()),
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
             Self::AdminFeature { .. } => Ok(()),
             Self::AdminFeatureState {} => Ok(()),
             Self::Ssh { .. } => Ok(()),
             Self::SshState {} => Ok(()),
+            Self::Quic { .. } => Ok(()),
+            Self::QuicState {} => Ok(()),
+            Self::TargetAgent { .. } => Ok(()),
+            Self::TargetAgentState {} => Ok(()),
+            Self::TargetAgentCall {
+                call,
+                timeout_ms,
+                lease,
+            } => {
+                // A read or an action only under a lease; a lease given is
+                // checked as every lease is.
+                match lease {
+                    Some(lease) => {
+                        validate_lease_id(&lease.lease_id)?;
+                        validate_session_binding(lease.session_binding)?;
+                        validate_target_binding(&lease.target_binding)?;
+                    }
+                    None if call.needs_lease() => {
+                        return Err(ControlV2ValidationError::InvalidLeaseId);
+                    }
+                    None => {}
+                }
+                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms) && call.is_valid() {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidTargetAgentCall)
+                }
+            }
             Self::NetworkInfo {} => Ok(()),
             Self::Ipv4Set { change } => change.validate(),
             Self::Ipv4Confirm {} => Ok(()),
@@ -798,6 +880,91 @@ fn validate_lease_ttl(ttl_seconds: u16) -> Result<(), ControlV2ValidationError> 
         Ok(())
     } else {
         Err(ControlV2ValidationError::InvalidLeaseTtl)
+    }
+}
+
+#[cfg(test)]
+mod target_agent_tests {
+    use super::*;
+
+    #[test]
+    fn a_target_agent_call_waits_a_bounded_time() {
+        let call = |timeout_ms| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms,
+            lease: None,
+        };
+        assert_eq!(call(1).validate(), Ok(()));
+        assert_eq!(call(MAX_TARGET_AGENT_CALL_MS).validate(), Ok(()));
+        for timeout_ms in [0, MAX_TARGET_AGENT_CALL_MS + 1] {
+            assert_eq!(
+                call(timeout_ms).validate(),
+                Err(ControlV2ValidationError::InvalidTargetAgentCall)
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&call(500)).unwrap(),
+            r#"{"type":"target_agent_call","call":"ping","timeout_ms":500,"lease":null}"#
+        );
+        // A read only under a lease, and a lease of zeros is none.
+        let read = |lease| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Monitors,
+            timeout_ms: 500,
+            lease,
+        };
+        let lease = TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        assert_eq!(read(Some(lease)).validate(), Ok(()));
+        assert_eq!(
+            read(None).validate(),
+            Err(ControlV2ValidationError::InvalidLeaseId)
+        );
+    }
+
+    #[test]
+    fn a_target_agent_calls_lease_is_refused_as_a_lease() {
+        let lease = TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        for (call, timeout_ms) in [
+            (bli_kvm_agent_protocol::Call::Monitors, 500),
+            (bli_kvm_agent_protocol::Call::Ping, 500),
+        ] {
+            let leased = |lease| PlatformControlRequestV2::TargetAgentCall {
+                call: call.clone(),
+                timeout_ms,
+                lease: Some(lease),
+            };
+            assert_eq!(
+                leased(TargetAgentLease {
+                    lease_id: [0; 16],
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidLeaseId)
+            );
+            assert_eq!(
+                leased(TargetAgentLease {
+                    session_binding: 0,
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidSessionBinding)
+            );
+            assert_eq!(
+                leased(TargetAgentLease {
+                    target_binding: [0; 32],
+                    ..lease
+                })
+                .validate(),
+                Err(ControlV2ValidationError::InvalidTargetBinding)
+            );
+        }
     }
 }
 

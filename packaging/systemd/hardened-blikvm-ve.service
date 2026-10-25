@@ -1,0 +1,44 @@
+[Unit]
+Description=Hardened BliKVM video engine encoder driver
+Documentation=https://github.com/woffko/Hardened-BliKVM
+# Only on the kernel release the driver was built for.
+ConditionPathExists=/usr/lib/hardened-blikvm/modules/%v/hardened-blikvm-ve-enc.ko
+After=systemd-udevd.service systemd-sysusers.service local-fs.target
+# The encoder tries the device when it starts and uses x264 without it.
+Before=hardened-blikvm-video-encoder-h264.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-ve-load
+TimeoutStartSec=30s
+
+# Loading a module and giving up the decoder driver's hold on the engine
+# are all it does: no network, no state, no capability beyond the one.
+CapabilityBoundingSet=CAP_SYS_MODULE
+AmbientCapabilities=
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @module
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

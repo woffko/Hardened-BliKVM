@@ -109,6 +109,65 @@ other reads, such as the video menu's, from a 5-second cache. Both WebRTC
 transports (H.264 and VP8) are unavailable in the video menu while
 `webrtcBlocked` is set, and a page using one falls back to MJPEG.
 
+## QUIC transport (plan of 2026-10-01)
+
+The QUIC transport (`docs/design/quic-transport-v1.md`) listens on the UDP
+side of the page's port, UDP 443, while its switch is on:
+
+| Mode | UDP 443 from the page's network | The page |
+| --- | --- | --- |
+| baseline | accepted, like everything | QUIC can be chosen |
+| moderate | accepted from the local ranges, like every new local-source connection; dropped from elsewhere | QUIC can be chosen from a local address |
+| restricted | accepted from the local ranges by a rule of its own, beside HTTPS and SSH | QUIC can be chosen from a local address; H.264 comes over it while WebRTC stays closed |
+| paranoid | dropped: only local-source HTTPS comes in | only Standard is offered, with the reason |
+
+- **Restricted admits the port** since 2026-10-02, by the operator's
+  decision (the plan of 2026-10-01 had left it closed and the question
+  open). The rule follows the HTTPS rule in the input chain:
+  `ip saddr <local ranges> udp dport <HTTPS port> accept`, and the same for
+  IPv6. The answers leave through the output chain's
+  `ct state established,related accept`. The port is the page's own: a page
+  may open a session on its own origin only, so no other port can serve.
+  Paranoid stays as it was: HTTPS only.
+- The firewall status reports `quicBlocked` beside `webrtcBlocked`, true in
+  Paranoid only. The web server answers a session request with `blocked`
+  while it is set and `GET /api/transport` says so, which is how the page
+  knows why before it tries.
+- **In Restricted WebRTC stays closed** (its media range is not admitted
+  unless `webrtcMedia` is configured), so the Screen menu offers H.264 only
+  over the QUIC session: with QUIC this browser's choice the entry reads
+  "H.264 (QUIC)" and can be chosen, VP8 cannot; with Standard the entry says
+  that QUIC would give it.
+- **A board that is in Restricted when the owner is updated** holds the
+  rules its earlier build wrote, without the QUIC rule. The owner verifies
+  its whole table against the mode it is marked with, so it knows that form
+  as well (`RuleForm::BeforeQuicPort`): the mode in force is still read as
+  Restricted, and at its start the owner replaces the table by this build's
+  rules for the same mode in one nft transaction, which only admits more
+  and needs no confirmation. It does not do so while a change waits for its
+  confirmation or its rollback. An owner older than this change that meets
+  the newer rules (a slot rolled back while in Restricted) cannot verify
+  them and reports the firewall status as unavailable until a reboot, when
+  it writes its own rules again; the rules in force meanwhile are the newer
+  Restricted ones.
+- Tests: the rule and its absence from the other modes
+  (`policy_differences_and_native_ports_are_explicit`), the two forms of
+  the Restricted table (`restricted_before_the_quic_port_is_another_form_of_the_same_mode`),
+  the replacement at the owner's start and its refusal of a table that is
+  no form of its mode (`firewall_executor` tests against a played kernel),
+  `the_quic_port_is_closed_in_paranoid_only` in the server, and the page's
+  contracts (`quic_transport_contract.mjs` plays a blocked port,
+  `quic_video_contract.mjs` plays Restricted and Paranoid).
+- On the board (2026-10-02, slot 65,
+  `tools/playwright/quic_firewall_device_probe.mjs`): in Restricted the
+  status reported `webrtcBlocked` and not `quicBlocked`, the owned table
+  listed the rule, a session opened and its pings were answered, and the
+  page drew H.264 from the session with VP8 closed; in Paranoid the status
+  reported both, the table had no such rule, the server refused a session
+  with `blocked`, and a connection to the port got no answer; Baseline was
+  applied again afterwards
+  (`evidence/private/quic-firewall-device-seq65-20261002.json`).
+
 ## Remaining implementation and acceptance gates
 
 1. Typed four-mode control request/status, explicit confirmation identity and

@@ -146,6 +146,13 @@ impl HidLeaseManager {
         }
     }
 
+    /// Whether `identity` holds the lease now, without touching it: what the
+    /// lease allows besides typing (the target agent's reads) asks it.
+    pub fn holds(&self, identity: HidLeaseIdentity, now: Instant) -> bool {
+        self.active
+            .is_some_and(|active| active.identity == identity && now < active.expires_at)
+    }
+
     pub fn translate(
         &mut self,
         identity: HidLeaseIdentity,
@@ -302,6 +309,26 @@ mod tests {
         assert_eq!(
             manager.renew(other, now, Duration::from_secs(10)).error,
             Some(HidLeaseError::Mismatch)
+        );
+    }
+
+    #[test]
+    fn only_the_live_lease_holds_and_asking_changes_nothing() {
+        let mut manager = HidLeaseManager::new();
+        let now = Instant::now();
+        let owner = identity(1, 7);
+        assert!(!manager.holds(owner, now));
+        manager
+            .acquire(owner, now, Duration::from_secs(10))
+            .unwrap();
+        assert!(manager.holds(owner, now));
+        assert!(!manager.holds(identity(2, 7), now));
+        assert!(!manager.holds(owner, now + Duration::from_secs(10)));
+        // Asking past the end does not expire it: the lease is untouched.
+        assert!(manager.holds(owner, now + Duration::from_secs(9)));
+        assert_eq!(
+            manager.renew(owner, now, Duration::from_secs(10)).error,
+            None
         );
     }
 

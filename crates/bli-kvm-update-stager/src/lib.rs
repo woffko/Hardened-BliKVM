@@ -27,6 +27,32 @@ use thiserror::Error;
 
 mod protected_root;
 
+/// The system sequence of the running root, which the image builder writes
+/// and a RAW system update replaces with the root it writes.
+pub const ROOT_SYSTEM_SEQUENCE: &str = "/usr/share/hardened-blikvm/system-update/system-sequence";
+
+/// The sequence a root's `system-sequence` file names, if it is a small
+/// regular file holding a positive decimal number.
+pub fn read_system_sequence(path: &Path) -> Option<u64> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(33).read_to_string(&mut text).ok()?;
+    if text.len() > 32 {
+        return None;
+    }
+    text.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|sequence| *sequence > 0)
+}
+
 /// Require a root-to-leaf chain of directories owned by UID 0 and not
 /// writable by group or others, with no symbolic links.
 pub fn validate_protected_directory(path: &Path) -> Result<(), ApplicationStageError> {
@@ -434,6 +460,21 @@ impl ApplicationSlotStager {
                 .to_str()
                 .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?
                 .to_string();
+            if left_temporary_name(&name) {
+                // A snapshot or a marker an older stager was writing when it
+                // was stopped: one of its own regular files, removed.
+                let metadata = fs::symlink_metadata(entry.path())?;
+                if metadata.is_file()
+                    && metadata.uid() == self.identity.owner
+                    && metadata.dev() == self.identity.device
+                    && metadata.nlink() == 1
+                {
+                    fs::remove_file(entry.path())?;
+                    self.root_directory.sync_all()?;
+                    removed = removed.saturating_add(1);
+                }
+                continue;
+            }
             if !name.starts_with(".staging-") {
                 continue;
             }
@@ -666,14 +707,14 @@ impl ApplicationSlotStager {
         }
         let content =
             serde_json::to_vec(marker).map_err(|_| ApplicationStageError::Serialization)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
-        temporary.write_all(&content)?;
-        temporary.flush()?;
-        temporary.as_file().sync_all()?;
-        temporary
-            .persist_noclobber(destination)
-            .map_err(|error| ApplicationStageError::Io(error.error))?;
+        // Written unnamed and given its name whole, so no temporary name is
+        // left in the root by an interruption.
+        let mut marker_file = anonymous_file(&self.root)?;
+        marker_file.set_permissions(Permissions::from_mode(0o600))?;
+        marker_file.write_all(&content)?;
+        marker_file.flush()?;
+        marker_file.sync_all()?;
+        link_anonymous(&marker_file, &destination)?;
         self.root_directory.sync_all()?;
         Ok(())
     }
@@ -758,46 +799,36 @@ impl ApplicationSlotStager {
         }
 
         self.validate_root()?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
-        let temporary_metadata = temporary.as_file().metadata()?;
-        if !temporary_metadata.is_file()
-            || temporary_metadata.dev() != self.identity.device
-            || temporary_metadata.uid() != self.identity.owner
-            || temporary_metadata.nlink() != 1
+        // An unnamed file of the root's file system (O_TMPFILE): nothing an
+        // interrupted copy leaves behind can stop a later listing of the
+        // root (security review of 2026-10-18, MED-09).
+        let mut snapshot = anonymous_file(&self.root)?;
+        let snapshot_metadata = snapshot.metadata()?;
+        if !snapshot_metadata.is_file()
+            || snapshot_metadata.dev() != self.identity.device
+            || snapshot_metadata.uid() != self.identity.owner
+            || snapshot_metadata.nlink() != 0
         {
             return Err(ApplicationStageError::UnsafeRoot);
         }
 
         let mut limited = source.take(expected_size + 1);
-        let copied = io::copy(&mut limited, temporary.as_file_mut())?;
+        let copied = io::copy(&mut limited, &mut snapshot)?;
         if copied > MAX_ARCHIVE_BYTES {
             return Err(ApplicationStageError::ArchiveTooLarge);
         }
         if copied != expected_size {
             return Err(ApplicationStageError::SourceChanged);
         }
-        temporary.as_file_mut().flush()?;
-        temporary.as_file().sync_all()?;
-        fs::set_permissions(temporary.path(), Permissions::from_mode(0o400))?;
-        temporary.as_file().sync_all()?;
-
-        let copied_metadata = temporary.as_file().metadata()?;
-        let mut snapshot = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(temporary.path())?;
-        let snapshot_metadata = snapshot.metadata()?;
-        if copied_metadata.dev() != snapshot_metadata.dev()
-            || copied_metadata.ino() != snapshot_metadata.ino()
-            || copied_metadata.len() != snapshot_metadata.len()
-            || snapshot_metadata.len() != copied
-            || snapshot_metadata.permissions().mode() & 0o7777 != 0o400
+        snapshot.flush()?;
+        snapshot.sync_all()?;
+        snapshot.set_permissions(Permissions::from_mode(0o400))?;
+        snapshot.sync_all()?;
+        let copied_metadata = snapshot.metadata()?;
+        if copied_metadata.len() != copied
+            || copied_metadata.nlink() != 0
+            || copied_metadata.permissions().mode() & 0o7777 != 0o400
         {
-            return Err(ApplicationStageError::UnsafeRoot);
-        }
-        temporary.close()?;
-        if snapshot.metadata()?.nlink() != 0 {
             return Err(ApplicationStageError::UnsafeRoot);
         }
         snapshot.seek(SeekFrom::Start(0))?;
@@ -1458,6 +1489,48 @@ fn validate_deleting_tree(
         .map_err(|_| ApplicationStageError::UnsafeDeletionState)
 }
 
+/// A name `tempfile` gave the stager's own temporary files before they were
+/// made unnamed: ".tmp" and six letters or digits.
+fn left_temporary_name(value: &str) -> bool {
+    value.strip_prefix(".tmp").is_some_and(|suffix| {
+        suffix.len() == 6 && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
+/// An unnamed file in `directory`'s file system, 0600.
+fn anonymous_file(directory: &Path) -> Result<File, ApplicationStageError> {
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_TMPFILE | libc::O_CLOEXEC)
+        .open(directory)?)
+}
+
+/// Gives an unnamed file `destination` as its name, never replacing one.
+fn link_anonymous(file: &File, destination: &Path) -> Result<(), ApplicationStageError> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map_err(|_| ApplicationStageError::UnsafeRoot)?;
+    let target = std::ffi::CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| ApplicationStageError::UnsafeRoot)?;
+    // SAFETY: two zero-ended paths; linkat follows only the descriptor's
+    // own /proc link to the open file.
+    let linked = unsafe {
+        libc::linkat(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::AT_SYMLINK_FOLLOW,
+        )
+    };
+    if linked != 0 {
+        return Err(ApplicationStageError::Io(io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 fn valid_staging_name(value: &str) -> bool {
     let Some(suffix) = value.strip_prefix(".staging-") else {
         return false;
@@ -1479,11 +1552,68 @@ fn validate_abandoned_staging_tree(
     {
         return Err(ApplicationStageError::UnsafeAbandonedStaging);
     }
+    if cut_before_its_receipt(root, identity)? {
+        return Ok(());
+    }
     validate_abandoned_receipt(root, identity)?;
     let mut entries = 0_usize;
     let mut bytes = 0_u64;
     inspect_abandoned_directory(root, root, identity, &mut entries, &mut bytes)?;
     Ok(())
+}
+
+/// A staging cut before its receipt was written: nothing in it but, at
+/// most, the stager's own metadata directory, holding at most an empty
+/// receipt, all its own and on its device, with no link (code audit of
+/// 2026-10-20, AUD-04). Such a directory carries nothing and is removed.
+fn cut_before_its_receipt(
+    root: &Path,
+    identity: RootIdentity,
+) -> Result<bool, ApplicationStageError> {
+    let own =
+        |path: &Path, directory: bool| -> Result<Option<fs::Metadata>, ApplicationStageError> {
+            let metadata = fs::symlink_metadata(path)
+                .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+            let kind = if directory {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            };
+            Ok((kind
+                && !metadata.file_type().is_symlink()
+                && metadata.dev() == identity.device
+                && metadata.uid() == identity.owner
+                && metadata.permissions().mode() & 0o7000 == 0)
+                .then_some(metadata))
+        };
+    let names = |path: &Path| -> Result<Vec<std::ffi::OsString>, ApplicationStageError> {
+        fs::read_dir(path)
+            .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name())
+                    .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)
+            })
+            .collect()
+    };
+    match names(root)?.as_slice() {
+        [] => return Ok(true),
+        [name] if name == SLOT_METADATA_DIRECTORY => {}
+        _ => return Ok(false),
+    }
+    let metadata_directory = root.join(SLOT_METADATA_DIRECTORY);
+    if own(&metadata_directory, true)?.is_none() {
+        return Ok(false);
+    }
+    let receipt = Path::new(SLOT_RECEIPT_PATH)
+        .file_name()
+        .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?;
+    match names(&metadata_directory)?.as_slice() {
+        [] => Ok(true),
+        [name] if name == receipt => Ok(own(&root.join(SLOT_RECEIPT_PATH), false)?
+            .is_some_and(|metadata| metadata.len() == 0 && metadata.nlink() == 1)),
+        _ => Ok(false),
+    }
 }
 
 fn validate_abandoned_receipt(

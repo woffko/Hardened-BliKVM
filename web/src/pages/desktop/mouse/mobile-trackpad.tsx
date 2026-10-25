@@ -4,7 +4,7 @@ import { useAtomValue } from 'jotai';
 import { MouseReportRelative } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { pointerSensitivityAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, screenElementAtom } from '@/jotai/screen.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import {
@@ -40,7 +40,13 @@ export const MobileTrackpad = () => {
   const scrollInterval = useAtomValue(scrollIntervalAtom);
   const pointerSensitivity = useAtomValue(pointerSensitivityAtom);
   const resolution = useAtomValue(resolutionAtom);
-  const { restricted, reportHid } = useHidLease();
+  // The element the view draws on; input binds to it again when it changes.
+  const screenFromView = useAtomValue(screenElementAtom);
+  const { restricted, confirmed, reportHid } = useHidLease();
+  // The page's cursor moves with the target's only under remote control: a
+  // move that reaches nothing must not move it (2026-10-24).
+  const controlRef = useRef(confirmed);
+  controlRef.current = confirmed;
 
   const mouseRef = useRef(new MouseReportRelative());
   const activePointersRef = useRef(new Map<number, Point>());
@@ -57,7 +63,7 @@ export const MobileTrackpad = () => {
   const drainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const screen = document.getElementById('screen') as HTMLElement | null;
+    const screen = (screenFromView ?? document.getElementById('screen')) as HTMLElement | null;
     if (!screen) return;
 
     const target = (document.getElementById('kvm-pointer-surface') ?? screen) as HTMLElement;
@@ -176,7 +182,9 @@ export const MobileTrackpad = () => {
         clearLongPress();
       }
 
-      if (deltaX !== 0 || deltaY !== 0) {
+      if ((deltaX !== 0 || deltaY !== 0) && restricted && !controlRef.current) {
+        lastRef.current = point;
+      } else if (deltaX !== 0 || deltaY !== 0) {
         const movementScale = getMobileTrackpadMovementScale(resolution);
         const remoteDeltaX = deltaX * pointerSensitivity * movementScale;
         const remoteDeltaY = deltaY * pointerSensitivity * movementScale;
@@ -366,7 +374,15 @@ export const MobileTrackpad = () => {
       sendReport(mouse.reset());
       emitMobileCursorHide(0);
     };
-  }, [scrollDirection, scrollInterval, pointerSensitivity, resolution, restricted, reportHid]);
+  }, [
+    screenFromView,
+    scrollDirection,
+    scrollInterval,
+    pointerSensitivity,
+    resolution,
+    restricted,
+    reportHid
+  ]);
 
   return null;
 };

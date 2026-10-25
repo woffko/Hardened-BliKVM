@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upscaling bench</title>
+    <style>
+      body { margin: 16px; font: 14px sans-serif; background: #fff; color: #111; }
+    </style>
+  </head>
+  <body>
+    <p id="status">loading</p>
+    <script type="module">
+      // The phase-0 bench for run_quality.mjs: the functions are left on the window for the runner to call.
+      import { runCost, runQuality, runRealPair, runSustained } from "./bench.js";
+      window.benchApi = { runCost, runQuality, runRealPair, runSustained };
+      document.getElementById("status").textContent = "ready";
+    </script>
+  </body>
+</html>

@@ -46,7 +46,9 @@ CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
 AmbientCapabilities=
 DevicePolicy=closed
 IPAddressDeny=any
-IPAddressAllow=localhost
+# Not "localhost": an allowed address wins over a denied one, and Janus has a
+# loopback address of its own (security review of 2026-10-18, MED-03).
+IPAddressAllow=127.0.0.1 ::1
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources

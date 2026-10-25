@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 
 import * as authApi from '@/api/auth.ts';
 import { getRuntimeInventory } from '@/api/inventory.ts';
-import { isAvailable, normalizeVideoMode } from '@/lib/capabilities.ts';
+import { isAvailable, normalizeVideoMode, supportsBoardFeature } from '@/lib/capabilities.ts';
 import { removeToken } from '@/lib/cookie.ts';
 import { HARDENED_NAME } from '@/lib/hardened.ts';
 import * as storage from '@/lib/localstorage.ts';
@@ -21,11 +21,16 @@ import {
   capabilitiesErrorAtom,
   capabilitiesLoadingAtom
 } from '@/jotai/capabilities.ts';
+import { keyHelperHeightAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
 import { picoclawChatOpenAtom } from '@/jotai/picoclaw.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
+import { menuBarOccupiesTopAtom } from '@/jotai/settings.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
+import { useScreenArea } from '@/hooks/useScreenArea.ts';
+import { useTargetAgent } from '@/hooks/useTargetAgent.ts';
 import { Head } from '@/components/head.tsx';
 
+import { AgentDisplaysKeep } from './agent-displays-keep.tsx';
 import { CaptureStatusOverlay, useCaptureStatus } from './capture-status';
 import { Keyboard } from './keyboard';
 import { Menu } from './menu';
@@ -34,8 +39,15 @@ import { Mouse } from './mouse';
 import { Notification } from './notification.tsx';
 import { Sidebar as PicoclawSidebar } from './picoclaw';
 import { ActionOverlay } from './picoclaw/action-overlay.tsx';
+import { QualityMonitor } from './quality-monitor';
+import { QuicTransport } from './quic-transport.tsx';
 import { Screen } from './screen';
+import { UpscaleNotice } from './upscale-notice.tsx';
 import { VirtualKeyboard } from './virtual-keyboard';
+
+// Room the touch layout keeps above the screen while the menu bar shows:
+// its top offset (10px), its height (36px) and a small gap.
+const MENU_BAR_RESERVED_PX = 50;
 
 function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
   const isH264DirectSupported = window.location.protocol === 'https:' && !!window.VideoDecoder;
@@ -54,6 +66,12 @@ function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
 const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) => {
   const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
+  const menuBarOccupiesTop = useAtomValue(menuBarOccupiesTopAtom);
+  // The touch keyboards cover the bottom of the page; the screen is laid out
+  // above them so the cursor can reach its bottom edge in sight.
+  const virtualKeyboardHeight = useAtomValue(virtualKeyboardHeightAtom);
+  const keyHelperHeight = useAtomValue(keyHelperHeightAtom);
+  const keyboardsCoverBottom = Math.max(virtualKeyboardHeight, keyHelperHeight);
   const hidAvailable = isAvailable(capabilities.hid.status);
   const controlChannelAvailable =
     hidAvailable || capabilities.video.status.availability === 'read_write';
@@ -64,6 +82,10 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
   const [videoMode, setVideoMode] = useAtom(videoModeAtom);
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const isPicoclawChatOpen = useAtomValue(picoclawChatOpenAtom);
+  // The agent on the target, while the board offers it.
+  useTargetAgent(supportsBoardFeature(capabilities, 'target_agent'));
+
+  useScreenArea(supportsBoardFeature(capabilities, 'hid_screen_area'));
 
   useEffect(() => {
     setActiveVideoMode(getVideoMode(capabilities));
@@ -98,6 +120,10 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
       <Head title={t('head.desktop')} />
 
       {isDesktopLayout && <Notification />}
+      <QuicTransport />
+      <UpscaleNotice />
+      <QualityMonitor />
+      <AgentDisplaysKeep />
 
       {videoMode && resolution && (
         <div className="relative flex h-full min-h-0 w-full min-w-0">
@@ -111,7 +137,11 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
               <Splitter.Panel min="45%">
                 <div
                   id="kvm-pointer-surface"
-                  className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black"
+                  className="relative box-border h-full min-h-0 w-full min-w-0 overflow-hidden bg-black transition-[padding] duration-300"
+                  style={{
+                    paddingTop: menuBarOccupiesTop ? MENU_BAR_RESERVED_PX : 0,
+                    paddingBottom: keyboardsCoverBottom
+                  }}
                 >
                   <Screen />
                   {controlChannelAvailable && <CaptureStatusOverlay status={captureStatus} />}

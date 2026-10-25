@@ -70,6 +70,7 @@ try {
           device_mdns: access,
           device_hid_only: access,
           device_mouse_jiggler: access,
+          device_oled: access,
           device_session_lock: access,
           network_tls: access,
           network_wifi: access,
@@ -165,6 +166,22 @@ try {
           data: applied
             ? { applied: true }
             : { applied: false, rejection: "jiggler_refused" },
+        },
+      });
+    });
+    let displaySleep = 0;
+    await page.route("**/api/vm/oled", (route) => {
+      if (route.request().method() === "GET")
+        return route.fulfill({
+          json: { code: 0, data: { exist: true, sleep: displaySleep } },
+        });
+      if (applied) displaySleep = route.request().postDataJSON().sleep;
+      return route.fulfill({
+        json: {
+          code: 0,
+          data: applied
+            ? { applied: true }
+            : { applied: false, rejection: "display_refused" },
         },
       });
     });
@@ -305,7 +322,7 @@ try {
     for (const request of requests) {
       const route = new URL(request.url()).pathname;
       assert.equal(
-        /\/api\/hid\/shortcut|\/api\/network\/tls|\/api\/.*(oled|ssh|swap|virtual-device)/.test(
+        /\/api\/hid\/shortcut|\/api\/network\/tls|\/api\/.*(ssh|swap|virtual-device)/.test(
           route,
         ),
         false,
@@ -517,6 +534,44 @@ try {
       assert.equal(writes.length, 1);
       assert.deepEqual(writes[0].postDataJSON(), { duration: 300 });
     }
+    // The board's display: a time without activity after which it goes dark.
+    const display = page.getByRole("combobox", {
+      name: "Display sleep",
+      exact: true,
+    });
+    await display.waitFor();
+    // Enabled once the page has read the setting.
+    for (let tries = 0; writable && tries < 50; tries += 1) {
+      if (!(await display.isDisabled())) break;
+      await page.waitForTimeout(100);
+    }
+    assert.equal(await display.isDisabled(), !writable);
+    if (writable) {
+      await page
+        .locator(".ant-select-selection-item")
+        .filter({ hasText: /^Never$/ })
+        .click();
+      await page
+        .locator(".ant-select-item-option")
+        .filter({ hasText: /^3 min$/ })
+        .click();
+      if (applied)
+        await page
+          .locator(".ant-select-selection-item")
+          .filter({ hasText: /^3 min$/ })
+          .waitFor();
+      else
+        await page
+          .getByRole("alert")
+          .filter({ hasText: "display_refused" })
+          .waitFor();
+      const writes = requests.filter(
+        (request) =>
+          request.method() === "POST" && request.url().endsWith("/vm/oled"),
+      );
+      assert.equal(writes.length, 1);
+      assert.deepEqual(writes[0].postDataJSON(), { sleep: 180 });
+    }
     const beforeTailscale = requests.length;
     await page.locator('[data-settings-tab="tailscale"]').click();
     await page
@@ -590,8 +645,51 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  // The display's row in Russian.
+  {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+    });
+    await context.addCookies([
+      { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
+    ]);
+    await context.addInitScript(() =>
+      localStorage.setItem("hardened-blikvm-language", "ru"),
+    );
+    const page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const manifest = defaultManifest({
+      board: {
+        features: {
+          device_settings: feature("read_only"),
+          device_oled: feature("read_write"),
+        },
+      },
+    });
+    await page.route("**/api/capabilities", (route) =>
+      route.fulfill({ json: { code: 0, data: manifest } }),
+    );
+    await page.route("**/api/vm/oled", (route) =>
+      route.fulfill({ json: { code: 0, data: { exist: true, sleep: 600 } } }),
+    );
+    await page.goto(app.baseUrl, { waitUntil: "networkidle" });
+    await page.locator("svg.lucide-settings").click();
+    await page.locator('[data-settings-tab="device"]').click();
+    await page.getByText("Дисплей", { exact: true }).waitFor();
+    await page
+      .getByText("Выключать дисплей платы через", { exact: true })
+      .waitFor();
+    await page
+      .locator(".ant-select-selection-item")
+      .filter({ hasText: /^10 мин$/ })
+      .waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
   console.log(
-    "Network contract: read-only, page-open, unsupported requests, DNS/IPv6 refusal and desktop/mobile successful writes passed",
+    "Network contract: read-only, page-open, unsupported requests, DNS/IPv6 refusal, desktop/mobile successful writes and the display's row in Russian passed",
   );
 } finally {
   await browser.close();

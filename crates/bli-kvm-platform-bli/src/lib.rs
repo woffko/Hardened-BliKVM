@@ -67,6 +67,17 @@ impl CapabilityProvider for BliH616PikvmPlatform {
             "device_session_lock".into(),
             FeatureStatus::read_write(source_verified),
         );
+        // Where the captured screen lies in a desktop of several monitors,
+        // kept by the server for the absolute mouse.
+        board_features.insert(
+            "hid_screen_area".into(),
+            FeatureStatus::read_write(source_verified),
+        );
+        // The agent on the target, behind the operator's switch.
+        board_features.insert(
+            "target_agent".into(),
+            FeatureStatus::read_write(source_verified),
+        );
         board_features.insert(
             "system_settings".into(),
             FeatureStatus::read_only(runtime_verified),

@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/bli-kvm-core",
+  "crates/bli-kvm-target-agent",
+  "crates/bli-kvm-agent-protocol",
   "crates/bli-kvm-control-protocol",
   "crates/bli-kvm-control-client",
   "crates/bli-kvm-control-broker",
@@ -66,6 +68,8 @@ members = [
   "crates/bli-kvm-update-exec-helper",
   "crates/bli-kvm-admin-helper",
   "crates/bli-kvm-video-encoder",
+  "crates/bli-kvm-ve-encoder",
+  "crates/bli-kvm-ve-lab",
   "crates/bli-kvm-update-trust-config",
   "crates/bli-kvm-kvmd-media-client",
   "crates/bli-kvm-broker-protocol",
@@ -75,6 +79,8 @@ members = [
   "crates/bli-kvm-kvmd-atx-client",
   "crates/bli-kvm-platform-bli",
   "crates/bli-kvm-platform-broker",
+  "crates/bli-kvm-quic-protocol",
+  "crates/bli-kvm-quic-gateway",
   "crates/bli-kvm-video-client",
   "crates/bli-kvm-video-proxy",
   "crates/bli-kvm-server",

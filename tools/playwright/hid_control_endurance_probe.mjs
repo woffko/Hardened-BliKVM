@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { controlIsOn, takeControl } from "./take_control.mjs";
+
 const [baseUrl, username, outputValue, seconds = "120"] = process.argv.slice(2);
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
@@ -81,10 +83,8 @@ try {
   });
   await page.goto(`${url.origin}/`);
   await page.waitForSelector("#screen", { timeout: 20000 });
-  const toggle = page.locator('button[aria-label$="remote control"]');
-  await toggle.first().click();
-  await page.getByRole("button", { name: "Confirm and control" }).click();
-  event({ control: await toggle.first().getAttribute("aria-pressed") });
+  await takeControl(page);
+  event({ control: (await controlIsOn(page)) ? "true" : "false" });
   const box = await page.locator("#screen").boundingBox();
   let lastState = "true";
   const deadline = Date.now() + Number(seconds) * 1000;
@@ -95,7 +95,7 @@ try {
     const y = box.y + box.height * (0.4 + 0.2 * Math.cos(step / 5));
     await page.mouse.move(x, y, { steps: 3 });
     await page.waitForTimeout(250);
-    const state = await toggle.first().getAttribute("aria-pressed");
+    const state = (await controlIsOn(page)) ? "true" : "false";
     if (state !== lastState) {
       event({ control: state });
       lastState = state;

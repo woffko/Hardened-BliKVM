@@ -7,13 +7,22 @@
 #   hardened-blikvm-video-encoder.service  packaging/systemd
 #   hardened-blikvm-video-encoder-h264.service  packaging/systemd (x264)
 #   60-hardened-blikvm-stream.conf         packaging/sysctl (MJPEG latency)
+#   hardened-blikvm-ve.conf                packaging/sysusers.d (the group of the
+#                                          video engine's encoder device, which
+#                                          the H.264 encoder's unit names)
 #   hardened-blikvm-ustreamer.service      packaging/systemd (default rate)
+#   licenses/*                             license texts of the static libraries
+#                                          linked into the encoder (libvpx,
+#                                          x264, libjpeg-turbo; docs/licensing.md)
 # Usage: deploy_vp8.sh install|remove STAGING_DIR
 #
 # The server advertises VP8 only when BLI_KVM_JANUS_WS is set, which this
 # script adds as a drop-in for the serving units together with the encoder's
-# demand socket (the encoder works only while a viewer is connected); the
-# server restarts once.
+# demand socket (the encoder works only while a viewer is connected), the
+# file in which the H.264 encoder says whether the board's video engine or
+# x264 encodes, and its report, which says whether the engine can be had
+# (GET /api/vm/screen reports both), and with the VP8 encoder's report how
+# the encoding goes (GET /api/vm/quality); the server restarts once.
 set -eu
 
 action=${1:-}
@@ -21,12 +30,19 @@ staging=${2:-}
 case "$action" in install|remove) ;; *) echo "usage: $0 install|remove DIR" >&2; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
 units=/etc/systemd/system
+doc=/usr/share/doc/hardened-blikvm-video-encoder
 serving="hardened-blikvm-server-current hardened-blikvm-server-candidate"
 
 install_vp8() {
   case "$staging" in /*) ;; *) echo "staging directory must be absolute" >&2; exit 2 ;; esac
   command -v janus >/dev/null || { echo "the distribution janus package is required" >&2; exit 1; }
   install -m 0755 -o root -g root "$staging/bli-kvm-video-encoder" /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  install -d -m 0755 -o root -g root "$doc"
+  for file in "$staging"/licenses/*; do
+    if [ -f "$file" ]; then
+      install -m 0644 -o root -g root "$file" "$doc/"
+    fi
+  done
   # Its own world-readable directory: /etc/hardened-blikvm is root-only and
   # the dynamic Janus user could not read its configuration there.
   rm -rf /etc/hardened-blikvm/janus
@@ -38,13 +54,21 @@ install_vp8() {
   install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-video-encoder-h264.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-ustreamer.service" "$units/"
+  # The H.264 encoder's unit joins the group of the video engine's encoder
+  # device, and systemd starts no unit that names a group the system does
+  # not have (216/GROUP): the group comes with the unit, whether or not the
+  # driver is ever switched on (deploy_ve.sh). It stays when this is removed.
+  systemd-sysusers "$staging/hardened-blikvm-ve.conf"
   install -m 0644 -o root -g root "$staging/60-hardened-blikvm-stream.conf" /etc/sysctl.d/
   sysctl -q -p /etc/sysctl.d/60-hardened-blikvm-stream.conf
   for unit in $serving; do
     install -d -m 0755 "$units/$unit.service.d"
-    printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.1:8188' \
+    printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.2:8188' \
       'Environment=BLI_KVM_WEBRTC_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock' \
       'Environment=BLI_KVM_WEBRTC_H264_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock' \
+      'Environment=BLI_KVM_H264_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder' \
+      'Environment=BLI_KVM_H264_ENCODER_REPORT=/run/hardened-blikvm-h264/report.json' \
+      'Environment=BLI_KVM_VP8_ENCODER_REPORT=/run/hardened-blikvm-vp8/report.json' \
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload
@@ -77,6 +101,7 @@ remove_vp8() {
   # Configuration from an earlier layout, unreadable for the dynamic user.
   rm -rf /etc/hardened-blikvm/janus
   rm -f /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  rm -rf "$doc"
   systemctl daemon-reload
   for unit in $serving; do
     if systemctl is-active --quiet "$unit"; then

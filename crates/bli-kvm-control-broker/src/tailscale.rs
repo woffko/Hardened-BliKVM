@@ -49,16 +49,17 @@ pub trait TailscaleRunner: Send {
 
 pub struct SystemTailscaleRunner;
 
+/// How long a system command the owner runs (`systemctl`, `hostnamectl`,
+/// `tailscale`) may take before it is killed (code audit of 2026-10-20,
+/// AUD-07).
+pub const SYSTEM_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const SYSTEM_COMMAND_OUTPUT: usize = 1024 * 1024;
+
 impl TailscaleRunner for SystemTailscaleRunner {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        let mut command = Command::new(program);
+        command.args(args);
+        crate::firewall_process::run(command, SYSTEM_COMMAND_TIMEOUT, SYSTEM_COMMAND_OUTPUT)
     }
 
     fn path_exists(&mut self, path: &str) -> bool {
@@ -151,7 +152,11 @@ impl TailscaleState {
             TailscaleAction::Stop => self.runner.run(SYSTEMCTL, &["stop", TAILSCALED_UNIT]),
             TailscaleAction::Restart => self.runner.run(SYSTEMCTL, &["restart", TAILSCALED_UNIT]),
             // The reference's login/lougout are the CLI's up/down.
-            TailscaleAction::Up | TailscaleAction::Login => self.runner.run(TAILSCALE_BIN, &["up"]),
+            // Bounded as the administration helper's is: without a login
+            // `up` would wait for one.
+            TailscaleAction::Up | TailscaleAction::Login => {
+                self.runner.run(TAILSCALE_BIN, &["up", "--timeout=30s"])
+            }
             TailscaleAction::Down | TailscaleAction::Logout => {
                 self.runner.run(TAILSCALE_BIN, &["down"])
             }
@@ -312,7 +317,11 @@ mod tests {
                 .iter()
                 .any(|call| call.ends_with("restart tailscaled.service"))
         );
-        assert!(calls.iter().any(|call| call.ends_with("tailscale up")));
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.ends_with("tailscale up --timeout=30s"))
+        );
     }
 
     #[test]

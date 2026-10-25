@@ -1,0 +1,2200 @@
+# The H616 video engine's H.264 encoder: sources, register maps, lab method
+
+Plan: `docs/baselines/work-plan-20261002-hardware-h264.md`. This note holds
+what is known about the encoder from open sources, the two register maps
+that are the hypotheses to test, how the lab works, and, as the work goes
+on, the lab's record and the register description that comes out of it.
+
+Status (2026-10-03, gate V7 passed): the product encodes H.264 with the
+engine. A 1920x1080 frame, key or P, takes it 7 ms; the product's encoder
+(V5) gives every frame its QP and at most the passes its time allows, and
+chooses the engine's search for motion for every frame; it holds thirty
+frames a second of a moving 1920x1080 picture with 1.6 to 1.7 cores, where
+x264 makes 12 to 19 with three cores and more, and ran twelve hours on the
+board without a failure. On the plan's sequences the picture is within
+0.2 dB of x264's at the product's rates; text that moves fast is worse. The
+engine takes its encoder's addresses in units of 256 bytes (V2.1, V2R),
+stays inside its buffers, and stops at the end of its stream buffer
+(V3.1 again); the driver that gives it to the product is
+`docs/design/h616-ve-encoder-driver-v1.md`, and the plan's outcome item by
+item is `docs/baselines/audit-20261003-hardware-h264.md`. Since 2026-10-04
+the engine is the board's choice: the video menu offers H.264 HW and
+H.264 SW, and the encoder follows the choice between two frames
+(`docs/design/h264-engine-choice-and-quality-monitor-v1.md`; "Since
+2026-10-04" below).
+
+## Sources
+
+| Source | Licence | Version | What is taken |
+| --- | --- | --- | --- |
+| `jemk/cedrus`, `h264enc/` | GPL-2.0-or-later | commit `84c5e37` (2015-01-18) | the register sequence of an encode on the A10 to H3 generations, the buffers and their sizes, headers written through the engine's bit writer |
+| `jemk/cedrus`, `common/ve.h`, `common/ve.c` | LGPL-2.1-or-later | the same commit | register names and offsets, how an engine is selected |
+| `bootlin/linux`, branch `cedrus/h264-encoding`: `cedrus_regs.h`, `cedrus_enc.c`, `cedrus_enc_h264.c` | GPL-2.0 | commit `4e94979` (2023-11-10) | the map of the V3, V3s and S3 with its fields, the encode sequence, the buffers and their sizes, the encoder's reset, the interrupt handling |
+| Linux 5.19, `drivers/staging/media/sunxi/cedrus` | GPL-2.0 | v5.19 | what a driver of this engine does at probe: interrupt, SRAM section, clocks, reset, runtime power |
+| The vendor kernel's `drivers/media/cedar-ve/cedar_ve.c` (`orangepi-xunlong/linux-orangepi`, branch `orange-pi-4.9-sun50iw9`) | GPL-2.0-or-later | read on 2026-10-02 | which bits of the top register mean encoder, input stage and JPEG decoder on the sun50i parts, where their interrupt status and enables are, and how the handler quiets them |
+| Linux 5.19.4, `drivers/staging/media/sunxi/cedrus/cedrus_regs.h` | GPL-2.0 | v5.19.4 | the forms in which this engine's decoder blocks take an address: as it is (the H.264 decoder's pictures), with its top four bits moved to the bottom (the H.264 decoder's stream), and in units of 256 bytes (the H.265 decoder's stream, its end, and its picture and side buffers) |
+| `Allwinner-Homlet/H6-CedarC`, `ve/veAw/veAw.c` and `ve/include/veAwTopRegDef.h` (the vendor's own publication of its user-space engine keeper for the H6; its decoder half only) | LGPL-2.1 (the files' notice) | commit `d92ffcb` (2018-03-29) | how the engine's version is put together where `0x0f0` reads zero: `0x0e0` (the decoder's) in the upper half of a 64-bit number and `0x0e4` (the encoder's) in the lower, `0x3101000012010` on the H6; that the H6's keeper takes nothing off a buffer's address before the engine gets it and tells chip id 0; the fields of the top level's mode, reset and status registers; how the memory type becomes the mode register's memory field |
+| The vendor's "Video Encoder API Guide" (R-E-17, V1.0, 2016), as shipped beside the library | documentation | | the order in which the encoder library is called and what its parameters mean |
+| linux-sunxi, "VE Register guide" | documentation | archived copy of 2025 | register names of the older generations |
+| Armbian forum, topic 26551 (September 2025) | a statement | | that the 32-bit generations' encoder code does not work on the H616 and T507 |
+| Allwinner's H616 brief | documentation | | H.264 encoding up to 4K at 25 frames a second |
+
+The first two are read from clones in a cache outside the repository; the
+vendor kernel's file was read from its repository. Nothing of them is copied
+into this repository. Where code here follows one of them, its file says so
+and carries a licence that the source allows.
+
+## Clean room
+
+1. Read and used: sources with an open licence (the table above) and public
+   documentation. Register offsets and bit meanings are facts; where code is
+   adapted, the file keeps the notice and the licence of its source.
+2. Watched, only if the operator approves it (plan, V2R; approved on
+   2026-10-02 in the form without an engine, see the lab record): the
+   vendor's encoder library as a black box, called through its published
+   interface. What is recorded is its traffic with what it takes for the
+   hardware: which register it reads or writes, with which value, in which
+   order, for which input. The register description is written from such
+   traces in this project's own words.
+3. Never: disassembling or decompiling a vendor library; reading vendor
+   source that was not published under an open licence (its interface
+   headers excepted, as the description of how to call it); copying any of
+   it; putting a vendor file into Git, a package, a slot or an image. Such a
+   library lives in a cache outside the repository and on the board's tmpfs
+   for the length of a session.
+4. The product contains only code written here or taken from open sources
+   under their licences (`docs/licensing.md`).
+
+## The engine's top level
+
+Offsets are from the engine's base, `0x01c0e000` on the H616.
+
+| Offset | Register | What the sources say |
+| --- | --- | --- |
+| `0x000` | mode | bits 3:0 select the decoder (0 MPEG, 1 H.264, 4 H.265, 7 none); bit 6 enables the input stage and bit 7 the encoder (Bootlin, and the vendor kernel's interrupt handler for every part but the oldest); bit 5 is the JPEG decoder at `0xe00` on the sun50i parts (vendor kernel); bits 17:16 the memory interface width (3 for 128 bits), bit 20 the reconstruction write mode, bits 21 and 22 for pictures wider than 2048. The vendor's keeper for the H6 names the rest: bits 8 and 9 choose what two counters count, 10 and 11 gate the decoder's and the encoder's clock, 13 to 15 switch parts of the decoder off, 18 a memory self-test, 19 a macroblock counter, 4, 12, 26, 27 and 29 the compressed frame buffer format, 31 a RAM power-down. Its memory field: 0 for 16-bit DDR1, 1 for 32-bit DDR1 or 16-bit DDR2, 2 for 32-bit DDR2 or 16-bit DDR3, 3 for wider DDR3 with bit 20 set |
+| `0x004` | reset | bit 24 resets the encoder, bit 16 the decoder, bit 0 everything; bits 8 and 9 read as "idle" (Bootlin). The vendor's keeper for the H6: bit 8 "writes to memory finished", bit 9 the decoder's "sync idle", bit 10 the encoder's, bit 11 the JPEG decoder's; bit 17 masks the decoder's requests and bit 25 the encoder's; bit 18 resets a part of the decoder; bit 4 masks, and bit 5 clears, the memory synchroniser |
+| `0x01c` | status | bit 16: the memory synchroniser is idle (the vendor's keeper for the H6); the low bits are the older generations' interrupt flags, bit 8 a timeout enable |
+| `0x0e0`, `0x0e4` | identification | the decoder's and the encoder's, where `0x0f0` reads zero (the vendor's keeper for the H6) |
+| `0x0f0` | version | the engine's version in the upper 16 bits |
+
+Selecting the encoder, two forms:
+
+- **older** (jemk): the mode register is written `0x0013000b`: engine 11 in
+  the low four bits. The vendor kernel reads the select this way only on its
+  oldest part.
+- **newer** (Bootlin for the V3s): bits 7 and 6 set and the decoder field 7,
+  after a pulse of the encoder's reset bit. The vendor kernel's handler for
+  the sun50i parts tests exactly these bits, so this is the form expected on
+  the H616.
+
+## The input stage (`0xa00`)
+
+| Offset | Older map (jemk) | V3s map (Bootlin) |
+| --- | --- | --- |
+| `0xa00` | input size: width in macroblocks at 31:16, height at 15:0 | picture info: the same |
+| `0xa04` | input stride: macroblocks at 31:16 | stride: input at 26:16, thumbnail at 9:0 |
+| `0xa08` | control: the colour format from bit 29 (0 NV12, 1 NV16) | control: format from bit 27 (0 NV12, 4 NV21, 24 and 26 planar), mirror bit 22, rotation 21:20, thumbnail bit 19, scaler bit 16, colour space 2:1, interrupt enable bit 0 |
+| `0xa10` | | status (bit 0; from the vendor kernel) |
+| `0xa2c` | | scaler size: height in macroblocks at 26:16, width at 10:0 |
+| `0xa70`, `0xa74` | | output luma and chroma addresses |
+| `0xa78` | input luma address | the same |
+| `0xa7c` | input chroma address | the same (first chroma plane) |
+| `0xa80` | | second chroma plane |
+
+The two maps agree where both speak, except in the format field: what the
+older map calls NV16 (1 from bit 29) is the value the newer one calls NV21
+(4 from bit 27).
+
+## The encoder (`0xb00`)
+
+| Offset | Older map (jemk) | V3s map (Bootlin) |
+| --- | --- | --- |
+| `0xb04` | parameters: bit 4 P slice, bit 8 CABAC, bit 31 no emulation prevention | `PARA0`: picture type 1:0 and reference type 3:2 (frame, top, bottom), slice type 5:4 (0 I, 1 P, 2 skipped P, 3 B), entropy bit 8, CABAC init method bit 9, fix mode number 11:10 (carries `cabac_init_idc`), deblocking mode 13:12, IDR picture id bit 15, alpha offset 19:16, beta offset 23:20, frame number 27:24, reference reorder bit 28, slice mode bit 29, zero stuffing bit 30, no emulation prevention bit 31 |
+| `0xb08` | QP: written `(4 << 16) \| (qp << 8) \| qp` | `PARA1`: fixed QP 5:0, rate-control mode from bit 6 (0 fixed), dynamic motion estimation bit 8, tiled output bit 9, input stride in macroblocks divided by 48 at 13:10, chroma QP offset 18:16, temporal filter bit 19, motion vector clipping 25:24 and 26, mode optimisation 30:28 and 31 |
+| `0xb0c` | | `PARA2`, written 0 |
+| `0xb10` | motion estimation: written `0x00000104` | `ME_PARA`: intra prediction off bit 0, fine search level 2:1, search switches bits 3 to 5, coarse cost 7:6, motion estimation off bit 8, skipped macroblocks off bit 9, bits 11 to 15, no motion vector write-back bit 16, region of interest bit 17, deblocking and third-pixel data to memory bits 18 and 19, quarter-pixel switches bits 20 and 21. Written `0x00010004` |
+| `0xb14` | control: interrupt enables, written `\|= 0xf` | `INT_EN`: finish bit 0, stall bit 1, macroblock overtime bit 2 |
+| `0xb18` | trigger: `0x1 \| bits << 8` puts bits, `0x8` starts an encode | `STARTTRIG`: type 3:0 (1 put bits, 2 byte align, 4 and 5 signed and unsigned Exp-Golomb, 8 start, 9 continue), number of bits 13:8, mode 17:16 (0 H.264, 1 JPEG, 2 VP8) |
+| `0xb1c` | status: written back to clear; `(status & 3) == 1` is success | `STATUS`: finish bit 0, stall bit 1, macroblock overtime bit 2, overtime bit 3, bit writer ready bit 9 |
+| `0xb20` | the bits to put | `PUTBITSDATA` |
+| `0xb24` | | macroblocks over time |
+| `0xb28` | | cyclic intra refresh: enable bit 31, start column 23:16, end column 7:0 |
+| `0xb2c` to `0xb40` | | rate control: init, four MAD thresholds, MAD sum |
+| `0xb44` | | temporal filter |
+| `0xb48`, `0xb4c` | | dynamic motion estimation thresholds |
+| `0xb50`, `0xb54`, `0xb58`, `0xb5c` | | statistics: MAD, residual bits, header bits, motion estimation info |
+| `0xb60` | a buffer "of unknown purpose", one per stream | motion vector buffer, written 0 |
+| `0xb80` | bitstream buffer address | the same |
+| `0xb84` | bitstream buffer end (address + size - 1) | the same |
+| `0xb88` | bit offset, written 0 | the same |
+| `0xb8c` | size in bits | the same |
+| `0xb90` | bits written so far | the same |
+| `0xba0`, `0xba4` | reference luma and chroma | reference 0 luma and chroma |
+| `0xba8`, `0xbac` | | reference 1 luma and chroma |
+| `0xbb0`, `0xbb4` | reconstruction luma and chroma | the same |
+| `0xbb8` | the reference's "smaller luma" | sub-pixel buffer of the last picture |
+| `0xbbc` | the reconstruction's "smaller luma" | sub-pixel buffer of this picture |
+| `0xbc0` | a line buffer "of unknown purpose" | macroblock info buffer |
+| `0xbc4` | | deblocking buffer, written 0 |
+| `0xbc8` | | temporal filter counts |
+| `0xbcc` to `0xbdc` | | region of interest: QP offset and four areas |
+
+The block's layout is one and the same in both maps. They differ in what
+they write into it:
+
+| | Older map | V3s map |
+| --- | --- | --- |
+| `0xb08` bits 13:8 | a second QP | the input stride divided by 48 (the newer engine needs it: a 1920 wide picture gives 3) |
+| `0xb08` bits 18:16 | 4 | the chroma QP offset (4 by default: the same value) |
+| `0xb10` | `0x104`: bit 2, bit 8 | `0x10004`: bit 2, bit 16. Bit 8 is "motion estimation off" in the newer map |
+| `0xb60` | the address of a buffer | 0, with the write-back switched off by bit 16 of `0xb10` |
+| Interrupt enables | `0xf` | `0x3` |
+| Before a put of bits | nothing | wait for bit 9 of the status |
+| Encoder reset | none | a pulse of bit 24 at `0x004` |
+| After the headers | nothing | wait for the idle bits 8 and 9 at `0x004` |
+
+## The order of an encode
+
+**Older map**, every frame:
+
+1. Select engine 11.
+2. Bitstream: `0xb88` = 0, `0xb80` = address, `0xb84` = address + size - 1,
+   `0xb8c` = size in bits.
+3. Headers through the bit writer: the data to `0xb20`, then `0xb18` =
+   `1 | bits << 8`, at most 32 bits at a time. A start code is put with
+   emulation prevention off (bit 31 of `0xb04`): 24 zero bits, then
+   `0x100 | NAL header` in 16. SPS and PPS are put before the first frame,
+   a slice header before every frame; the trailing bits of a parameter set
+   are computed from `0xb90`.
+4. Input: `0xa04`, `0xa00`, `0xa08`, `0xa78`, `0xa7c`.
+5. Reconstruction: `0xbb0`, `0xbb4`, `0xbbc`. For a P frame the reference:
+   `0xba0`, `0xba4`, `0xbb8`. Two sets of buffers take turns.
+6. `0xbc0` and `0xb60`: the two buffers of unknown purpose.
+7. `0xb14 |= 0xf`, `0xb1c |= 0x7`.
+8. `0xb04` = `0x100` for CABAC, `0x10` for a P frame; `0xb08`; `0xb10`.
+9. `0xb18` = 8; wait for the interrupt.
+10. Read `0xb1c` and write it back; the length is `0xb90 / 8` bytes.
+
+**V3s map**. Once per stream: the mode register's encoder bits cleared, the
+encoder reset pulsed, the encoder bits set; then the input stage: `0xa00`,
+`0xa2c` (the same size), `0xa04`, `0xa08` = 0 (NV12, no rotation, BT.601),
+`0xa78`, `0xa7c`. Every frame:
+
+1. `0xb18` = 0.
+2. Bitstream: `0xb88` = 0, `0xb80`, `0xb84`, `0xb8c`, and `0xb90`, `0xb58`,
+   `0xb54` = 0.
+3. Headers: emulation prevention off; for every put wait for bit 9 of
+   `0xb1c`, then `0xb20` and `0xb18` = `1 | bits << 8`; a start code is four
+   bytes put one by one; a parameter set ends with its stop bit and zero
+   bits up to a byte, counted from `0xb90`; emulation prevention on again;
+   wait for the idle bits at `0x004`. SPS and PPS go before an IDR frame.
+4. `0xbc0` = macroblock info; `0xb60` = 0; `0xbb0`, `0xbb4` =
+   reconstruction; `0xba0`, `0xba4` = the previous reconstruction (for an I
+   frame the frame's own); `0xbbc` = this frame's sub-pixel buffer, `0xbb8`
+   = the last one's; `0xbc4` = 0; `0xb28` = 0.
+5. `0xb04`: slice type, entropy mode, `cabac_init_idc`, deblocking offsets;
+   the frame number field stays 0. `0xb08`: QP, stride divided by 48,
+   chroma QP offset. `0xb0c`, `0xb48`, `0xb4c`, `0xb2c` to `0xb3c` = 0.
+   `0xb10` = `0x10004`. `0xb50`, `0xb24`, `0xb5c` = 0.
+6. `0xb14` = 3; `0xb18` = 8.
+7. At the interrupt: `0xb1c & 0xf`, bit 0 is success; `0xb1c` = `0xf` to
+   clear; `0xb14` = 0. The length is `0xb90 / 8` bytes.
+
+The vendor kernel's handler, which the lab module copies: with bit 7 of the
+mode register set, read `0xb1c & 0xf` and `0xb14 & 0x7`; if both are not
+zero, clear the three enable bits and wake whoever waits.
+
+## Buffers
+
+For a picture of W by H macroblocks; in bytes for 1920x1088 (120 by 68).
+
+| Buffer | Older map | V3s map |
+| --- | --- | --- |
+| Input | NV12: W16 x H16 x 3/2, luma and chroma in one buffer (3133440) | the same |
+| Bitstream | 1 MiB | the capture buffer of the request |
+| Reconstruction, each of two | luma `ALIGN(W16, 32) x ALIGN(H16, 32)` (2088960) and chroma `ALIGN(W16, 32) x ALIGN(H8, 32)` (1044480) in one buffer | luma `ALIGN(W, 2) x 16 x ALIGN(H + 1, 4) x 16` (2211840) and chroma `ALIGN(W, 2) x 16 x ALIGN(ceil(H / 2), 4) x 16` (1105920) in one buffer, rounded up to 4 KiB |
+| Sub-pixel, each of two | a quarter of the luma size (522240) | `(ALIGN_DOWN((W + 47) x 2 / 3, 32) + ALIGN(W, 32) x 2) x ((H x 16 + 72) / 8)` (352 x 145 = 51040) |
+| `0xbc0` | `W x 32` (3840) | `ceil(W / 32) x 4096` (16384) |
+| `0xb60` | `ALIGN(W, 4) x H x 8` (65280) | none |
+
+The lab gives every buffer the larger of the two sizes and room beyond it,
+with markers at both ends of the part in use.
+
+## The stream's headers
+
+Both sources write the same syntax, which is also what the product's x264
+makes today: one SPS and one PPS with id 0, one reference frame, frames
+only, one slice per picture, deblocking controlled per slice. They differ in
+two choices, both free:
+
+- picture order: type 2 (jemk: output order is decoding order, nothing in
+  the slice header) or type 0 with an 8-bit counter (Bootlin). Type 2 is
+  what a stream without B frames needs and what x264 writes for it.
+- `frame_num` width: 4 bits (jemk) or 8 (Bootlin).
+
+The lab tool writes its own headers: constrained baseline (profile 66 with
+`constraint_set0` and `constraint_set1`), the level for the size and rate,
+picture order type 2, cropping for sizes that are not whole macroblocks, an
+IDR frame with SPS and PPS before it whenever a key frame is asked for.
+
+## The lab
+
+### Parts
+
+- **The lab module** `hardened-blikvm-ve-lab` (kernel, GPL-2.0-only, root
+  only, never packaged). It binds to the engine's node while `cedrus` is
+  unbound for the session, takes the interrupt, the SRAM section, the three
+  clocks and the reset in the order `cedrus` does, and offers one client:
+  the register window mapped, DMA buffers allocated and mapped with their
+  bus addresses told, a wait for the encoder's interrupt, a reset of the
+  engine. Closing it, or the client's death, resets the engine and frees
+  everything.
+- **The lab tool** `bli-kvm-ve-lab` (user space, static aarch64): the
+  picture generator, the header writer, the register plans of both maps,
+  the experiments, PSNR, and a software stand-in for the engine that makes
+  all of it testable on the host.
+- **The session script** on the development host: copies both to the
+  board's tmpfs, checks the lease rule, starts the watchdog keeper, runs
+  the experiment, collects the receipt and the kernel log, and puts the
+  board back as it was.
+
+### Rules for experiments
+
+1. The engine is programmed only while nobody holds the HID lease; otherwise
+   the run waits (the operator's answer of 2026-10-02). The lease cannot be
+   seen from outside its holder: neither the owner nor the server tells a
+   third party whether one is live. Nobody can hold one, though, without a
+   page that renews it at least every 30 s, over HTTPS or over a QUIC
+   session. So a session starts only when the board has no established
+   HTTPS connection and no open QUIC session, checked three times over
+   eight seconds; this also waits for somebody who only watches.
+2. Before any trigger every address register the maps name holds an address
+   inside the session's own buffers, and the bitstream's end register bounds
+   what the engine may write. An address of zero is not memory on this SoC:
+   its memory begins at `0x40000000`.
+3. First runs use a small picture in buffers many times its size, with
+   marker bytes around the part in use; the markers are checked after every
+   run.
+4. A keeper process arms the SoC's watchdog (16 s) for the length of a run:
+   a kernel that hangs is reset instead of waiting for a hand. `sync`
+   precedes every run. The engine is reset before the watchdog is disarmed.
+5. The mask probe writes no trigger. Registers outside the blocks the open
+   maps name are read, never written.
+6. Afterwards: the lab module unloaded, `cedrus` bound and suspended as
+   found, the watchdog disarmed, no file left on the board, no unit or
+   process. The kernel log is read after every session; a warning it did
+   not have before ends the session.
+7. A hang or reboot that is not understood stops the work on the board
+   until it is explained in the record below; a second one ends the plan.
+8. (Since V2.1.) Rule 2 assumed that the engine writes where its address
+   registers say. It does not always. No experiment may make the engine
+   write to memory until it is known, by means that write nothing, where
+   that write goes.
+9. (Since V2.1.) After any session in which the engine could have written,
+   `tools/device/ve_memory_scan.py` reads all of memory for what it was
+   given. A find outside the session's buffers means the kernel's memory is
+   damaged: nothing else is done on the board until it has been reset.
+   Since V2R the lab's run script does this itself, and also copies the
+   kernel's own image (its instructions and read-only data) before the
+   engine is handed to the lab module and compares it word by word after
+   the engine is back. The kernel changes its own instructions while it
+   runs: a static key that is switched turns single instructions from "no
+   operation" into a branch or back. Such words are counted and held
+   against nobody; any other word that differs is a write that went astray,
+   and the comparison says where (see "V3.1" for the session that taught
+   this).
+
+### Test pictures
+
+A generator in the lab tool, the same on the board and on the host, makes
+every sequence from its name, size and frame number alone; no screen of the
+operator is recorded.
+
+| Name | What moves |
+| --- | --- |
+| `scroll` | a page of text-like marks that scrolls by lines |
+| `drag` | a window dragged over a still desktop |
+| `motion` | the whole picture: moving gradients and blocks, the hardest case |
+| `pointer` | a still desktop with a small pointer that moves |
+
+Sizes: 1920x1080, 1280x720, 1366x768, and 320x240 for first runs. Pictures
+are NV12, BT.601 limited range, as the product's converter makes them.
+
+Besides the plan's four, for the engine's search (V3.4 again): a page that
+moves by one vector a frame, named `PAGE.RIGHT.DOWN` (`text.0.-20` is the
+text of `scroll` moving up 20 pixels a frame; `grain` is a page of which
+no part looks like another), and for any sequence a burst: so many frames
+moving, so many resting.
+
+### Measures
+
+- **Decodes**: the board's ffmpeg decodes the stream without an error and to
+  the expected number of frames; on the host Chromium decodes it with
+  WebCodecs.
+- **PSNR**: of the luma plane, per frame, between the generator's picture
+  and the decoded one; a sequence's value is the mean over its frames.
+- **Time per frame**: from the write of the start trigger to the finish
+  status, by the board's monotonic clock.
+- **Rate**: the bytes of the frames in every window of ten seconds at the
+  sequence's frame rate.
+- **The reference**: x264 with the product's settings (`ultrafast`,
+  `zerolatency`, constrained baseline, the same bitrates), driven through
+  the encoder crate's own wrapper on the same pictures on the board.
+
+### Receipts and the log
+
+Every experiment writes one JSON receipt under `evidence/private`
+(`ve-lab-<phase>-<date>-<name>.json`): the tool's version and the source
+commit, the engine's version, the map and parameters, every register written
+with its value in order, the status and length read back, the buffers'
+sizes and marker checks, the times, the decoders' verdicts and PSNR, and
+the kernel log lines of the session. Bus addresses are recorded as offsets
+within their buffers.
+
+`evidence/private/ve-lab-log.md` is the lab's diary: when a session began
+and ended, what it tried, what came out, and the hours spent in each phase,
+which the plan's time boxes count.
+
+## A module for this kernel
+
+`scripts/build-ve-module.sh` builds modules for the board's kernel, which
+its vendor built without publishing a tree or a headers package. The tree is
+made of the upstream source of the same release (5.19.4, signature checked),
+the board's configuration (`/proc/config.gz`), the compiler the kernel names
+in `/proc/version` (Arm's GNU toolchain 8.3-2019.03), and the kernel's own
+headers from its `kheaders` module, laid over the upstream ones.
+
+What `prepare` found, and checks on every run:
+
+- After `olddefconfig` with that compiler every option of the rebuilt
+  configuration header has the board's value, and the release string is the
+  board's (`5.19.4-sunxi64`).
+- The board's configuration header has 42 options more. They belong to
+  patches the vendor's kernel carries and upstream lacks (Wi-Fi drivers,
+  AUFS, the AC200, sound, panels), and one upstream option that a patch
+  made selectable (`GPIO_SYSFS`).
+- One of those patches changes a structure every driver with a mapping
+  uses: with AUFS, `struct vm_area_struct` has one member more. A module
+  built with the rebuilt configuration header would lay that structure out
+  wrongly. The build therefore uses the board's headers and the board's
+  configuration header; the rebuilt one only proves that source,
+  configuration and compiler belong together.
+
+This changes one sentence of the plan, which asked that the rebuilt
+configuration header define exactly what the board's defines. It cannot:
+upstream does not know the vendor's options. The check is that it defines
+nothing differently.
+
+Modules are built from a copy under a fixed name, with the paths of the
+build mapped away; two builds from different directories gave the same
+bytes. Their version magic must equal the board's, and a module that names
+a path of the build machine is refused. The module build is not part of
+`check.sh`: it needs the board's headers, which are not in the repository.
+
+The check modules (`kernel/hardened-blikvm-ve/check`): `ve_hello` does
+nothing; `ve_probe_test` registers a platform driver that matches nothing
+and a device node with one request and one mapping. `struct module` has the
+size it has in the board's own modules (0x300).
+
+## Lab record
+
+### V1.1, 2026-10-02: modules built by the recipe load
+
+`tools/device/ve_lab_session.sh` was first run with a harmless command of
+25 s: the quiet check passed, the watchdog was armed across its 16 s
+timeout and disarmed, the board stayed up, nothing was left.
+
+Then the two check modules (`ve_hello.ko` `5acb75aa...`, `ve_probe_test.ko`
+`36b04534...`) in a session: `ve_hello` loaded and unloaded; the test
+device answered its request, refused another, and its page was read and
+written through the mapping; both unloaded. The kernel's lines of the
+session were the two taint notices (an out-of-tree module, and an unsigned
+one) and the modules' own. The taint flags went from 1024 (the staging
+driver `cedrus`) to 13312 and stay so until the next boot. `cedrus` was
+bound and suspended afterwards.
+
+Receipts: `evidence/private/ve-lab-v1-20261002-session-dry`,
+`ve-lab-v1-20261002-module-check`.
+
+### V1.3, 2026-10-02: the engine answers
+
+The lab module (`kernel/hardened-blikvm-ve`, `ve_lab.c`) bound to the
+engine's node after `cedrus` was unbound; the lab tool opened its device,
+which gives the engine its clocks and releases its reset, and read the four
+blocks. Nothing was written. Afterwards `cedrus` was bound and suspended
+again, and the kernel had said two lines: the lab module bound, the decoder
+registered.
+
+| Register | Value after power-on |
+| --- | --- |
+| `0x000` mode | `0xc0000007`: no decoder; bits 31 and 30 set |
+| `0x004` reset | `0x00000300`: the two idle bits |
+| `0x01c` | `0x00010000` |
+| `0x030` | `0x00000200` |
+| `0x040` | `0x0000000f` |
+| `0x080`, `0x084`, `0x088` | `0x00001c55`, `0x000fffff`, `0x00008000` |
+| `0x0e0`, `0x0e4` | `0x00033010`, `0x00012011` |
+| `0x0f0` version | `0x00000000` |
+
+- **The version register reads zero.** The older generations have their
+  version in its upper half; this engine does not. `0x0e0` and `0x0e4` hold
+  values that look like an identification, and no open source names them.
+  They are what this note records as the engine's version.
+- The input stage (`0xa00`), the encoder (`0xb00`) and the JPEG decoder
+  (`0xe00`) read zero in every register while none of them is selected.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-probe`.
+
+### V1.4, 2026-10-02: buffers
+
+Six buffers from the lab module, from 4 KiB to 16 MiB: each arrived zeroed,
+kept a pattern written through its mapping, and has a bus address inside
+the board's memory (the single page at `0x46df5000`, the others between
+`0x77000000` and `0x78c00000`, where the kernel's CMA area lies). The CMA
+total was the 131072 kB found before; closing the device freed them.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-buffers`.
+
+### V1.5, 2026-10-02: which bits the encoder's registers hold
+
+With the encoder selected and nothing triggered, every register the open
+maps name (34, no trigger, status or interrupt register among them) was
+read, written with ones, read, written with zero, read, and put back.
+
+**The older select does nothing here.** With `0x0013000b` in the mode
+register, engine 11 in the low four bits, no register of the input stage or
+of the encoder holds a bit.
+
+**The newer select is this engine's.** After the pulse of the encoder's
+reset bit, bits 7 and 6 stay set in the mode register (`0xc00000c7`), and
+the blocks hold what is written:
+
+| Register | Bits that can be set | Remark |
+| --- | --- | --- |
+| `0xa00` size | `0x07ff07ff` | 11 bits for each dimension in macroblocks |
+| `0xa04` stride | `0x07ff07ff` | the same two fields |
+| `0xa08` control | `0xf8790006` tried, all held | only the bits the map names were tried, never the interrupt enable |
+| `0xa2c` scaler size | all | |
+| `0xa78`, `0xa7c` input | `0xfffffff0`, `0xfffffff8` | luma addresses in steps of 16 bytes, chroma of 8 |
+| `0xb04` `PARA0` | all | |
+| `0xb08` `PARA1` | all | `0x0000001e` after reset: QP 30 |
+| `0xb0c` `PARA2` | all | |
+| `0xb10` motion estimation | `0x00ffffff` | |
+| `0xb24` | `0x0003f000` | |
+| `0xb28` intra refresh | `0x80ff00ff` | the map's three fields exactly |
+| `0xb2c` | `0xf03fffff` | |
+| `0xb30`, `0xb34`, `0xb38` | all | |
+| `0xb3c` | none | the map's fourth MAD threshold holds nothing |
+| `0xb44` temporal filter | `0xffff7fff` | the map's five fields exactly |
+| `0xb48`, `0xb4c` dynamic motion estimation | `0x03ff03ff` | the map's two fields exactly |
+| `0xb60` | `0xfffffffc` | an address |
+| `0xb80` stream start | `0xfffffffc` | |
+| `0xb84` stream end | all; the low two bits cannot be cleared | all ones after reset |
+| `0xb88` bit offset | none | |
+| `0xb8c` size in bits | `0xffff0000` | in steps of 65536 bits, 8 KiB; `0xffff0000` after reset |
+| `0xba0`, `0xba4`, `0xbb0`, `0xbb4`, `0xbb8`, `0xbbc`, `0xbc0`, `0xbc4`, `0xbc8` | `0xfffffffc` | addresses |
+
+Every register read after the probe what it had read before it. No
+interrupt came. The kernel's lines were the two of every session.
+
+What this says:
+
+- The block is the V3s map's: where that map names fields, the bits that
+  can be set are those fields and no others (intra refresh, temporal
+  filter, dynamic motion estimation, the two size fields).
+- Three things the maps do not say: the stream buffer's size counts in
+  steps of 8 KiB; its end address always has its low two bits set; the bit
+  offset cannot be read back.
+- One register of the map is not there: the fourth MAD threshold.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-masks`.
+
+### Gate V1: passed
+
+Modules built by the recipe load. The engine's identification is recorded
+(its version register reads zero). The encoder's block holds what is
+written to it once the encoder is selected the newer way. Buffers work.
+After every session `cedrus` was bound and suspended as before, and the
+kernel's log had only the lab module's and the decoder's own lines. The
+first hypothesis for V2 is the V3s map; the older map is tried only for
+what it writes into the block, not for its select.
+
+### V2.1, 2026-10-02: the bit writer works, and writes to the wrong place
+
+Three sessions put SPS and PPS of a 320x240 stream through the engine's bit
+writer, once and then 8, 64 and 700 times over, with the encoder selected
+the newer way and the stream buffer described as both maps say: bit offset
+0 at `0xb88`, start at `0xb80` (`0x77410000`, 64 KiB into a lab buffer),
+end at `0xb84` (4 MiB above), size at `0xb8c` (`0x02000000` bits). Nothing
+was encoded.
+
+What the engine did:
+
+- **The bit writer is the maps'.** The status register `0xb1c` reads
+  `0x00000260` at rest: bit 9, "ready for bits", and two bits no map names.
+  Every put was taken, and `0xb90` counted exactly the bits that were put:
+  200 for one SPS and PPS, 140000 for 700 of them.
+- **Nothing arrived in the buffer.** Its first bytes stayed zero at every
+  length, and every guard kept its markers.
+- **The bytes went to physical `0x41000000`.** The next session's own
+  `sync` died in the kernel, before that session touched the engine,
+  calling an address made of bytes of the PPS. A scan of all memory
+  (`tools/device/ve_memory_scan.py`, reading only) then found the
+  parameter sets 16 MiB above the beginning of memory, 696 of the 700
+  repeats in a row: in the kernel's read-only data, which the kernel maps
+  from `0x40fa0000` to `0x413bffff` on this board. The engine writes its
+  bits to memory in portions (the last 100 bytes were not there, so a
+  portion is between 128 bytes and 1 KiB), but not at the address in
+  `0xb80`.
+- One more session gave the engine the same buffer's address counted from
+  the beginning of memory (`0x37410000`), as the older generations count.
+  The buffer stayed empty again. Whether that run also wrote to
+  `0x41000000` cannot be told: it would have written the same bytes.
+
+Why `0x41000000` is not known. It follows from neither address by dropping
+or adding bits. Sixteen MiB is four times the buffer's size and half its
+size in bits; that may be chance.
+
+What it did to the board. The engine overwrote 17 KiB of the kernel's
+tables. Two processes died in the kernel on pointers that hold bytes of the
+PPS (`sync` in `sync_fs_one_sb`, and `kswapd0` in `super_cache_count`).
+PID 1, the journal and the login service then hung in the kernel; the web
+interface went on serving. No write was waiting for the card (`Dirty` and
+`Writeback` were zero). The damage is in memory, and a reset removes it.
+The lab was not permitted to reset the board; the operator was told to.
+
+What follows:
+
+- Gate V2 is not reached, and by rule 7 the work on the board has stopped.
+- Rules 8 and 9 above. Markers around the buffers and the bounds registers
+  could not have caught this: the engine never came near the buffers.
+- Ways to the explanation that make the engine write nothing: reading, not
+  writing, the rest of the engine's register window and the state of the
+  SoC's IOMMU and memory bus after a reset; and watching the vendor's
+  library (V2R) without an engine at all, against a register window that is
+  plain memory, which shows how it describes the stream buffer to this
+  engine.
+
+Receipts: `evidence/private/ve-lab-v2-20261002-bits-a`, `-bits-b`,
+`-bits-c`, `-incident`.
+
+### V2.1 afterwards, 2026-10-02: a candidate explanation
+
+The record above says that `0x41000000` follows from neither address by
+dropping or adding bits. It does follow from both by a shift:
+
+    0x77410000 << 8 = 0x77_41000000, and its low 32 bits are 0x41000000
+    0x37410000 << 8 = 0x37_41000000, the same
+
+That is what an engine does that takes the register for the buffer's
+address in units of 256 bytes. This engine has such registers: Linux'
+`cedrus` writes every address of the H.265 decoder block that way (the
+stream, its end, the picture buffers), while the older H.264 decoder block
+beside it takes its addresses in two other forms. The H.264 encoder of the
+V3s takes its stream address as it is (Bootlin's driver); the H616's is a
+later revision of the same block (encoder identification `0x00012011`), in
+a part whose memory can lie above what 32 bits address.
+
+What fits:
+
+- Both sessions give one place, as the scan found only one.
+- The registers' bits (V1.5): the start register holds every bit but the
+  low two, the end register has its low two bits always set. In units of
+  256 bytes that is a start on a 1 KiB boundary and an end on the last byte
+  before one.
+- The end register read all ones after reset and was written `0x7780ffff`;
+  shifted, that is an end far above the start, so the bit writer never
+  thought its buffer full.
+
+What it does not show: the same form for the other address registers of the
+block (reference, reconstruction, sub-pixel, macroblock info), whose low
+two bits are also fixed, or for the input stage's, whose low four and three
+are. Each may have its own form, as in the decoder blocks.
+
+It stays a candidate until something that makes the engine write nothing
+confirms it (rule 8): the vendor's library, which must describe a stream
+buffer to this block, watched without an engine (below). If it holds, the
+first experiment afterwards can be made safe under both readings: a stream
+register written with a lab buffer's address divided by 256 names that
+buffer in units of 256 bytes, and as a plain address it names a place
+between `0x00400000` and `0x00800000`, far below this part's memory, which
+begins at `0x40000000`. That nothing else lives there is to be read from
+the board's own resource map before such a run.
+
+### V2R, 2026-10-02: the vendor's encoder without an engine
+
+**V2R.1, the operator's answers.** After the incident the operator was
+asked how to go on, and answered: read only on the board, and watch the
+vendor's library without the engine. Asked later where that library may
+run, the operator answered: on the test board only, not under an emulator
+on the development host; and that the vendor's own LGPL publication of its
+engine keeper for the H6 may be kept in the cache and read. That changes
+four sentences of the plan, for these reasons:
+
+| The plan | Now | Why |
+| --- | --- | --- |
+| V2R follows a missed gate V2 | the trace of V2R is used inside V2, as the way to the explanation that rule 8 asks for | no experiment that could reach gate V2 may run before the stray write is explained, and the library is the one source that must know how this block takes a stream address |
+| V2R.2: the library gets the engine through the lab module | the library gets no engine: a stand-in behind the register window | an engine that writes where it should not must not be driven by code whose writes are not yet known either |
+| V2R.3: the trace is proven first on the board | proven first on the development host, then on the board at the beginning of every session | the trace's method needs no engine; the host proves everything but the breakpoint, and the board proves that |
+| V2R.4: the rules for experiments apply to the vendor's runs | they apply to the lab's own experiments that follow | a run without an engine touches no hardware |
+
+The library: `libvencoder.so` for aarch64 and glibc from a public mirror of
+the vendor's CedarC package (`aodzip/libcedarc`, commit `e4246be`,
+`library/toolchain-sunxi-aarch64-glibc`; SHA-256 `68b7908b...9aa74`), with
+the interface headers of the same tree. It was built for another part of
+the vendor's range, and one library serves many: it asks its keeper which
+engine it drives. A second mirror (`CalvinXu17/libcedarc`, commit
+`e68d4a7`) carries a later build split into parts whose callable front
+exists only as source under a proprietary notice; that source is not read,
+and that build is not used.
+
+What is done with it: it is kept in a cache outside the repository, copied
+to the board's tmpfs for the length of a session, loaded there by the trace
+program as an unprivileged user, called, and unloaded; the session's
+directory is removed afterwards. It is not disassembled,
+decompiled or read, and no file of it enters Git, a package, a slot or an
+image (`tools/test_packaging_boundaries.py` now also refuses the names of
+the trace and of the library in everything that is built for a board, and
+any vendor header or binary library among the tracked files).
+
+**V2R.2, how the library gets what it takes for an engine.** Its interface
+lets the caller supply both things it needs from outside: the engine's
+keeper (lock, reset, the wait for the interrupt, where the registers are,
+which engine this is, the offset taken off addresses) and the allocator
+(buffers, and the address of each for the engine). So nothing of the
+vendor's kernel is involved and no shim for its device: `tools/ve-trace`
+fills both tables (`vendor_ops.c`), records every call, and answers:
+
+- the registers are the closed window;
+- the engine's version is what the vendor's own keeper would compute from
+  this engine's registers: `0x0003301000012011`;
+- buffers come from an arena of this process, each with a made-up address
+  in a range chosen for the run. Nothing lives at those addresses. They
+  only have to be found again in what the library writes, and since the
+  range can be moved from run to run, the form in which an address is
+  written shows itself;
+- the interrupt "comes" when the library waits for it after it has started
+  an encode: the stand-in sets the finish status and a length.
+
+The library imports nothing that reaches outside its process but `fopen`
+and `printf`; `fopen` is answered by the trace program, recorded and
+refused. Its three companion libraries are replaced by empty ones of the
+same names.
+
+**V2R.3, the trace.** As the plan describes it, with the window being
+memory instead of the engine: the window is closed to the code under the
+trace; an access faults; the handler opens the window for reading and
+arranges for a stop behind that one instruction; if the instruction faults
+again it is a store, and the window is opened for writing too; the
+instruction runs against the window's memory; at the stop the window is
+closed again and the access is recorded: for a load the word at the
+faulting address, for a store every word that changed (or the word at the
+faulting address if none did). Then the stand-in is told, and what it
+answers is what the register reads from then on. No instruction is decoded
+or emulated. The stop is a breakpoint in the place of the next instruction
+on AArch64 (the handler keeps the word it replaces and puts it back without
+looking at it) and the processor's single-step flag on the development
+host.
+
+A session on the board (`tools/device/ve_trace_session.sh`) is carried by
+the lab's session script with its rules (a quiet board, nothing left
+behind), loads no module and does not touch the engine: `cedrus` stays
+bound and suspended throughout. Everything runs as the unprivileged user
+`nobody` with no new privileges.
+
+The stand-in (`model.c`) is the engine as V1.3 and V1.5 measured it: the
+reset values, the encoder's blocks reading zero until the encoder is
+selected, the bits each register holds, the bit writer's count, the status
+at rest. It encodes nothing.
+
+The proof (`selftest.c`, part of `scripts/check.sh`): a client of this
+project's own, built as a shared object like the library, touches the
+registers in every way a driver does (plain loads and stores, the same
+value twice, one byte of a register, two registers in one instruction, a
+field of a register, a copy over four registers, a thousand accesses in a
+loop, an encode waited for and one polled for). All 2035 accesses came out
+of the trace complete and in order on the development host. The same proof
+on the board, which adds the breakpoint and the bit field (2037 accesses),
+is the first step of every session there.
+
+`ve_trace_report.py` reads a trace: calls, buffers, accesses by register
+name, the bytes the bit writer was given, the registers' state at every
+start of an encode, and for every value written whether it names a place in
+a buffer under one of the three forms this engine's blocks are known to use.
+
+**V2R.4, the vendor's encoder under the trace.** Four sessions on the board
+on 2026-10-02, after the operator's power cycle (the board was first read:
+it had come up as it was before the incident, with the taint flags back at
+1024). Each began with the trace's own test. No session left a line in the
+kernel's log, a module, a file or a process; `cedrus` stayed bound and
+suspended.
+
+| Session | Runs | What came out |
+| --- | --- | --- |
+| `ve-trace-20261002-selftest` | the trace's own test | 2037 accesses complete and in order: the breakpoint works on the board |
+| `-first` | the library told this engine's identification | it reads `0x0f0`, finds zero, reads `0x0e4`, and makes no encoder: this build (its own log line says branch CedarC-v1.1.9, May 2017) does not know encoder `0x00012011` |
+| `-versions` | six identifications | it takes the H6's (`0x0e4` = `0x00012010`), the H5's (`0x0f0` = `0x1718` in the upper half), the V3s' (`0x1681`) and the H3's (`0x1680`), and encodes three frames with about 440 register accesses. Its log names two paths: the H5 and the H6 go one way, the V3s and the H3 the other. Which codec number its caller asks for does not matter |
+| `-h6-matrix` | the H6's run eleven times with one setting changed: the arena moved; an offset taken off addresses; 1920x1080, 1280x720, 1366x768; another QP; CABAC; high profile; its rate control on; forced key frames; its own tables fetched instead of given | below |
+
+A run is three frames of 320x240 at a fixed QP of 30 unless its setting
+says otherwise. The stand-in does not encode: the stream the library gets
+back is empty, and what it does with a real stream's statistics (its rate
+control) is seen only as far as the registers it writes before a frame.
+
+**V2R.5, what the traces say.** The same library drives two generations
+of this encoder block, and tells them apart by the engine's
+identification:
+
+| | V3s, H3 | H5, H6 |
+| --- | --- | --- |
+| Every address register of the encoder block (`0xb80`, `0xb84`, `0xba0` to `0xbc0`) | the address as it is | the address divided by 256 |
+| The input stage's addresses (`0xa78`, `0xa7c`, `0xa80`) | as they are | as they are |
+| `0xa00`, `0xa2c`: the picture's size | in macroblocks | the visible size in units of 8 pixels, rounded up (1920x1080: 240 by 135; 1366x768: 171 by 96) |
+| `0xb08` for QP 30, a stride of 20 macroblocks | `0x0004051e`: the chroma QP offset 4 at 18:16 | `0x0800051e`: bit 27, no chroma QP offset |
+| `chroma_qp_index_offset` in its PPS | 4 | 0 |
+| `0xb10` | `0x00010004` (Bootlin's value) | `0x00011000` |
+| `0xb2c`, `0xb40` | not written at a fixed QP | written 0 |
+
+For the V3s it writes what Bootlin's driver writes, which makes the trace a
+check of itself. Moving the arena moved every address register by the same
+amount in its form (`0x6b...` to `0x53...`), so the forms are not chance.
+With an offset told by our allocator, the library gives the engine what the
+allocator calls the engine's address; the published keeper of the H6 tells
+none.
+
+The H616's encoder (`0x00012011`) is one revision on from the H6's
+(`0x00012010`), which the library drives exactly as the H5's. That, and
+where the bits of V2.1 went, is why the form of the H5 and the H6 is the
+lab's hypothesis for this engine from here on (`h6`); the description of
+that form is in "The H616's register description" below.
+
+The lab tool was taught: `Hypothesis::H6` writes, register for register and
+in the same order, what the library wrote for the H6 (tests in `regs.rs`
+hold the traced values of a key frame and a P frame at 320x240 and the
+size-dependent ones at 1280x720, 1366x768 and 1920x1080); its software
+stand-in has the newer generation's forms too, and Chromium decodes the
+stream it makes through this plan (`tools/playwright/ve_standin_contract.mjs`).
+
+The explanation of V2.1 is thereby confirmed by a means that made the
+engine write nothing (rule 8), and by rule 7 the work on the board goes
+on. The vendor's files were on the board's tmpfs for the length of each
+session only.
+
+Receipts: `evidence/private/ve-trace-20261002-selftest`, `-first`,
+`-versions`, `-h6-matrix` (each run: the trace, what was asked and what
+came back, the library's own messages, the report).
+
+### V2.1 again, 2026-10-02: the bit writer's bytes are in the buffer
+
+With the stream buffer described in units of 256 bytes (`0xb80` =
+`0x00774100` for the buffer at `0x77410000`, `0xb84` = `0x007780ff`,
+`0xb8c` = `0x02000000`), and nothing else changed against the run that
+went astray:
+
+- SPS and PPS of a 320x240 stream, once: the 25 bytes are at the beginning
+  of the stream buffer, the rest of it is zero, `0xb90` reports 200 bits.
+- 700 times over: all 17500 bytes are there. The align trigger after the
+  last put (the library's way) hands the last portion to memory.
+- The same with the mode register's memory field at 2 (the H6 keeper's
+  value) and at 3 with bit 20 (what `cedrus` sets): no difference for the
+  bit writer. The mode register holds both (`0xc00200c7`, `0xc01300c7`).
+
+Rule 9 at work, in the run script from here on: the digest of the kernel's
+image was the same before and after every session (283 pieces), and the
+scan of all memory found the parameter sets at one place only, the stream
+buffer. (In the sessions that follow it also finds the first page of every
+stream file the session itself left on tmpfs.)
+
+Receipts: `evidence/private/ve-lab-v2-20261002-probe-after-reset`,
+`-bits-h6-a`, `-bits-h6-b`.
+
+### V2.2, 2026-10-02: key frames
+
+The first encode: one key frame of `drag` at 320x240, QP 30, by the plan of
+`h6`. The engine finished with status 1 after 0.3 ms and reported 43368
+bits; the 5421 bytes decode in Chromium to 40.05 dB against the picture.
+
+Then one key frame of every sequence at each size, QP 30, each beside
+x264's key frame of the same picture at the same QP. The board's ffmpeg
+decoded every stream of the engine without a word of complaint and to the
+visible size (cropping is right at 1366x768 and 1920x1080); Chromium
+decoded the 1920x1080 ones to the same PSNR.
+
+| Size | Sequence | Engine, bytes | x264, bytes | Engine, dB | x264, dB | Difference | Engine, ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 320x240 | scroll | 23806 | 25414 | 33.91 | 36.39 | -2.48 | 0.3 |
+| 320x240 | drag | 5421 | 6656 | 40.05 | 41.99 | -1.94 | 0.3 |
+| 320x240 | motion | 3347 | 3604 | 35.81 | 38.89 | -3.08 | 0.3 |
+| 320x240 | pointer | 5421 | 6689 | 40.03 | 41.87 | -1.85 | 0.3 |
+| 1280x720 | scroll | 214718 | 226827 | 35.04 | 37.35 | -2.31 | 3.1 |
+| 1280x720 | drag | 69146 | 73201 | 39.78 | 42.15 | -2.37 | 3.1 |
+| 1280x720 | motion | 39138 | 35043 | 35.76 | 38.68 | -2.92 | 3.0 |
+| 1280x720 | pointer | 69535 | 73566 | 39.63 | 42.16 | -2.54 | 3.1 |
+| 1366x768 | scroll | 234996 | 248190 | 35.20 | 37.48 | -2.28 | 3.6 |
+| 1366x768 | drag | 78815 | 83197 | 39.80 | 42.18 | -2.39 | 3.6 |
+| 1366x768 | motion | 44772 | 40005 | 35.75 | 38.69 | -2.94 | 3.4 |
+| 1366x768 | pointer | 87889 | 90364 | 39.46 | 41.79 | -2.33 | 3.6 |
+| 1920x1080 | scroll | 344737 | 364204 | 36.48 | 38.69 | -2.21 | 7.0 |
+| 1920x1080 | drag | 145746 | 153192 | 40.09 | 42.50 | -2.41 | 7.0 |
+| 1920x1080 | motion | 88663 | 78559 | 35.75 | 38.69 | -2.94 | 6.7 |
+| 1920x1080 | pointer | 146531 | 153812 | 39.97 | 42.49 | -2.52 | 7.0 |
+
+What this says:
+
+- The form of the H5 and the H6 is this engine's: everything the plan of
+  `h6` writes for a key frame is taken as the library's traces say.
+- A 1920x1080 key frame takes the engine 7 ms, from the start trigger to
+  the interrupt. x264 on this board takes 28 to 47 ms for a frame.
+- At the same QP the engine's picture is 2 to 3 dB below x264's and its
+  frame mostly a little smaller: it quantises more coarsely than x264 does
+  at the same number. What that means at the same rate is V3.4's question.
+
+Two sentences of the plan were not followed, for these reasons:
+
+| The plan | Done | Why |
+| --- | --- | --- |
+| V2.2: with Bootlin's map, with the older one, then with what V1.5 suggests | only the form that the traces gave | the two maps write the encoder block's addresses as they are, and this engine takes them for 256 times that: an encode by either would write to places nobody chose (rule 8) |
+| The reference is x264 driven through the encoder crate's own wrapper | for a fixed QP: libx264 through the board's ffmpeg, with the product's preset, tune and profile, and a constant QP for every frame type | the product's wrapper sets a bitrate and has no constant QP; the comparisons at a bitrate (V3.4) use the wrapper as planned |
+
+Receipts: `evidence/private/ve-lab-v2-20261002-key-h6-a`, `-key-h6-b`,
+`-key-720p-768p-qp30`, `-key-1080p-qp30` (the streams of both encoders,
+the registers written, the status and time of every frame, ffmpeg's and
+Chromium's verdicts, the PSNR).
+
+### Gate V2: passed
+
+A 1920x1080 key frame of every sequence decodes in the board's ffmpeg and
+in Chromium, and its PSNR is within 3 dB of x264's key frame of the same
+picture at the same QP: 2.21, 2.41, 2.94 and 2.52 dB below. The run used
+the lab tool alone; no vendor code was on the board. After every session
+`cedrus` was bound and suspended, the kernel had said only the lab
+module's and the decoder's own lines, and the digest of its image was
+unchanged.
+
+### V3.1, 2026-10-02: P frames, and a false alarm of rule 9
+
+The lab tool got its long run (`stream`): frames at a fixed QP or at a
+bitrate, a frame encoded once more when the rate control asks for it, a
+loop that can be paced, pictures drawn once and repeated, and a timeout
+that is provoked. Its pictures are drawn by all processors now; they are
+the same pictures (the fingerprints in its tests did not change).
+
+The first P frames: `drag` and `motion` at 320x240, a key frame and four P
+frames at QP 30. The plan of `h6` for a P frame (the reference is the
+frame before, in the other of two sets of buffers; `0xb04` = `0x410`)
+worked at once: ffmpeg decodes all five frames.
+
+Then 300 frames of every sequence at 1920x1080 and QP 30, one key frame
+and 299 P frames, every frame decoded by the board's ffmpeg and compared
+with its source:
+
+| Sequence | Frames decoded | ffmpeg's complaints | Mean PSNR, dB | Frames 30 to 60 | Last 30 | kbit/s at 30 frames a second | Encode, ms (mean, longest) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 300 | none | 36.32 | 36.88 | 36.10 | 1700 | 7.2, 7.5 |
+| drag | 300 | none | 41.95 | 41.83 | 42.09 | 1998 | 7.1, 7.2 |
+| motion | 300 | none | 33.36 | 33.36 | 33.36 | 37086 | 7.4, 7.8 |
+| pointer | 300 | none | 41.37 | 41.46 | 41.33 | 379 | 7.0, 7.4 |
+
+No drift: on the still sequence (`pointer`) the last 30 frames are 0.13 dB
+from frames 30 to 60, after 299 frames that each refer to the one before.
+`scroll` shows other text at its end than at its beginning, which is what
+its 0.8 dB are.
+
+What the loop costs besides the encode, measured on the way: the buffers
+the lab module gives are not cached for the processor. Writing a picture
+into one is fast (3 MB in about 3 ms). Reading is slow, about 60 MB/s even
+in one run and 6 MB/s byte by byte: reading the guards of every buffer
+after every frame took 175 ms, 25 times the encode. The lab now copies a
+guard out in one run before it compares it (15 ms for all of them) and can
+be told to do so every so many frames. With the guards read every 30
+frames, pictures drawn in advance and no pacing, the loop makes 88 frames
+a second at 1920x1080 (11.4 ms a frame: picture in, about 250 register
+accesses, 7.2 ms of encoding, stream out). For the driver this means: the
+stream must not be read out of uncached memory.
+
+**The false alarm.** A session of 13 minutes ended with status 79: six of
+the 283 pieces of the kernel's image had another digest than before it.
+Read without touching the engine again, the six pieces differ from the
+kernel's image file in 24 single instruction words, every one of them "no
+operation" where the file has a branch or a branch where the file has "no
+operation", in `netif_rx_internal`, `netif_receive_skb`,
+`__netif_receive_skb_core`, `dev_queue_xmit_nit`, `packet_rcv`,
+`ip_output`, `ip6_output` and their like. Those are the places where the
+network stack asks its static keys (time stamps for a socket that wants
+them, programs attached to a control group): the kernel had switched keys
+while the session ran, and rewrites its own instructions when it does.
+Nothing had been written by the engine. The claim of V2.1's second record,
+that the digest does not change by itself, held for the ten seconds it was
+tested for and is wrong for a quarter of an hour. Rule 9's check now
+compares words and knows this one kind of change (above).
+
+Receipts: `evidence/private/ve-lab-v3-20261002-p-first`, `-stream-try`,
+`-p300-qp30`, `-time-idle`, `-time-guards`, `-rates-a` (the alarm),
+`-low-qp`.
+
+### V3.5, 2026-10-02: rate control in software
+
+The engine is given a QP for a frame and nothing else; the stream's rate
+is steered by the lab tool (`rate.rs`), as the product's encoder will do
+it:
+
+- The bound is the product's of today: a leaky bucket of one second at
+  the target rate, which x264 is given as its buffer.
+- A frame's QP follows from the bytes of the frames before: a frame that
+  cost more than its share raises the QP of the next (by at most 3), one
+  that cost less lowers it (by at most 1). A frame's share is the average,
+  a little more while the bucket is below three tenths, less above. Every
+  QP from 0 to 51 is used.
+- A key frame's QP is planned from the last key frame's bytes into what
+  the bucket has room for.
+- A frame that does not fit the bucket is encoded once more at the QP its
+  size calls for, against the same reference: the engine has two sets of
+  buffers, and a pass that is thrown away has written only the frame's own.
+- A frame that does not fit then either is left out: the stream gets a
+  frame of skipped macroblocks in its place (ten bytes at 1920x1080, made
+  in software), which a decoder shows as the picture before it. The engine
+  cannot quantise more coarsely than QP 51, and on the hardest sequence
+  that is 3 Mbit/s: at 1.5 and 2.5 Mbit/s the first runs of V3.4 made twice
+  and 1.24 times their rate, with 148 and 146 frames beyond the bucket.
+  Leaving frames out is what holds the rate there, at the price of a
+  picture that moves in fewer steps.
+
+Tests on the build host run the controller against a model of an encoder
+(bits halve with six steps of QP): a steady picture is held within 5% in
+every ten seconds at 1.5 to 8 Mbit/s; a change of scene to ten times the
+cost overruns nothing; a key frame every second fits; a picture that fits
+at no QP is held within 12% by leaving frames out. The numbers on the
+board are V3.4's.
+
+What changed afterwards is in "V3.5 again": a third set of buffers and
+the search of a pass, and how fast the QP comes down when a picture rests.
+
+### V3.2, 2026-10-02: the stream a browser gets
+
+The lab's stream is the one the product's x264 makes today in everything
+a decoder is told: constrained baseline (profile 66 with the first two
+constraint flags), one reference frame, frames only, one slice a picture,
+picture order type 2, the level for the size and frame rate (4.0 for
+1920x1080 at 30, 3.2 for 1366x768), cropping where the picture is not
+whole macroblocks, and SPS and PPS before every key frame. A key frame is
+made whenever it is asked for.
+
+Chromium (WebCodecs) decoded three streams of 90 frames at 2.5 Mbit/s
+with a key frame asked for at frames 40 and 80:
+
+| Stream | Codec string | Frames, key frames | Decoded | Size | Mean PSNR, dB (ffmpeg's) |
+| --- | --- | --- | --- | --- | --- |
+| drag, 1920x1080 | `avc1.42c028` | 90, 3 | 90 | 1920x1080 | 42.53 (42.53) |
+| motion, 1920x1080, 23 frames left out | `avc1.42c028` | 90, 3 | 90 | 1920x1080 | 23.01 (23.01) |
+| scroll, 1366x768 | `avc1.42c020` | 90, 3 | 90 | 1366x768 | 33.75 (33.75) |
+
+The two decoders agree to the hundredth of a decibel, also on the frames
+of skipped macroblocks that the rate control put in.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-browser`.
+
+### V3.3, 2026-10-02: time
+
+From the start trigger to the interrupt, over 600 frames with a key frame
+every 60, pictures drawn in advance, as fast as the loop goes; once with
+the processors idle and once with three of the four busy in a loop:
+
+| Size | Key frame, ms | P frame, ms: mean, longest (idle) | Longest with three cores busy | Frames a second of the whole loop: idle, busy |
+| --- | --- | --- | --- | --- |
+| 320x240 | 0.29 | 0.30, 0.38 | 0.79 | 1733, 1692 |
+| 1280x720 | 3.13 | 3.29, 3.90 | 6.45 | 193, 186 |
+| 1366x768 | 3.59 | 3.76, 4.05 | 5.01 | 170, 167 |
+| 1920x1080 | 7.03 | 7.24, 7.81 | 10.98 | 90, 88 |
+
+The engine's time does not depend on what the processors do; what grows
+with busy cores is how long the waiting process takes to wake. The whole
+loop (the picture into the input buffer, about 250 register accesses, the
+encode, the stream out) takes 11 ms at 1920x1080, a third of a frame's
+time at 30 frames a second. The time does not depend on the QP or on the
+frame's size in bytes either (V3.1, V3.4).
+
+Receipts: `evidence/private/ve-lab-v3-20261002-timing`, `-time-idle`.
+
+### V3.4, 2026-10-02: quality at a bitrate against the product's x264
+
+300 frames (ten seconds) of every sequence at 1920x1080 and 30 frames a
+second, one key frame, at four target rates: by the engine with the rate
+control of V3.5, and by the product's x264 with the product's settings
+(`ultrafast`, `zerolatency`, constrained baseline, three threads, rate and
+buffer as the unit sets them), driven through the encoder crate's own
+wrapper (`h264_reference`). Both streams decoded by the board's ffmpeg,
+every frame compared with its source; the PSNR is the mean over the 300
+frames.
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1553 | 1309 | 32.42 | 29.64 | +2.78 | |
+| scroll | 2500 | 2543 | 1859 | 42.90 | 37.60 | +5.30 | |
+| scroll | 5000 | 5023 | 3041 | 54.32 | 50.91 | +3.41 | |
+| scroll | 8000 | 6714 | 3844 | 61.52 | 58.96 | +2.56 | |
+| drag | 1500 | 1539 | 1288 | 40.49 | 40.93 | -0.44 | |
+| drag | 2500 | 2567 | 2280 | 45.42 | 45.67 | -0.25 | |
+| drag | 5000 | 5136 | 4746 | 50.99 | 52.47 | -1.47 | |
+| drag | 8000 | 8209 | 7395 | 57.76 | 58.12 | -0.36 | |
+| motion | 1500 | 1631 | 1563 | 21.39 | 20.99 | +0.40 | 174 |
+| motion | 2500 | 2733 | 2601 | 22.63 | 22.90 | -0.27 | 80 |
+| motion | 5000 | 5012 | 5192 | 25.67 | 26.17 | -0.50 | |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | |
+| pointer | 1500 | 1506 | 600 | 55.27 | 44.50 | +10.77 | |
+| pointer | 2500 | 2378 | 867 | 57.55 | 45.55 | +12.00 | |
+| pointer | 5000 | 2255 | 1347 | 64.95 | 46.05 | +18.90 | |
+| pointer | 8000 | 2313 | 1360 | 65.38 | 46.19 | +19.20 | |
+
+What this says:
+
+- At the rates the gate names, the engine is at most 0.36 dB below x264
+  at 8 Mbit/s and at most 0.27 dB below at 2.5 Mbit/s; on text and on a
+  still desktop it is far above, because it spends the rate it is given
+  where x264's rate control stays far below its target.
+- The engine's rate is at most 9.3% above its target in these ten
+  seconds, the first ten of a stream, in which the bucket fills. It is
+  below the target where the picture has no use for the bits: `pointer`
+  and `scroll` reach QP 0 at 5 and 8 Mbit/s.
+- On `motion` at 1.5 and 2.5 Mbit/s the rate is held by leaving out 174
+  and 80 of 300 frames: the picture moves in 13 and 22 steps a second
+  instead of 30. x264 keeps every frame there at about the same PSNR. In
+  the first runs, without this, the engine made 2984 and 3096 kbit/s.
+- Every frame the engine made took it 7.0 to 7.4 ms; x264 took 31 to 51
+  ms a frame on three cores.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-rates-b`, `-rates-c`
+(tool `437f748`), `-rates-d`, `-rates-e` (`motion` at 1.5 and 2.5 Mbit/s
+with frames left out, tool `8c48d2f`); the first attempt with a lowest QP
+of 10 is `-rates-a`.
+
+The engine's numbers of this table were measured again after the search
+and the control changed: "V3.5 again" has the table the gate is read
+from. x264's numbers are these.
+
+### V3.4 again, 2026-10-02: how far the engine's search for motion reaches
+
+Preparing V3.6, a stream of `scroll` played forth and back cost ten times
+the bits while it played backwards. The plan's sequences move up, up and
+to the left, or slowly; none of them says how far the engine looks for the
+place a macroblock came from, and in which directions.
+
+Measured with the lab tool's `search`: a page that moves by one vector a
+frame, for every vector a key frame and six P frames at QP 30 and
+1920x1080. The page is the text of `scroll`, or a grain of blocks of four
+by four pixels of unrelated greys, of which no part looks like another:
+there a P frame is as large as a key frame where the search did not find
+the place (242 kB; the key frame itself is 228 kB) and small where it did
+(1.4 kB without motion; a frame that moves has new rows or columns at one
+edge, which cost what they cost in a key frame).
+
+Bytes of a P frame in kB on the grain, the mean of the second to the sixth,
+with three settings: the values the vendor's library writes (`0xb10` =
+`0x00011000`, dynamic motion estimation on, its thresholds as the table of
+V2R.5 has them), dynamic motion estimation off (bit 8 of `0xb08` clear),
+and the vendor's values with bit 4 of `0xb10` set.
+
+| Pixels a frame | Page down: vendor | dynamic off | bit 4 | Page up: vendor | dynamic off | bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 | 5.2 | 5.2 | 5.2 | 4.0 | 4.0 | 4.0 |
+| 8 | 6.9 | 6.9 | 6.6 | 4.2 | 4.2 | 4.2 |
+| 12 | 11.1 | 7.8 | 8.6 | 5.6 | 5.6 | 5.6 |
+| 16 | 242 | 7.9 | 41.5 | 7.1 | 7.1 | 7.1 |
+| 20 | 242 | 230 | 47.9 | 8.0 | 8.0 | 7.9 |
+| 24 | 242 | 242 | 37.5 | 8.2 | 8.2 | 8.1 |
+| 28 | 242 | 242 | 80.1 | 12.6 | 230 | 12.5 |
+| 32 | 242 | 242 | 123 | 15.0 | 242 | 90.1 |
+| 36 | 242 | 242 | 77.9 | 19.1 | 242 | 21.6 |
+| 40 | 242 | 241 | 199 | 18.8 | 242 | 78.2 |
+| 48 | 242 | 243 | 231 | 242 | 241 | 231 |
+
+| Pixels a frame | Page right: vendor | dynamic off | bit 4 | Page left: vendor | dynamic off | bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8 | 3.2 | 3.2 | 3.1 | 3.3 | 3.3 | 3.2 |
+| 16 | 3.7 | 3.7 | 3.4 | 3.8 | 3.8 | 3.7 |
+| 20 | 20.1 | 16.6 | 12.8 | 6.4 | 6.1 | 5.8 |
+| 24 | 13.2 | 12.8 | 10.3 | 15.6 | 12.6 | 15.0 |
+| 32 | 22.3 | 20.5 | 14.6 | 12.3 | 12.4 | 11.0 |
+| 48 | 53.2 | 57.8 | 29.7 | 38.4 | 38.2 | 27.4 |
+| 64 | 40.5 | 37.4 | 23.9 | 38.3 | 38.1 | 25.3 |
+| 80 | 62.1 | 47.4 | 27.4 | 52.6 | 52.2 | 27.7 |
+
+What this says about the engine with the vendor's values:
+
+- **Sideways** the place is found exactly up to 16 pixels a frame, and
+  with a remainder (two to seventeen times the bytes of exact motion, a
+  quarter of a key frame at most) at least up to 80, to the right as to
+  the left.
+- **A page that moves up** (what a reader sees who scrolls on) is found up
+  to 40 pixels a frame, from 28 with a small remainder: the first rows of
+  macroblocks are coded without a reference before the engine moves its
+  window. At 48 nothing is found.
+- **A page that moves down** (scrolling back) is found up to 8 pixels a
+  frame, at 12 with a remainder, and from 16 on not at all: every
+  macroblock is coded as in a key frame.
+- The picture's height does not matter: 720, 1072, 1080 and 1088 lines
+  give the same reach (`-search-b`).
+
+What the fields of the open map do on this engine, each changed alone
+(the lab tool's `adjust=`), on the grain and on the text:
+
+| Field | What changed |
+| --- | --- |
+| `0xb08` bit 8, dynamic motion estimation, off | the window stands still: up 24, down 16, exactly, and nothing beyond |
+| `0xb48`, `0xb4c`, the four thresholds | all at their largest: as with bit 8 off. The first pair (the vendor's `S/10` and `6S/10`) is what moves the window for a page that moves up; made smaller, a page that moves down 12 is lost too. The second pair made as small as the first moves the window further (up 16 to 56) and loses most of what is nearer. No value tried moves the window the other way |
+| `0xb10` bits 2:1 (fine search level), 5, 7:6 (coarse cost), 8 ("motion estimation off") | nothing: every frame the same bytes |
+| `0xb10` bits 9, 11, 13, 15, 20, 21 | a few bytes, no reach |
+| `0xb10` bit 3 | the search ends: only a picture that stands still is found |
+| `0xb10` bit 4 ("refine off" in the map) | a page that moves down 16 to 36 is found with a remainder, and sideways motion of 48 and more costs about half; a page that moves up 32 or 40 costs four to six times what it costs without it |
+| `0xb10` bit 12 cleared (the vendor sets it: "quantisation threshold off") | smaller frames at the same QP; no reach |
+| `0xb10` bit 0 ("intra prediction off"), bit 14 ("intra 4x4 off") | other sizes of the frames in which nothing is found; no reach |
+| `0xb08` bits 26:24, motion vector clipping | narrows the reach sideways to under 16, 32, 48 or 64 pixels; off is the widest |
+| `0xb08` bits 31:28, mode optimisation | larger frames; no reach |
+
+Only fields that say how the engine searches and decides were changed:
+never the write-back of motion vectors (bit 16), the region of interest
+(17), the two "to memory" switches (18, 19), or a bit without a name. The
+guards around every buffer held in every run, the kernel's image was the
+same after every session, and ffmpeg decoded every stream.
+
+**Bit 4 has a price on text.** On the grain small motion costs the same
+with it. On the page of text, which repeats itself every 8 pixels
+sideways and every 20 down, motion by a few pixels costs up to five times
+as much (kB a P frame at QP 30, `-search-i`):
+
+| Right, down | Vendor | Bit 4 | | Right, down | Vendor | Bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1, 0 | 13.3 | 13.4 | | 0, 1 | 14.0 | 14.0 |
+| 2, 0 | 3.6 | 4.3 | | 0, 2 | 8.0 | 9.2 |
+| 3, 0 | 12.6 | 31.9 | | 0, 3 | 16.1 | 26.8 |
+| 5, 0 | 13.3 | 39.2 | | 0, 5 | 15.9 | 27.8 |
+| 6, 0 | 3.7 | 18.0 | | 0, -6 | 7.7 | 14.2 |
+| 7, 5 | 20.3 | 21.5 | | 3, 3 | 19.9 | 35.1 |
+
+At a fixed QP of 30 the plan's `drag` costs 10% more bytes with bit 4 in
+every frame and loses 0.4 dB; `scroll`, `motion` and `pointer` stay
+within 4% and 0.12 dB (`-h616-a`).
+
+**Against x264**, on text that moves every frame, 300 frames at
+1920x1080, luma PSNR in dB, with the rate control of V3.5 as it was then
+(x264 as in V3.4; frames left out in brackets; `-moved-a`):
+
+| Text moves | Target, kbit/s | Engine, vendor | Engine, bit 4 | x264 | x264, kbit/s |
+| --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 33.50 | 34.05 | 30.06 | 2305 |
+| up 20 a frame | 8000 | 56.05 | 56.31 | 50.05 | 5221 |
+| down 20 a frame | 2500 | 14.97 (144) | 27.01 | 29.47 | 2126 |
+| down 20 a frame | 8000 | 19.17 | 42.29 | 49.81 | 4998 |
+| up 60 a frame | 2500 | 13.08 (244) | 13.07 (245) | 19.09 | 2070 |
+| up 60 a frame | 8000 | 15.25 (124) | 15.25 (123) | 28.33 | 5016 |
+| down 60 a frame | 2500 | 12.96 (246) | 12.97 (246) | 13.36 | 2589 |
+| down 60 a frame | 8000 | 15.15 (126) | 15.08 (128) | 26.17 | 4869 |
+
+What this says:
+
+- Within its reach the engine is far above x264 (the page moving up 20).
+- A page that moves down 20 pixels a frame is the plan's `scroll` the
+  other way round. With the vendor's values the engine codes every frame
+  of it as a key frame and is 14.5 and 30.6 dB below x264; with bit 4 it
+  is 2.5 and 7.5 dB below, at 27 and 42 dB.
+- Beyond its reach (60 pixels a frame, either way) no setting helps: 13
+  to 15 dB, with 40 to 80% of the frames left out. x264 holds 19 to 28 dB
+  when the motion goes on for ten seconds: it starts each macroblock's
+  search from its neighbours' vectors and from the frame before, where
+  the engine has a window.
+
+Neither value is right for every picture: the vendor's loses a page that
+scrolls back, bit 4 pays for it on text that moves a little. What the plan
+does about it is in the next section.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-search-a` (text, the
+vendor's values), `-search-b` (four heights), `-search-c` (text, thirteen
+settings), `-search-d`, `-search-e` (grain: the thresholds), `-search-f`
+(grain, twenty single fields), `-search-g` (the tables above),
+`-search-h`, `-search-i` (small motion on the grain and on text),
+`-moved-a` (against x264), `-h616-a` (the plan's sequences with bit 4 in
+every frame). Lab tool `8970271+` to `47bc63d`.
+
+### V3.5 again, 2026-10-02: the search chosen for every frame, and a picture that rests
+
+Two things the last section and a look at what follows motion showed, and
+what the lab's rate control (`rate.rs`) does about them. Both are the
+client's business, as the plan has the rate control: the engine is given a
+QP and one bit more.
+
+**The search is chosen for every frame.** The engine encodes a 1920x1080
+frame in 7 ms, so a frame can be tried both ways:
+
+- A frame is encoded with the search the frame before it was sent with:
+  "exact", the vendor's value of `0xb10`, or "wide", the same with bit 4.
+  The first frame of a stream is tried with the exact one.
+- When that pass comes out costly (from three quarters of what a frame may
+  cost on average; at a fixed QP from 0.03 bits a pixel), the frame is
+  encoded once more with the other search, at the same QP against the same
+  reference. When the second pass is smaller by a tenth, it is the frame
+  and its search the next frame's; otherwise the first stays.
+- After such a try the other search rests for three frames, unless a
+  frame costs twice what the tried one did: then the picture began to move
+  otherwise, and it is tried at once.
+- A frame that does not fit the bucket is then encoded once more at a
+  higher QP, as before, with the search that won.
+
+For that the lab has three sets of reconstruction buffers instead of two:
+the reference, and one for each of two passes, so that either pass can be
+the next frame's reference. A third pass writes over the pass that lost.
+
+(A frame was given at most two passes afterwards, and the last point above
+changed with it: "V3.3 again" has the rule as it is, and "V3.4 and V3.5
+with two passes a frame" the numbers that hold. The tables of this section
+were measured with up to three passes.)
+
+**A picture that rests comes back at the rate's pace.** After a second of
+motion the search does not follow (text moving 60 pixels a frame at
+8 Mbit/s), the picture needed 36 frames to be at 30 dB again and 50 to be
+at 35: the control emptied the bucket first, at half the rate, and let the
+QP fall by one step a frame, taking a step back after every frame that
+made the picture finer. Now a frame is meant to cost nine tenths of the
+average while the bucket is fuller than wanted (it was half), and after a
+frame that cost less than a quarter of what it was meant to the QP may
+fall by three steps instead of one; a step too many is caught by the
+second pass. On the build host a model of a page that rests (every step
+of QP below the finest it has had costs about a frame's bits) is back at
+QP 36 in 15 frames and at QP 30 in 21; the control as it was needed 28
+and 41.
+
+Frames after the motion ends until the picture is at 30, 35 and 40 dB
+again, three bursts each (30 frames moving, 60 resting, 1920x1080; "-":
+not within the 60), and the mean of the whole run:
+
+| Text moves, rate | Engine, the control as it was | Engine now | x264 |
+| --- | --- | --- | --- |
+| down 60 a frame, 8 Mbit/s | 34 to 36, 46 to 50, 57 or - | 15, 21 to 23, 30 to 33 | 10 to 26, 25 to 32, 32 to 39 |
+| up 60 a frame, 8 Mbit/s | 35 to 38, 47 to 51, 58 or - | 14 to 17, 20 to 23, 29 to 33 | 3 to 20, 8 to 25, 14 to 32 |
+| down 60 a frame, 2.5 Mbit/s | -, -, - | 39 to 47, 57 or -, - | 52 to 56, -, - |
+| mean PSNR of the run, the three rows | 24.30, 24.14, 18.87 dB | 30.54, 30.73, 21.48 dB | 30.39, 36.50, 20.28 dB |
+
+While the text moves 60 pixels a frame the picture is at 15 to 17 dB at
+8 Mbit/s with either encoder (13 dB at 2.5 Mbit/s), the engine's frames
+left out included, except that x264 followed the page moving up in two of
+the three bursts (32 and 19 dB).
+
+**Text that moves every frame, against x264** (300 frames, 1920x1080; the
+table of the last section with the search chosen; frames left out in
+brackets):
+
+| Text moves | Target, kbit/s | Engine, dB | x264, dB | Difference | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 34.56 | 30.06 | +4.50 | 0 |
+| up 20 a frame | 8000 | 56.30 | 50.05 | +6.25 | 0 |
+| down 20 a frame | 2500 | 27.63 (3) | 29.47 | -1.84 | 286 |
+| down 20 a frame | 8000 | 47.41 (2) | 49.81 | -2.40 | 263 |
+| up 60 a frame | 2500 | 13.08 (244) | 19.09 | -6.01 | 0 |
+| up 60 a frame | 8000 | 15.25 (124) | 28.33 | -13.08 | 0 |
+| down 60 a frame | 2500 | 12.96 (246) | 13.36 | -0.40 | 0 |
+| down 60 a frame | 8000 | 15.15 (126) | 26.17 | -11.02 | 0 |
+| right 3 a frame | 2500 | 39.17 | | | 0 |
+| right 3 a frame | 8000 | 48.12 | | | 0 |
+
+Text that moves 3 pixels a frame is exactly what the exact search alone
+makes of it; the wide search alone makes 31.75 and 41.71 dB of it.
+
+**The plan's sequences with the search chosen**: the measures of V3.1,
+V3.2 and V3.4 again, with the control as it is now (map `h6`,
+`search=auto`).
+
+At QP 30, 300 frames, every frame decoded by the board's ffmpeg and
+compared:
+
+| Sequence | kbit/s | Mean PSNR, dB | Lowest, dB | Frames 30 to 60, last 30, dB | With both searches | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1700 | 36.32 | 35.89 | 36.88, 36.10 | 52 | 0 |
+| drag | 1921 | 41.91 | 40.09 | 41.79, 42.02 | 60 | 102 |
+| motion | 37086 | 33.36 | 32.23 | 33.36, 33.36 | 75 | 0 |
+| pointer | 366 | 41.26 | 39.97 | 41.36, 41.22 | 1 | 299 |
+
+`scroll` and `motion` are, frame for frame, the sizes of V3.1; `drag`
+costs 3.9% less than there at 0.04 dB less, `pointer` 3.4% less at
+0.11 dB less. The still sequence does not drift (41.36 and 41.22 dB).
+
+At a bitrate, against the x264 numbers of V3.4:
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1657 | 1309 | 34.78 | 29.64 | +5.14 | | 0 |
+| scroll | 2500 | 2693 | 1859 | 45.99 | 37.60 | +8.39 | | 142 |
+| scroll | 5000 | 5116 | 3041 | 56.21 | 50.91 | +5.30 | | 132 |
+| scroll | 8000 | 6351 | 3844 | 63.31 | 58.96 | +4.35 | | 237 |
+| drag | 1500 | 1538 | 1288 | 40.66 | 40.93 | -0.27 | | 130 |
+| drag | 2500 | 2567 | 2280 | 45.54 | 45.67 | -0.13 | | 122 |
+| drag | 5000 | 5134 | 4746 | 50.99 | 52.47 | -1.48 | | 108 |
+| drag | 8000 | 8219 | 7395 | 57.94 | 58.12 | -0.18 | | 153 |
+| motion | 1500 | 1642 | 1563 | 21.32 | 20.99 | +0.33 | 160 | 136 |
+| motion | 2500 | 2737 | 2601 | 23.19 | 22.90 | +0.29 | 6 | 285 |
+| motion | 5000 | 5014 | 5192 | 25.74 | 26.17 | -0.43 | | 0 |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | | 0 |
+| pointer | 1500 | 1538 | 600 | 56.85 | 44.50 | +12.35 | | 299 |
+| pointer | 2500 | 2498 | 867 | 58.18 | 45.55 | +12.63 | | 299 |
+| pointer | 5000 | 2145 | 1347 | 65.32 | 46.05 | +19.27 | | 0 |
+| pointer | 8000 | 2226 | 1360 | 65.59 | 46.19 | +19.40 | | 0 |
+
+About a quarter of the frames were encoded with both searches (61 to 76
+of 300), fewer where the picture is still (5 and 11 for `pointer` at 8
+and 5 Mbit/s). At the rates the gate names the
+engine is at most 0.18 dB below x264 at 8 Mbit/s and 0.13 dB below at
+2.5 Mbit/s. These are the first ten seconds of a stream, in which the
+bucket fills: the rate is at most 10.5% above its target (`scroll` at
+1.5 Mbit/s, whose first key frame is 1.8 Mbit at QP 38: a key frame of
+text does not halve with six steps of QP, as the control's second pass
+assumes, and a stream's first frame cannot be left out).
+
+Chromium (WebCodecs) decoded 90 frames of every sequence at 2.5 Mbit/s
+with a key frame every 30: 90 of 90 each, `avc1.42c028`, 1920x1080, and
+every frame's PSNR equal to ffmpeg's to the hundredth of a decibel (means
+26.79, 39.42, 23.61 and 45.70 dB), frames sent with the wide search and
+frames left out among them.
+
+**What remains.** The engine has a window where x264 has a search that
+starts from its neighbours' vectors and the frame before. Inside the
+window (40 pixels a frame up, 36 down, 16 exactly and 80 with a remainder
+sideways) the engine with the search chosen is level with x264 or above
+it; a page that scrolls back 20 pixels a frame is 1.8 and 2.4 dB below, at
+28 and 47 dB. Beyond the window every macroblock is coded without a
+reference. In a burst of a second that costs the same picture as x264's
+while it lasts (15 to 17 dB) and the same half second afterwards; when
+such motion goes on for many seconds, x264 finds it in three of the four
+runs (19 to 28 dB) and the engine in none (13 to 15 dB, with frames left
+out). The plan's sequences
+do not move like that, and gate V3 is worded for them; V7.1 measures what
+a target's screen does.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-burst-a` (bursts, the
+control as it was, and x264), `-auto-try` (a first rule of the choice,
+which rested for half a second after a try: it changed its search on one
+bad frame and stayed wrong that long), `-auto-try2` (the rule as it is;
+text that moves 3 pixels a frame with the search chosen, exact and wide;
+lab tool `afa12d0`), `-auto-a` (the plan's sequences), `-auto-b` (text
+that moves, and the bursts; lab tool `f16a1e4`).
+
+### V3.3 again, 2026-10-02 and 2026-10-03: thirty frames a second for ten minutes, and two passes a frame
+
+Paced runs at 1920x1080: every frame begins at its time, a thirtieth of a
+second after the one before; 30 pictures of a sequence played forth and
+back, a key frame every 300, the rate control and the search chosen for
+every frame; nothing is decoded. Twice for ten minutes, once with the
+processors idle and once with three of the four busy in a loop, and six
+runs of two minutes.
+
+**With up to three passes a frame**, as "V3.5 again" had it (a first pass,
+one with the other search, one at a higher QP), and the lab's guards read
+every 300 passes:
+
+| Sequence, rate, busy cores | Frames a second | A frame, ms: mean, 99 in 100, longest | Frames longer than 33.3 ms | kbit/s, and the lowest and highest ten seconds | Passes at a higher QP, frames left out |
+| --- | --- | --- | --- | --- | --- |
+| drag, 2.5 Mbit/s, idle, 600 s | 30.00 | 12.7, 18.7, 48.8 | 75 of 18000 | 2501, 2467 to 2602 | 0, 0 |
+| motion, 8 Mbit/s, three busy, 600 s | 30.00 | 13.5, 21.0, 42.0 | 36 of 18000 | 8003, 7949 to 8194 | 0, 0 |
+| scroll, 2.5 Mbit/s, idle | 30.00 | 13.7, 31.9, 65.2 | 22 of 3600 | 2533, 2426 to 2698 | 240, 43 |
+| motion, 2.5 Mbit/s, idle | 30.01 | 12.7, 19.4, 48.9 | 13 of 3600 | 2504, 2391 to 2623 | 2, 1 |
+| pointer, 2.5 Mbit/s, idle | 30.00 | 12.4, 18.8, 48.5 | 13 of 3600 | 2500, 2434 to 2666 | 10, 1 |
+| scroll, 8 Mbit/s, three busy | 30.01 | 14.4, 44.0, 58.4 | 84 of 3600 | 8052, 7538 to 8697 | 75, 64 |
+| drag, 8 Mbit/s, three busy | 30.01 | 13.1, 21.6, 39.5 | 8 of 3600 | 8018, 7953 to 8376 | 0, 0 |
+| pointer, 8 Mbit/s, three busy | 30.01 | 10.7, 18.8, 31.4 | 0 of 3600 | 891, 487 to 2559 | 0, 0 |
+
+Thirty frames a second were held in every run, and a frame took 11 to 14 ms
+of its 33.3 on average. But not every frame was done within its time, for
+two reasons:
+
+- The lab's own reading of the buffers' guards, every 300 passes, takes
+  about 20 ms out of uncached memory: with a frame of two passes that is
+  more than a frame's time. It is the lab's instrument and not the
+  encoder's work.
+- A frame with three passes. One pass and the loop around it take 8 ms
+  after the picture's 3 ms into the input buffer: three are 27 to 32 ms
+  with idle processors, and 35 to 58 ms when the process waits for a busy
+  core after every interrupt. Without the guards' reading
+  (`-sustained-three`) `scroll` at 2.5 Mbit/s still had 8 frames over
+  33.3 ms with idle processors (the longest 40.0 ms), each of them one of
+  the 193 frames with three passes, and at 8 Mbit/s with three cores busy
+  83 (the longest 72.0 ms).
+
+Gate V3 asks for 33 ms a frame, key or P. So **a frame takes at most two
+passes** (`rate.rs`, `PASSES`; the lab tool's `passes=3` gives the third
+back), its first and one more:
+
+- A frame that fits and is costly: the other search at the same QP, as
+  before, and the smaller pass is the frame.
+- A frame the bucket has no room for: once more at a higher QP with the
+  same search, as before.
+- A frame that does not fit and is due the other search gets both in its
+  one more pass: the other search at the higher QP. That pass is the frame
+  if it fits. Whether its search is the next frame's is judged against
+  what the first search would have made at that QP by the control's rule
+  of thumb (bits halve with six steps of QP): a tenth less, and it is.
+- Not so in the frame after a key frame, which gets the higher QP with the
+  search it came with: the bucket is full of the key frame then, and the
+  engine's search begins anew at a key frame and is no measure of the
+  frames that follow.
+
+Streams at a fixed QP are not touched by this: they have no pass at a
+higher QP.
+
+How the third and the fourth point came about is part of the record. The
+first rule with two passes gave a frame that did not fit its higher QP and
+let the other search wait for a frame that fits. The plan's sequences were
+as before with it, but a page that scrolls down 20 pixels a frame at
+2.5 Mbit/s lost 5.9 dB (21.7 dB, 17 frames left out, where three passes
+made 27.6 with 3): the wrong search's frames are the ones that do not fit,
+the control raised the QP until they did, and at QP 47 to 51 a frame costs
+so little with either search that the other one was not tried for a
+second. With both in one pass the same run made 25.9 dB, and lost eight
+frames in a row at its beginning: the frame after the key frame did not
+fit, the wide search made that one frame twice as large, it was left out,
+and then the page had moved 40 pixels against its reference, which no
+search finds. A look at both searches at four QPs showed why: the exact
+search finds a page that moves down 20 in the first frame after a key
+frame, and in the frames after it sometimes and sometimes not (94 and
+120 kB at QP 30 where the wide search makes 12 to 17); the wide search
+costs twice in that first frame. One more idea, to let the control go on
+from the first pass's QP when such a pass changed the search, made the
+search change with every other frame at 2.5 Mbit/s and was dropped.
+
+**With two passes a frame**, lab tool `266613f`, and the guards read once,
+at the end of each run:
+
+| Sequence, rate, busy cores | Frames a second | A frame, ms: mean, 99 in 100, longest | Frames longer than 33.3 ms | kbit/s, and the lowest and highest ten seconds | Passes at a higher QP, frames left out |
+| --- | --- | --- | --- | --- | --- |
+| drag, 2.5 Mbit/s, idle, 600 s | 30.00 | 12.6, 18.6, 25.1 | 0 of 18000 | 2501, 2467 to 2602 | 0, 0 |
+| motion, 8 Mbit/s, three busy, 600 s | 30.00 | 13.4, 20.3, 33.6 | 1 of 18000 | 8003, 7949 to 8194 | 0, 0 |
+| scroll, 2.5 Mbit/s, idle | 30.01 | 13.4, 22.3, 26.1 | 0 of 3600 | 2537, 2422 to 2725 | 195, 146 |
+| motion, 2.5 Mbit/s, idle | 30.01 | 12.6, 19.3, 26.0 | 0 of 3600 | 2503, 2388 to 2619 | 4, 0 |
+| pointer, 2.5 Mbit/s, idle | 30.00 | 12.4, 18.7, 25.9 | 0 of 3600 | 2500, 2434 to 2666 | 10, 1 |
+| scroll, 8 Mbit/s, three busy | 30.01 | 14.0, 33.4, 51.5 | 37 of 3600 | 8055, 7503 to 8577 | 55, 77 |
+| drag, 8 Mbit/s, three busy | 30.01 | 13.0, 19.4, 40.0 | 1 of 3600 | 8018, 7953 to 8376 | 0, 0 |
+| pointer, 8 Mbit/s, three busy | 30.01 | 10.5, 12.0, 21.6 | 0 of 3600 | 891, 487 to 2559 | 0, 0 |
+
+Thirty frames a second were held in every run again. With the processors
+idle no frame took longer than 26.1 ms, in 28,800 frames. With three cores
+busy 39 frames of 32,400 did: 37 of `scroll` at 8 Mbit/s (99 in 100 within
+33.4 ms, the longest 51.5), one of `drag` (40.0 ms) and one of `motion`
+(33.6 ms) at 8 Mbit/s. Each of the twelve of them that the receipts name
+had two passes, and the frames after them made the time up. The engine's
+time of a pass, from the start to the interrupt as the waiting process
+sees it, was 7 to 10 ms in these runs, and twice 11.7 and 14.5 ms
+(`motion` with three cores busy): what grows with busy cores is the wait
+for a core, as in V3.3.
+
+The third pass is missed where a picture does not fit: `scroll` at
+2.5 Mbit/s, played forth and back, left out 146 frames of 3600 where three
+passes left out 43, and at 8 Mbit/s with three cores busy 77 where they
+left out 64. A frame that does not fit at the higher QP with the search it
+is given is left out, where the third pass let it have the better of the
+two searches first. In the 300-frame runs below `scroll` leaves out no
+frame at either rate.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-sustained` (three passes),
+`ve-lab-v3-20261003-sustained` (two), `-sustained-three` (three passes
+again, without the guards' reading); for the rule,
+`ve-lab-v3-20261002-two-a`, `-two-b` (the first rule with two passes),
+`ve-lab-v3-20261003-rule-a`, `-rule-b`, `-rule-c` (both in one pass; not
+after a key frame; the idea that was dropped) and `-mad` (both searches at
+four QPs). A first session of the three-pass runs ran to its end on the
+board and its results were lost on the way back: the session's connection
+had been silent for half an hour (`ve_lab_session.sh` keeps it alive
+since). A session of the first two-pass rule was ended on purpose, by the
+lab's own rule 1, when that rule was given up.
+
+### V3.1 again, 2026-10-03: what the engine writes, where it stops, and how small a picture may be
+
+Three things the lab had not measured, and that whoever gives the engine
+its memory must know. The lab's buffers are the larger of what the two
+open maps say, for a 1920x1080 picture whatever the picture's size: the
+sub-pixel buffer is ten times the newer map's size, and the guards only
+tell that the engine stayed inside that. No frame had reached the end of
+the stream buffer, which is 4 MiB here. And no P frame smaller than
+320x240 had been encoded.
+
+**What the engine writes into its work buffers.** A key frame and twelve
+P frames of the picture that changes everywhere, each P frame with both
+searches, through all three sets of buffers; the buffers begin as zeros,
+as in every run, and the last byte that is not zero afterwards is where
+the engine's writing ends (lab command `extents`):
+
+| Picture | Reconstructed luma: written, and the V3s map's size, the older map's | Chroma | Sub-pixel | Macroblock information |
+| --- | --- | --- | --- | --- |
+| 320x240 | 77,843 of 81,920, 81,920 | 40,704 of 40,960, 40,960 | 2,957 of 3,744, 20,480 | 618 of 4,096, 640 |
+| 640x480 | 309,426 of 327,680, 307,200 | 163,328 of 163,840, 163,840 | 9,755 of 11,040, 76,800 | 1,258 of 8,192, 1,280 |
+| 800x600 | 489,060 of 512,000, 486,400 | 255,488 of 256,000, 256,000 | 14,754 of 16,320, 121,600 | 1,578 of 8,192, 1,600 |
+| 1024x768 | 790,023 of 851,968, 786,432 | 393,216 of 393,216, 393,216 | 18,603 of 20,160, 196,608 | 2,026 of 8,192, 2,048 |
+| 1280x720 | 927,529 of 983,040, 942,080 | 490,752 of 491,520, 491,520 | 23,285 of 25,344, 235,520 | 2,543 of 12,288, 2,560 |
+| 1366x768 | 1,060,576 of 1,144,832, 1,056,768 | 528,384 of 528,384, 528,384 | 24,826 of 26,880, 264,192 | 2,734 of 12,288, 2,752 |
+| 1600x900 | 1,466,458 of 1,536,000, 1,484,800 | 767,232 of 819,200, 768,000 | 40,451 of 43,296, 371,200 | 3,178 of 16,384, 3,200 |
+| 1920x1080 | 2,097,856 of 2,211,840, 2,088,960 | 1,044,480 of 1,105,920, 1,044,480 | 48,208 of 51,040, 522,240 | 3,818 of 16,384, 3,840 |
+| 1920x1088 | 2,097,878 of 2,211,840, 2,088,960 | 1,044,480 of 1,105,920, 1,044,480 | 48,208 of 51,040, 522,240 | 3,818 of 16,384, 3,840 |
+
+- **The V3s map's sizes hold everywhere.** The engine writes three to five
+  lines of luma below the coded picture, which the older map's size does
+  not hold at six of these sizes; chroma is the coded picture's and
+  fills the V3s map's size to the byte at 1024x768 and 1366x768; the
+  sub-pixel plane is a tenth of what the older map allows for it; the
+  macroblock information is just under 32 bytes for every column of
+  macroblocks. The
+  buffer the older maps call extra (motion vectors) is never written: its
+  register is written zero, as the vendor's library does on the H6.
+- With a pattern in the buffers instead of zeros, which shows a written
+  zero too, the ends are the same to within a line (1920x1080: luma to
+  2,097,656, chroma to 1,044,480, sub-pixel to 48,208, macroblock
+  information to 3,824), and
+  every encode ends as it should, with the pattern in any one kind of
+  buffer or in all: **the engine does not depend on what its work buffers
+  held before.**
+- **Buffers of exactly a driver's sizes** (the V3s map's for the picture
+  itself, each in whole pages and a page more; lab option `tight`), with
+  the lab's guards right behind them: 25 passes at each of eleven sizes
+  from 256x256 to 1920x1088, 1920x64 among them, and no guard was touched.
+
+**Where the engine stops.** The engine is told that the stream buffer ends
+early while the buffer goes on behind (lab command `overflow`); the
+buffer is filled with a pattern first, and the frame is larger than what
+the engine was told of:
+
+| Picture, QP, the frame's bytes | Told, bytes | How the encode ended | Length register, bits | Written | Behind the told end |
+| --- | --- | --- | --- | --- | --- |
+| 1920x1080, 30, 88,663 | 65,536 | status 2, "stalled" | 524,294 | every byte of the told part | nothing |
+| 1920x1080, 30, 88,663 | 32,768 | status 2 | 262,150 | every byte | nothing |
+| 1920x1080, 30, 88,663 | 8,192 | status 2 | 65,539 | every byte | nothing |
+| 1920x1080, 20, 473,847 | 65,536 | status 2 | 524,293 | every byte | nothing |
+| 1920x1080, 30 | 4,096 | the bit writer is not ready after the first header bits (status `0x62`) | 16 | nothing | nothing |
+| 320x240, 10, 28,285 | 4,096 | the same | 16 | nothing | nothing |
+| 1920x1080 of noise, 30, 1,856,347 | 2,097,152 | finished | 14,850,776 | the frame | nothing |
+| 1920x1080 of noise, 20, 2,747,168 | 2,097,152 | status 2 | 16,777,224 | every byte | nothing |
+| 1920x1080 of noise, 10, 4,034,581 | 2,097,152 | status 2 | 16,777,223 | every byte | nothing |
+| 1920x1080 of noise, 0, more than the buffer | 2,097,152, then the whole 4,194,304 | status 2 both times | 16,777,224, then 33,554,443 | every byte | nothing, and the guards behind the buffer are whole |
+| 1366x768 of noise, 0, 2,726,017 | 1,048,576 | status 2 | 8,388,621 | every byte | nothing |
+| 256x64 of noise, 0, 42,525 | 8,192 | status 2 | 65,546 | every byte | nothing |
+
+- **The engine honours the end of its stream buffer**: it fills the buffer
+  to its last byte, writes none behind it, raises its interrupt with the
+  stall bit, and stays there. After a reset the same frame goes into the
+  whole buffer and decodes.
+- The size register `0xb8c` counts in units of 65,536 bits (V1.5 saw its
+  mask): a buffer told smaller than 8 KiB is a buffer of no size, and the
+  engine stalls at the first bits of the headers.
+- That stall's interrupt comes before anybody waits for one. The lab
+  module kept it, and it answered the wait of the next encode; the lab
+  tool now asks for what the module keeps after every reset. A driver
+  forgets the interrupt of a frame when it resets the engine for the next.
+- A picture of random bytes is the most a frame can cost: at QP 0 it is
+  1.7 times the picture's own bytes (2,726,017 for 1366x768, 42,525 for
+  256x64), at QP 10 it is 4,034,581 bytes for 1920x1080, and at QP 0 more
+  than the lab's 4 MiB, where the engine stopped at the buffer's real end
+  as it stops at a told one. Whoever chooses the picture and the QP can
+  make a frame that does not fit a buffer of the picture's size; what
+  follows is the stall, not a write behind the buffer.
+
+**How small a picture may be.** A key frame and four P frames at small
+sizes (the first run of `extents`, at 64x64, did not get past its first
+P frame):
+
+| Width | Heights | P frames |
+| --- | --- | --- |
+| 64, 80, 96, 112, 128, 144, 160, 176, 192 | the same as the width (176x144), and 64x1088 | the first does not end: the slice header's 68 bits are written and nothing more, status `0x80008260` (`0x8000a260` at 192x192) |
+| 208, 224, 240 | 64, and the same as the width | made |
+| 256 | 64, 96, 128, 256, 1088 | made |
+| 272, 320, 1920 | 64 (and 320x240) | made |
+
+**The engine does not finish a frame that refers to another when the
+picture is narrower than 13 macroblocks.** The key frame of every size is
+made, and the height does not matter from 64 lines on. What the engine
+waits for was not looked for: nothing of the product is that narrow, and
+a driver refuses such pictures (V4 takes none below 256 pixels of width).
+The stuck engine wrote nothing but the header; a reset ends it.
+
+Every session ended as every session does, with the kernel's image
+compared word by word and unchanged.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-extents` (the first run,
+with the pattern, at 64x64), `-extents-b` (the stream's end, and the
+interrupt that was kept), `-extents-c` (the stream's end again, small
+pictures, the buffers of ten sizes), `-extents-d` (the widths between 192
+and 256, buffers of a driver's sizes, the pattern in each kind of
+buffer), lab tool `69838cd`; `ve-lab-v3-20261003-noise` (pictures of
+noise), lab tool `266613f`.
+
+### V3.4 and V3.5 with two passes a frame, 2026-10-03
+
+The measures of "V3.5 again" once more with the rule above (map `h6`,
+`search=auto`, lab tool `266613f`); these are the numbers gate V3 is judged
+by.
+
+At QP 30 the four sequences are, frame for frame, the bytes of the runs
+with three passes (`scroll` 1700 kbit/s at 36.32 dB, `drag` 1921 at 41.91,
+`motion` 37,086 at 33.36, `pointer` 366 at 41.26): a fixed QP has no pass
+at a higher one. The still sequence does not drift: 41.36 dB in frames 30
+to 60, 41.22 dB in its last 30.
+
+At a bitrate, 300 frames, every frame decoded by the board's ffmpeg
+without a complaint, against the x264 numbers of V3.4:
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out | Passes at a higher QP | With both searches | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1659 | 1309 | 34.90 | 29.64 | +5.26 | | 16 | 71 | 150 |
+| scroll | 2500 | 2689 | 1859 | 46.17 | 37.60 | +8.57 | | 17 | 76 | 146 |
+| scroll | 5000 | 5116 | 3041 | 56.21 | 50.91 | +5.30 | | | 71 | 132 |
+| scroll | 8000 | 6351 | 3844 | 63.31 | 58.96 | +4.35 | | | 62 | 237 |
+| drag | 1500 | 1538 | 1288 | 40.66 | 40.93 | -0.27 | | | 74 | 130 |
+| drag | 2500 | 2567 | 2280 | 45.54 | 45.67 | -0.13 | | | 75 | 122 |
+| drag | 5000 | 5134 | 4746 | 50.99 | 52.47 | -1.48 | | | 75 | 108 |
+| drag | 8000 | 8219 | 7395 | 57.94 | 58.12 | -0.18 | | | 74 | 153 |
+| motion | 1500 | 1634 | 1563 | 21.31 | 20.99 | +0.32 | 158 | 1 | 75 | 137 |
+| motion | 2500 | 2737 | 2601 | 23.20 | 22.90 | +0.30 | 9 | 29 | 75 | 285 |
+| motion | 5000 | 5014 | 5192 | 25.74 | 26.17 | -0.43 | | | 75 | 0 |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | | | 75 | 0 |
+| pointer | 1500 | 1538 | 600 | 56.88 | 44.50 | +12.38 | | 5 | 67 | 290 |
+| pointer | 2500 | 2498 | 867 | 58.18 | 45.55 | +12.63 | | | 61 | 299 |
+| pointer | 5000 | 2145 | 1347 | 65.32 | 46.05 | +19.27 | | | 11 | 0 |
+| pointer | 8000 | 2226 | 1360 | 65.59 | 46.19 | +19.40 | | | 5 | 0 |
+
+Eleven of the sixteen runs are, byte for byte, the runs with three
+passes. The other five are within 0.2 dB of them: `scroll` at 1.5 and
+2.5 Mbit/s 0.12 and 0.18 dB above, `pointer` at 1.5 Mbit/s 0.03 dB above,
+`motion` at 1.5 and 2.5 Mbit/s 0.01 dB below and above. No frame took a
+third pass. At the rates the gate names the engine is at most 0.18 dB
+below x264 at 8 Mbit/s and 0.13 dB below at 2.5 Mbit/s, both on `drag`.
+These are the first ten seconds of a stream: the rate is at most 10.6%
+above its target (`scroll` at 1.5 Mbit/s, the first key frame), and below
+it where the QP is 0 and the picture has no more bits to give: `pointer`
+at 5 and 8 Mbit/s and `scroll` at 8 Mbit/s, of which x264 makes less
+still.
+
+Text that moves every frame (300 frames; frames left out in brackets):
+
+| Text moves | Target, kbit/s | Engine, two passes, dB | Three passes ("V3.5 again"), dB | x264, dB | Difference to x264 | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 34.56 | 34.56 | 30.06 | +4.50 | 0 |
+| up 20 a frame | 8000 | 56.30 | 56.30 | 50.05 | +6.25 | 0 |
+| down 20 a frame | 2500 | 26.41 (2) | 27.63 (3) | 29.47 | -3.06 | 280 |
+| down 20 a frame | 8000 | 46.91 (2) | 47.41 (2) | 49.81 | -2.90 | 263 |
+| up 60 a frame | 2500 | 13.08 (244) | 13.08 (244) | 19.09 | -6.01 | 0 |
+| up 60 a frame | 8000 | 15.25 (124) | 15.25 (124) | 28.33 | -13.08 | 0 |
+| down 60 a frame | 2500 | 12.96 (246) | 12.96 (246) | 13.36 | -0.40 | 0 |
+| down 60 a frame | 8000 | 15.15 (126) | 15.15 (126) | 26.17 | -11.02 | 0 |
+| right 3 a frame | 2500 | 39.17 | 39.17 | | | 0 |
+| right 3 a frame | 8000 | 48.12 | 48.12 | | | 0 |
+
+Text that moves up, sideways or beyond the window is what it was with three
+passes; a page that scrolls down 20 pixels a frame is 1.2 and 0.5 dB below
+that, and 3.1 and 2.9 dB below x264, where three passes were 1.8 and 2.4
+below. In bursts of a second (30 frames moving, 60 resting, three of them)
+the picture comes back as fast as before: 15 frames after the motion ends
+it is at 30 dB again and 20 to 23 frames after it at 35 dB, at 8 Mbit/s,
+for a page that moves 60 pixels a frame up or down (means of the runs 30.73
+and 30.54 dB as with three passes; x264 36.50 and 30.39); at 2.5 Mbit/s
+21.27 dB (three passes 21.48, x264 20.28). The burst of a page that scrolls
+down 20 pixels a frame averages 50.88 dB at 8 Mbit/s against 53.95 with
+three passes.
+
+With a key frame every two seconds, as the product sends them, the four
+pictures that move at 2.5 Mbit/s are 28.12 (`scroll`), 25.74 (up 20),
+22.09 (down 20, one frame left out) and 31.12 dB (right 3) with two
+passes, and 28.08, 25.54, 22.96 and 31.12 dB with three in the same
+session: a 1920x1080 key frame every 60 frames takes much of 2.5 Mbit/s
+either way.
+
+Chromium (WebCodecs) decoded the 300 frames of every sequence at 2.5 and at
+8 Mbit/s, kept from the runs above: 300 of 300 in each of the eight
+streams, `avc1.42c028`, 1920x1080, and every frame's PSNR equal to
+ffmpeg's to the hundredth of a decibel, the frames that were left out and
+those sent with either search among them.
+
+Receipts: `evidence/private/ve-lab-v3-20261003-two-a` (the plan's
+sequences, with the kept streams and Chromium's verdicts), `-two-b` (text
+that moves, bursts, a key frame every two seconds).
+
+### V3.6, 2026-10-02 and 2026-10-03: an hour, a timeout, a thousand starts
+
+**An hour of encoding.** One hour of `drag` at QP 30, the search chosen
+for every frame, decoded by the board's ffmpeg as it was made (2026-10-02,
+lab tool `f16a1e4`): 104,769 frames, 29.1 a second, every one decoded
+without a complaint and none below 40.09 dB. The stream comes round every
+580 frames (ten rounds of the 58 pictures forth and back, and two key
+frames), and every frame was, byte for byte, the frame 580 before it: no
+frame was wrong. A fixed QP has no pass at a higher one, and its streams
+are the same with two passes a frame (above).
+
+Then five minutes each at a bitrate with two passes a frame (2026-10-03,
+`266613f`): `drag` at 2.5 Mbit/s, 8908 frames, all decoded, none below
+40.09 dB; `scroll` at 8 Mbit/s, 8566 frames, all decoded, 208 of them
+left out. Of the 206 frames below 20 dB, 201 were left out and show the
+picture before them while the page has moved on; the other five are the
+key frame 8100, to which the bucket gave QP 51 after a frame of 455 kB,
+and the four frames after it at QP 47 to 51. They are frames at the
+highest QPs. PSNR alone does not tell such a frame from a wrong one, which
+is why the hour is at a fixed QP, where every frame is compared with the
+frame of the same picture a period before.
+
+**A timeout and the reset after it.** A stream of 300 frames in which the
+hundredth is not waited for: the lab gives the frame up, resets the engine
+through the reset control, and goes on with a key frame. 299 frames came
+out, the board's ffmpeg decodes all of them without a complaint, and the
+key frame is frame 101. The driver of V4 does the same after 200 ms.
+
+**A thousand starts and stops.** A thousand times the device was opened,
+buffers for a 1920x1080 stream were taken, two frames of 320x240 were
+encoded, and everything was given back: a thousand of a thousand, and the
+last stream decodes. The free part of the 128 MiB of contiguous memory
+was 124,452 kB before and 119,132 kB after; the page cache uses free pages
+of it too, and at idle after nineteen more sessions, on 2026-10-03,
+121,932 kB were free. Starts that kept their buffers, about 19 MB at
+1920x1080, would have used it up within seven. The driver's hostile client
+(V4.3) counts after the page cache is dropped.
+
+Every session ended with the engine back with `cedrus` and suspended, no
+module, file or process left, the kernel's image compared word by word and
+unchanged, and no line in the kernel's log but the two of every session.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-soak` (the hour, and two
+runs at a bitrate with up to three passes), `ve-lab-v3-20261003-soak` (the
+two runs at a bitrate with two passes), `ve-lab-v3-20261002-sustained`
+(the timeout and the starts), `-soak-try`, `-soak-try2` (short runs of the
+same soak).
+
+### Gate V3: passed
+
+At 1920x1080, with two passes a frame at most (lab tool `266613f`):
+
+| The gate's condition | Measured | |
+| --- | --- | --- |
+| Every frame of every sequence decodes in ffmpeg and Chromium | the board's ffmpeg: the 20 streams of the four sequences, at QP 30 and at 1.5, 2.5, 5 and 8 Mbit/s, 300 of 300 frames each, without a complaint; Chromium: the eight streams at 2.5 and 8 Mbit/s, 300 of 300 frames each, to ffmpeg's PSNR | met |
+| No drift | the still sequence at QP 30: 41.36 dB in frames 30 to 60, 41.22 in the last 30 | met |
+| At least 30 frames a second sustained (33 ms a frame, key or P) | 30.00 to 30.01 frames a second in every run, ten minutes with the processors idle and ten with three cores busy; a key frame takes the engine 7.0 ms and a P frame 7.2 (V3.3), one pass with the loop around it 11 ms | met, read as below |
+| The rate over any ten seconds within 15% of the target | 68,810 windows of 40 runs within −6.2% and +10.6%; 3,304 more below, every one with frames at QP 0 in it | met, read as below |
+| V3.6 passed | an hour without a wrong frame; a timeout and the reset after it; a thousand starts and stops | met |
+| PSNR at most 1 dB below x264's at 8 Mbit/s and 2 dB below at 2.5 Mbit/s, on every sequence | at most 0.18 dB below at 8 Mbit/s and 0.13 dB below at 2.5 Mbit/s, both on `drag`; `motion` 0.06 dB below at 8 Mbit/s and above at 2.5; `scroll` and `pointer` above | met |
+
+How two of the conditions are read:
+
+- **Time.** As V3.3 measures it: thirty frames a second sustained, and the
+  time of a frame, key or P, within a frame's 33 ms. One pass takes a
+  third of that. A frame with two passes took at most 26.1 ms with the
+  processors idle (28,800 frames); with three of the four cores busy in a
+  loop 39 frames of 32,400 took longer, up to 51.5 ms, and the frames
+  after them made the time up. Read as every frame within 33 ms whatever
+  the load, those 39 frames miss it. The product's encoder (V5) keeps the
+  rule of two passes, and V7 measures its frames' times on the board as
+  it is used.
+- **Rate.** A window is more than 15% below its target only where the QP
+  is 0 and the picture has no more bits to give (`pointer` at 5 and
+  8 Mbit/s, `scroll` at 8 Mbit/s, and x264 gives less still); no window is
+  more than 15% above.
+
+Beyond the plan's four sequences, text that moves is worse with the
+engine than with x264: a page that moves down 20 pixels a frame is 3.1
+and 2.9 dB below it at 2.5 and 8 Mbit/s, and a page that moves 60 pixels
+a frame 0.4 to 13.1 dB below, with up to 246 of 300 frames left out: the
+engine's search does not reach as far (V3.4 again). It is not a
+condition of the gate.
+
+**Go for the product.** Next is V4, the driver.
+
+### V5, 2026-10-03: the product's encoder
+
+The product encodes with the engine through the driver of V4
+(`docs/design/h616-ve-encoder-driver-v1.md`), as the third engine of
+`bli-kvm-video-encoder`. What the lab tool and the product share is the
+crate `bli-kvm-ve-encoder`: the stream's headers and bit writer, the rate
+control of V3.5 with the search chosen for every frame, the frame of
+skipped macroblocks for a frame that is left out, the software stand-in
+for the engine, the driver's interface, the account of the reconstruction
+sets, the frame policy (which pass to make next, which to send), and the
+encoder itself: one picture in, one frame out. Where it differs from the
+plan's design, or the plan left it open:
+
+- **The passes a frame may take** follow from the frame's time and V3.3's
+  numbers (`policy::passes_for`): a pass takes the engine 3.6 ns a pixel
+  and the loop around it a millisecond, the picture's way in 1.8 ns a
+  pixel once a frame, and a process that waits for a busy core wakes up to
+  4 ms late after every pass; at least one pass, at most three. That is two
+  at 1920x1080 and 30 frames a second, the rule gate V3 was judged with,
+  and three at 1366x768 and below, where three fit the frame's time and
+  the third pass saves the frames "V3.3 again" saw left out. Three passes
+  at those sizes have not been measured on the board; V7 measures the
+  product's frames.
+- **The picture.** The plan has the converter give NV12 instead of I420.
+  It keeps giving I420, which x264 and VP8 take as well, and the engine's
+  path writes the picture into a buffer of whole macroblocks, the edge
+  repeated into the padding, interleaving the chroma on the way
+  (`nv12::from_i420`): one copy of the picture more a frame (3 MB at
+  1920x1080) for one converter that serves all three engines.
+- **Key frames** come every two seconds, for a new viewer, when a client of
+  the frame socket asks, and after a frame the engine failed on; each has
+  the SPS and the PPS before it; constrained baseline, CAVLC.
+- **Choice and fallback.** The engine is tried when a viewer's stream
+  opens: the device is configured for the size and a test picture is
+  encoded; without that x264 encodes, with a line in the journal that says
+  why. A frame the engine fails on is lost and the next one is a key frame;
+  after three in a row x264 takes the stream over where it is, behind the
+  same RTP packetizer and frame socket, until the encoder starts again.
+  The encoder writes `hardware` or `x264` to a status file, which the web
+  server reports as `h264Encoder` in `GET /api/vm/screen` (it reads nothing
+  from that file but these two words) and the screen settings show.
+- **The unit** may open the driver's device and no other
+  (`DevicePolicy=closed`, `DeviceAllow=/dev/hardened-blikvm-ve-enc rw`),
+  through the group that the package gives the node (V6.1). It gets three
+  converter threads, since decoding the capture's JPEG pictures is what
+  bounds the frame rate when the engine encodes, and keeps its limit of 30
+  frames a second, the rate gate V3 measured.
+
+Tests on the build host run the encoder against the stand-in behind the
+driver's interface: the frame policy and the sets against an account of
+their own, the engine in the product's encoder (H.264 from the engine
+where there is one, x264 where there is none or where it fails three times
+in a row, the bitrate changed while encoding), the frame socket with a
+unit that names a device the board does not have, and the page that shows
+the encoder.
+
+### V7, 2026-10-03: the product's encoder on the board
+
+**What was installed** (tree `b31149a`, `check.sh` green): the update-runtime
+package `0.1.0~dev36` with the encoder driver (the module's bytes are those
+gate V4 was passed with, `a8baacfe…`), the H.264 encoder and its units
+through `tools/device/deploy_vp8.sh`, and slot 66, `0.1.0-alpha.11`, through
+the update API. The driver is off until `tools/device/deploy_ve.sh install`
+switches it on; until gate V7 that was done only for the runs below.
+
+Two things went wrong on the way. The first deploy of the encoder's units
+left H.264 without an encoder for about a minute: its unit names the group
+of the driver's device, which only `deploy_ve.sh` made, and systemd starts
+no unit that names a group the system does not have (216/GROUP). The group
+was made by hand from the package's example and the encoder came back;
+`deploy_vp8.sh` now makes it with the unit (`1fafaab`). And the QUIC
+transport refused every session with "clock": the board's QUIC gateway had
+started at boot while the board's clock still said 2026-07-29 and made its
+13-day certificate from then. That is not this plan's; the gateway was
+restarted, which made a new certificate, and the finding is for the
+operator (the gateway should wait for the clock, or make a new certificate
+when the clock jumps).
+
+**A slot from before this plan** (65, `0.1.0-alpha.10`) on the new system,
+before slot 66 was installed: H.264 over WebRTC and over QUIC with x264, and
+in a guarded window with the engine (below), every probe passed.
+
+**The engine against x264 in a second, transient instance of the
+encoder** (V7.1; `tools/device/ve_encoder_measure.sh` in lab sessions with
+the driver loaded root-only, so that the product's own encoder could not
+open it and stayed on x264): the product's binary with the unit's settings
+(three converter threads, 8 Mbit/s), fed with the lab's pictures as a
+capture stream of JPEG pictures (`ve_capture_play.py`, ffmpeg's MJPEG at
+`q:v 4`: `drag` 284 kB, `motion` 348 kB, `scroll` 593 kB a picture), 60
+seconds after 10 of warming up. The processor time is the encoder process's
+own; the player's is not in it.
+
+Thirty pictures a second, into an encoder whose limit (60) lets every one
+of them in:
+
+| Picture | Engine | Frames a second | Cores | JPEG decode, convert, encode, ms a frame | Frames left out a second | Hottest: processors, engine, °C |
+| --- | --- | --- | --- | --- | --- | --- |
+| drag | video engine | 30.0 | 1.56 | 28.1, 9.6, 17.6 | 2.2 | 68.3, 63.2 |
+| drag | x264 | 18.8 | 3.07 | 34.1, 10.5, 51.0 | (11.2 not taken) | 75.0, 66.5 |
+| motion | video engine | 30.0 | 1.70 | 34.3, 7.8, 17.7 | 0 | 71.7, 65.4 |
+| motion | x264 | 12.5 | 3.27 | 39.7, 9.5, 77.9 | (17.6 not taken) | 77.3, 68.6 |
+| scroll | video engine | 19.6 | 1.18 | 36.5, 6.5, 16.9 | 10.1 | 66.6, 62.8 |
+| scroll | x264 | 17.6 | 2.94 | 42.6, 8.6, 53.6 | (2.2 not taken) | 75.4, 67.0 |
+
+The engine holds thirty frames a second of a moving 1920x1080 picture with
+1.56 and 1.70 cores; x264, with three cores and more, makes 18.8 and 12.5
+of them and lets the rest go. At an equal rate, with the encoder's limit at
+12 (about 10.5 frames a second for both), `scroll` takes 0.85 cores with
+the engine and 2.27 with x264, `motion` 0.69 and 2.45. Most of what the
+engine's path costs is decoding the capture's JPEG pictures, which x264's
+path pays as well; the engine's own time is 7.3 to 7.6 ms a pass. `scroll`
+did not reach thirty: the player did not give its large pictures faster
+than about twenty a second, and at 8 Mbit/s a third of its frames were left
+out by the rate control. At the limit (pictures at 90 a second, limit 60)
+the engine's path made 26 to 27 frames a second with all four cores busy
+(decoding), x264's 6.5 to 7.7.
+
+The encoder's gate admits a frame no sooner than one interval of its limit
+after the one before. Fed at exactly its limit, it lost the frames that
+came a little early: about a third (18 to 19 frames a second of 30 for the
+engine, the first session); fed at twice the limit, as the board's capture
+at 60 frames a second feeds an encoder limited to 30, it let about twenty
+a second through (20.5 for the engine on `drag`, with 1.08 cores, and 17.7
+for x264 with 2.89). That is the product's gate for every engine, not this
+plan's, and a finding for the operator: how many frames the board's own
+capture loses so was not measured, because the target's picture stood
+still.
+
+**End to end, as a viewer gets it** (V7.1; `quic_video_device_probe.mjs`
+and `vp8_webrtc_probe.mjs` with H.264, 60 s each, the processor time of
+every unit on the picture's way from its control group): the target showed
+a still picture, so the encoder had half a frame a second to encode.
+
+| Slot, engine | QUIC: frames, age at drawing (median, 95 in 100), ms | WebRTC: frames | The H.264 encoder's unit, % of a core | uStreamer | nginx (WebRTC) |
+| --- | --- | --- | --- | --- | --- |
+| 65, x264 | 32, 60, 109 | 32 | 9.7 | 6.5 | 7.1 |
+| 65, video engine | 32, 46, 78 | 32 | 6.1 | 6.5 | 6.6 |
+| 66, x264 | 32, 60, 111 | 32 | 9.7 | 6.5 | 6.7 |
+| 66, video engine | 32, 45, 78 | 32 | 6.0 | 6.4 | 6.9 |
+
+With slot 66 the server said `h264Encoder: hardware` while the engine
+encoded and `x264` after. The windows with the engine were guarded as the
+lab sessions are: the board quiet before, a watcher of every connection
+and QUIC session that is not the probe's own, and the engine switched off
+by `deploy_ve.sh remove` at the end.
+
+**Twelve hours with a viewer** (V7.1; `tools/device/ve_hold_run.sh 12 8000`
+in a lab session): the product's own units with the engine switched on,
+and a viewer's demand held on the board itself at the operator's
+8 Mbit/s (`ve_demand_hold.py`), so that no connection from outside was
+needed and a connection from outside still meant somebody else. The
+encoder encoded what the target showed: mostly a still picture, and about
+an hour in all of motion at up to 25 frames a second.
+
+- 43,200 seconds on the engine, from 02:28 to 14:37 UTC on 2026-10-03.
+  Once somebody connected (02:56): the engine was switched off within the
+  watcher's 20 seconds and on again after five quiet minutes.
+- 4,294 statistics lines, every one `engine=hardware`: 238,468 passes,
+  14,905 key frames, 319 frames left out, **no failure**; a pass took the
+  engine 6.7 to 8.3 ms. The encoder ran as one process from 03:02 to the
+  end and used 31% of a core on average; its memory stayed at 10 to 16 MB
+  (27 MB at most), the free contiguous memory at 66,192 kB throughout.
+- The hottest the processors got was 74.7 °C.
+- The kernel's log got four lines: `cedrus` registering its device twice,
+  when the run gave the engine back to it (for the connection, and at the
+  end), and two notes of `systemd-journald` at 02:30 that its journal was
+  flushed and given up, which neither the driver nor the encoder asks for
+  and whose cause was not found. Nothing from the driver or the engine.
+
+Receipts: `evidence/private/ve-v7-measure-20261003-gate-at-limit` (fed at
+the limit), `-b` (fed at 60 and at 90), `-c` (`drag`, and an equal rate),
+`-d` (fed at 30, the table above), `ve-v7-e2e-slot65-x264`, `-hardware`,
+`ve-v7-e2e-slot66-x264`, `-hardware` (and the probes' receipts beside
+them), `ve-v7-hold-20261003`, `update-to-seq66-alpha11-*`,
+`v7-state-as-found-20261003.json`.
+
+### V7.2, 2026-10-03: regression
+
+On slot 66 with the engine switched on, as gate V7 left the board:
+
+- The GUI walks, desktop and mobile: 21 steps each, 72 and 67 calls of the
+  API, no error. The first two tries of each ended before their first step
+  because the board's address was given with a slash at its end.
+- VP8 and H.264 over WebRTC: decoded at 1920x1080, nothing lost; H.264 over
+  QUIC from the engine: 34 frames of a still picture, a frame 67 ms old in
+  the median when it was drawn, none given up.
+- MJPEG (`tools/device/stream_latency_probe.py`): the viewer at full speed
+  had 54.6 to 55.5 frames a second and was 12 to 31 ms behind in 90 of
+  100; the viewer held to 20 Mbit/s had 40.3 and was 291 to 309 ms behind,
+  around the probe's limit of 300 ms as before this plan (298 on slot 55):
+  two runs of three were over it, by 4 and by 9 ms.
+- The firewall probe (`tools/playwright/quic_firewall_device_probe.mjs`)
+  failed twice: in Paranoid the server refused the QUIC session and the
+  port gave no answer, but the status still said Restricted. The server
+  keeps the firewall's status for five seconds and reads it again right
+  after a change, which can be before the owner's table has the new rules;
+  on slot 65 the probe's page step had taken long enough for the five
+  seconds to pass. The probe now waits until the status names the mode it
+  applied, and passed: Restricted with the port admitted and a session,
+  Paranoid with the port closed and no session, Baseline again. Not this
+  plan's: after a change the firewall page's status may be five seconds
+  old.
+- A slot from before this plan (65) showed H.264 over WebRTC and over QUIC
+  on the new system, with x264 and with the engine ("V7" above).
+
+Receipts: `evidence/private/gui-walk-seq66-v7-*`, `vp8-webrtc-seq66-v7`,
+`h264-webrtc-seq66-v7`, `quic-video-device-seq66-v7`,
+`mjpeg-latency-seq66-v7*`, `quic-firewall-device-seq66-v7*`,
+`v7-state-after-20261003.json`.
+
+### Gate V7: passed
+
+- **One core less.** At 30 frames a second of a moving 1920x1080 picture
+  the encoder used 1.56 cores (`drag`) and 1.70 (`motion`) with the
+  engine; with x264 it used 3.07 and 3.27 and made only 18.8 and 12.5 of
+  the 30 frames. That is 1.37 cores less at the least, for more frames.
+- **Twelve hours** on the engine without an encoder error (no failure in
+  238,468 passes) and without a line in the kernel's log from the driver
+  or the engine: the four lines of those hours are `cedrus` taking the
+  engine back, twice, when the run gave it back, and two notes of
+  `systemd-journald`.
+
+**The hardware engine stays on for H.264**, at the frame rate V3 and V7.1
+showed it can hold: the unit's limit stays at 30 frames a second.
+`tools/device/deploy_ve.sh install` switched it on for good on 2026-10-03 at
+14:44 UTC. From then on the board's H.264 viewers get the engine's frames,
+and x264's where the engine is not there or fails three frames in a row.
+
+### Since 2026-10-04: the engine as the board's choice
+
+The plan of 2026-10-03
+(`docs/baselines/work-plan-20261003-h264-choice-quality-monitor.md`, design
+in `docs/design/h264-engine-choice-and-quality-monitor-v1.md`) changed what
+"Choice and fallback" above says in three ways:
+
+- **Who chooses.** The video menu offers H.264 HW and H.264 SW; the choice
+  is the board's, kept by the web server (hardware unless somebody chose
+  otherwise) and sent to the encoder on every viewer's demand connection
+  and whenever it is made. The encoder switches between two frames, in
+  either direction and also in the middle of a stream; the stream goes on
+  with a key frame. A choice made while nobody watches H.264 reaches the
+  encoder with the next viewer.
+- **How long x264 holds a stream** after the engine failed three frames in
+  a row: until the choice is made again, not until the encoder starts
+  again.
+- **What the encoder says**: besides `hardware` or `x264` in its status
+  file, a report once a second while a viewer watches (the engine, the
+  frames, the stages' times, the engine's passes and failures, the gate's
+  counts), which `GET /api/vm/quality` serves to the quality monitor.
+
+On the board a choice took effect for a watching viewer within 1.3 s,
+0.13 to 0.45 s in the median, both ways, without an encoder failure or a
+kernel line (gates C1 and C5 of that plan).
+
+### Since 2026-10-06: what the samples mean
+
+The encoders take the capture's JPEG YCbCr as it is: the full range, 0 to
+255, with the BT.601 matrix, of an sRGB picture. Until then no stream said so,
+and a browser read every one of them as the narrow range, 16 to 235, with the
+BT.709 matrix: the picture was drawn darker than as MJPEG, the shadows went to
+black and the colours shifted, whichever engine encoded (the engine's decoded
+planes are its input within 0.04 levels; nothing was lost, only misread). The
+SPS of both engines now has a video signal type: full range, BT.709 primaries,
+the sRGB transfer curve and the BT.601 matrix (`headers.rs`, `COLOUR_PRIMARIES`
+and its siblings; the x264 shim sets the same VUI). Over WebRTC and QUIC the
+page then draws the picture within a quarter of a level of the JPEG on
+average. VP8 has no such field; since 2026-10-07 the page draws it through a
+table where the browser has a GPU (`h616-software-video-encoder.md`). The
+measurements are in `docs/baselines/audit-20261006-colour-range.md`.
+
+## The H616's register description
+
+Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
+form in which the vendor's library drives the H5 and the H6 (V2R.5). What
+an experiment confirms on this engine moves from the second list to the
+first.
+
+- The encoder is selected by bits 7 (encoder) and 6 (input stage) of the
+  mode register `0x000`, with the decoder field at 7, after a pulse of bit
+  24 of the reset register `0x004`. The mode register reads `0xc0000007`
+  after power-on and `0xc00000c7` with the encoder selected.
+- `0x004` reads `0x00000300` when idle.
+- `0x0f0` reads zero; `0x0e0` = `0x00033010` and `0x0e4` = `0x00012011`.
+  The vendor's keeper for the H6 reads the same three registers and calls
+  the first the decoder's and the second the encoder's identification; the
+  H6 has `0x00031010` and `0x00012010`. This engine's encoder is one
+  revision on from the H6's.
+- The registers of `0xa00` and `0xb00` and their writable bits are those of
+  the table of V1.5. They read zero, and cannot be written, while the
+  encoder is not selected.
+- The bit writer: bit 9 of the status register `0xb1c` says it is ready;
+  the bits go to `0xb20` and `0xb18` is written with 1 and the count from
+  bit 8; `0xb90` counts the bits written; bit 31 of `0xb04` switches
+  emulation prevention off. The status register reads `0x00000260` at rest.
+- The stream start register `0xb80` counts in units of 256 bytes: written
+  with a buffer's address as it is, the bit writer's bytes went to that
+  value shifted left by eight bits (V2.1); written with the address divided
+  by 256, they are in the buffer (V2.1 again).
+- A key frame by the hypothesis below works at four sizes (V2.2): the
+  input stage's and the encoder block's registers of a key frame are as
+  the table says, the engine's reset and select before every frame
+  included. The interrupt comes, the status reads 1, `0xb90` holds the
+  length in bits, and `0xb50`, `0xb54` and `0xb58` hold statistics of the
+  frame.
+- The mode register's memory field does not matter to the bit writer; key
+  frames were encoded with it at 2.
+- A P frame by the hypothesis below works (V3.1): the reference is the
+  reconstruction of the frame before, in the other of two sets of buffers,
+  and `0xb04` holds `0x410`. 299 P frames in a row do not drift.
+- Every QP from 0 to 51 encodes; a 1920x1080 frame takes the engine 7.0 to
+  7.8 ms, key or P, whatever its QP and its size in bytes.
+- The search for motion has a window (V3.4 again): with the library's
+  values 16 pixels a frame sideways exactly and 80 with a remainder, 40
+  up, 8 to 12 down. Bit 8 of `0xb08` with the thresholds of `0xb48` and
+  `0xb4c` is what moves the window for a picture that moves up; without it
+  the window is 24 up and 16 down. Bit 4 of `0xb10` finds a picture that
+  moves down up to 36 pixels a frame, with a remainder, and makes text
+  that moves a few pixels cost more. Bits 2:1, 5, 7:6 and 8 of `0xb10` do
+  nothing on this engine, bit 3 ends the search, and bit 12, which the
+  library sets, makes frames larger at the same QP ("quantisation
+  threshold off" in the V3s map).
+- A frame can be encoded any number of times against the same reference:
+  a pass writes only the reconstruction it is given, and passes with the
+  same registers and the same memory make the same bytes (V3.5, V3.6).
+- The engine fills its work buffers within the V3s map's sizes, three to
+  five lines of luma below the coded picture included, and does not depend
+  on what they held before; the register `0xb60` is written zero and
+  nothing is written for it (V3.1 again).
+- The end of the stream buffer is honoured (V3.1 again): at the byte
+  `0xb84` names, the engine stops, raises its interrupt with bit 1 of the
+  status ("stalled"), and has written nothing behind it; `0xb90` then
+  holds the buffer's bits and a few more, and the status register reads
+  `0x80001260` once the interrupt's bits are cleared. `0xb8c` counts in
+  units of 65,536 bits: a buffer of less than 8 KiB is none.
+- A frame that refers to another needs a picture of at least 13
+  macroblocks of width (208 pixels): narrower, the slice header is
+  written and the encode never ends (status `0x80008260`). Key frames of
+  any size are made (V3.1 again).
+
+The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
+stream, the parameter sets go through the bit writer into the stream
+buffer and are read back from it; per frame the library has its keeper
+reset the engine and select the encoder, and then writes, in this order:
+
+| Step | Registers | Values |
+| --- | --- | --- |
+| Input stage | `0xa00` | the visible width in units of 8 pixels at 31:16, the height at 15:0, both rounded up |
+| | `0xa04`, `0xa14` | the input stride in macroblocks, at 31:16 and at 15:0 |
+| | `0xa2c` | height at 26:16 and width at 10:0, in the same units of 8 pixels |
+| | `0xa08` | 0: NV12 |
+| | `0xa78`, `0xa7c`, `0xa80` | luma, chroma, and where a second chroma plane would be (chroma plus a quarter of the luma's size), as they are |
+| Interrupts, status | `0xb14`, `0xb1c` | read, and written back with `0xf` and with 7 set |
+| First parameters | `0xb08` | read, and written with the QP at 5:0, bit 8 (dynamic motion estimation) and the stride in macroblocks divided by 48, rounded up, at 13:10 |
+| | `0xb48`, `0xb4c` | thresholds that grow with the stride S in macroblocks: `(6S/10) << 16 \| S/10` and `(32S/10) << 16 \| 26S/10` |
+| | `0xb40`, `0xb2c` | 0 at a fixed QP |
+| Stream | `0xb88` | the bit offset at which this frame begins in the buffer (0 for the first; the library uses one large buffer for many frames) |
+| | `0xb80`, `0xb84` | start and last byte, divided by 256 |
+| | `0xb8c` | the offset plus the room in bits |
+| Buffers | `0xba0`, `0xba4` | reference luma and chroma, divided by 256; a key frame names its own reconstruction |
+| | `0xbb0`, `0xbb4` | reconstruction luma and chroma |
+| | `0xbb8`, `0xbbc` | the sub-pixel buffer of the last frame and of this one |
+| | `0xbc0` | macroblock info |
+| | `0xbc4`, `0xb28` | 0 |
+| Headers | `0xb04`, `0xb20`, `0xb18` | bit 31 of `0xb04` set for the four bytes of the start code and cleared for the unit's header byte and the slice header; before every put a read of `0xb1c` for bit 9 |
+| Last parameters | `0xb04` | 0 for a key frame, `0x410` for a P frame (bit 4, and bit 10: the V3s map names bits 11:10 "fix mode num" and says no more); bit 8 more with CABAC |
+| | `0xb08` | bit 27 added to what it holds |
+| | `0xb0c`, `0xb24`, `0xb60` | 0 |
+| | `0xb10` | `0x00011000`: the exact search. This plan writes `0x00011010`, bit 4 more, for a pass with the wide search (V3.5 again) |
+| Start | `0xb18` | 8 |
+| Afterwards | `0xb90`, `0xb1c`, `0xb50`, `0xb54`, `0xb58` | the length in bits; the status, written back to clear it; three statistics |
+
+- Headers that stand alone (the parameter sets at the beginning) end with
+  trigger 2 after the alignment bits; only then does the library read them
+  from the buffer. In V2.1 the last bytes of the bit writer's output were
+  not in memory; this trigger may be what hands them over.
+- The buffers' sizes are those of the V3s map: the library asks its
+  allocator for reconstruction and sub-pixel buffers of exactly Bootlin's
+  sizes at every picture size tried (3317760 and 51040 bytes at
+  1920x1080). Its macroblock info buffer is 128 bytes for every macroblock
+  of the width (15360), a little less than Bootlin's; the lab's is larger
+  than both.
+- The library's own headers: baseline profile without constraint flags,
+  picture order type 0 with an 8-bit counter, `frame_num` of 8 bits, no
+  VUI, deblocking controlled per slice and left on. The lab keeps its own
+  (the engine is given their bits either way); what it must share with the
+  library's is what the engine's slice data depends on: the entropy mode,
+  the QP as a difference from 26, no chroma QP offset, one reference.
+- With its rate control on, the library still gives every frame a QP of
+  its own at `0xb08`, and adds `0xb2c` (bit 31 for a key frame, bits 31 and
+  30 with a number that changes from frame to frame for the others),
+  three threshold registers `0xb30` to `0xb38`, and an address register
+  the maps do not have, `0xb9c` (divided by 256 like the others), for a
+  buffer of 12 bytes for every row of macroblocks and 500 more. The lab
+  does not use it: a frame is given its QP.
+- Main and high profile change only its headers; CABAC is bit 8 of `0xb04`.
+- Not known: what bit 27 of `0xb08` and bit 10 of `0xb04` mean; how the
+  dynamic motion estimation decides, and why its window moves only one
+  way; what the engine waits for in a P frame of a narrow picture, and
+  what bits 12, 13, 15 and 31 of the status register say; what the
+  keeper writes into the mode register for the
+  encoder on this part (its memory interface field: the published keeper
+  sets 2 on the H6, `cedrus` sets 3 and bit 20 for this board's decoders,
+  and V2.1 ran with what the reset leaves, 0). The lab tool has all three
+  as variants of the hypothesis.

@@ -106,23 +106,20 @@ pub(crate) async fn connect_gateway(
     {
         return lock_held(session_id, "session is already connected");
     }
-    if let Err(owner) = picoclaw.acquire(&session_id) {
-        return lock_held(owner, "another PicoClaw session is running");
-    }
-    let facts = match super::facts(&state).await {
-        Ok(facts) => facts,
-        Err(error) => {
-            picoclaw.release(&session_id);
-            return error.into_response();
-        }
+    let connect = async {
+        let facts = super::facts(&state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        connect_upstream(&session_id, &facts.gateway_token)
+            .await
+            .map_err(|reason| {
+                super::set_error(picoclaw, reason);
+                PicoclawError::new(RUNTIME_UNAVAILABLE, reason).into_response()
+            })
     };
-    let upstream = match connect_upstream(&session_id, &facts.gateway_token).await {
+    let upstream = match open_session(picoclaw, &session_id, connect).await {
         Ok(upstream) => upstream,
-        Err(reason) => {
-            picoclaw.release(&session_id);
-            super::set_error(picoclaw, reason);
-            return PicoclawError::new(RUNTIME_UNAVAILABLE, reason).into_response();
-        }
+        Err(response) => return response,
     };
     let Some(guard) = state.options.shutdown.register_upgrade() else {
         picoclaw.release(&session_id);
@@ -140,6 +137,29 @@ pub(crate) async fn connect_gateway(
             relay(state, socket, upstream, session_id, session).await;
         })
         .into_response()
+}
+
+/// Reaches the runtime with `connect`, then takes the assistant's lock for
+/// `session_id`: the lock blocks manual input, so it waits for a runtime that
+/// answered (up to two connect timeouts otherwise). Another session that got
+/// the lock meanwhile wins, and this upstream is dropped. So does another
+/// connection of the same session that got it first: two relays of one
+/// session would share one lock, and the first to end would release it
+/// under the other (code audit of 2026-10-20, AUD-19.1).
+async fn open_session<T>(
+    picoclaw: &Picoclaw,
+    session_id: &str,
+    connect: impl std::future::Future<Output = Result<T, Response>>,
+) -> Result<T, Response> {
+    let upstream = connect.await?;
+    match picoclaw.acquire(session_id) {
+        Ok(true) => Ok(upstream),
+        Ok(false) => Err(lock_held(
+            session_id.to_string(),
+            "session is already connected",
+        )),
+        Err(owner) => Err(lock_held(owner, "another PicoClaw session is running")),
+    }
 }
 
 fn lock_held(session_id: String, message: &str) -> Response {
@@ -186,7 +206,12 @@ async fn relay(
     let (code, reason) = loop {
         tokio::select! {
             () = state.options.shutdown.cancelled() => break (1001, "server is stopping".to_string()),
-            _ = close_rx.changed() => {
+            changed = close_rx.changed() => {
+                // A sender gone means this relay is no longer the active
+                // one; the branch would otherwise be ready at once, always.
+                if changed.is_err() {
+                    break (CLOSE_TAKEN_OVER, "session taken over".to_string());
+                }
                 let requested = close_rx.borrow().clone();
                 if let Some((code, reason)) = requested {
                     break (code, reason);
@@ -303,5 +328,48 @@ pub(crate) async fn close_session(
 pub(crate) async fn close_active(_state: &AppState, picoclaw: &Picoclaw, code: u16, reason: &str) {
     if let Some(active) = picoclaw.active.lock().await.as_ref() {
         let _ = active.close.send(Some((code, reason.to_string())));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn manual_input_is_not_blocked_while_the_runtime_is_reached() {
+        let dir = tempfile::tempdir().unwrap();
+        let picoclaw = Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into());
+        let meanwhile = std::cell::Cell::new(None);
+        let opened = open_session(&picoclaw, "a", async {
+            meanwhile.set(Some(picoclaw.blocks_manual_input()));
+            Err::<(), _>(StatusCode::SERVICE_UNAVAILABLE.into_response())
+        })
+        .await;
+        assert!(opened.is_err());
+        assert_eq!(meanwhile.get(), Some(false), "manual input was blocked");
+        assert!(!picoclaw.blocks_manual_input());
+    }
+
+    #[tokio::test]
+    async fn a_second_connection_of_one_session_is_refused() {
+        // Both would relay; the first to end would release the lock the
+        // second runs under (code audit of 2026-10-20, AUD-19.1).
+        let dir = tempfile::tempdir().unwrap();
+        let picoclaw = Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into());
+        assert!(open_session(&picoclaw, "a", async { Ok(()) }).await.is_ok());
+        let again = open_session(&picoclaw, "a", async { Ok(()) }).await;
+        assert_eq!(again.unwrap_err().status(), StatusCode::CONFLICT);
+        assert_eq!(picoclaw.owner().as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn a_reached_session_takes_the_lock_and_holds_off_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let picoclaw = Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into());
+        assert!(open_session(&picoclaw, "a", async { Ok(()) }).await.is_ok());
+        assert!(picoclaw.blocks_manual_input());
+        let other = open_session(&picoclaw, "b", async { Ok(()) }).await;
+        assert_eq!(other.unwrap_err().status(), StatusCode::CONFLICT);
+        assert_eq!(picoclaw.owner().as_deref(), Some("a"));
     }
 }

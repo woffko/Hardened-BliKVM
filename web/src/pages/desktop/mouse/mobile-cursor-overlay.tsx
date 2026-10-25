@@ -10,6 +10,15 @@ type CursorState = {
 };
 
 const HIDE_DELAY_MS = 900;
+/**
+ * The arrow's size, and where its tip is in its box: lucide's
+ * mouse-pointer-2 rounds its tip about (4.14, 4.14) of 24 and its stroke of
+ * 2.25 reaches 0.8 further out, so the tip is at 3.35 of 24. The box is
+ * moved by that much, and the tip, not the box's corner, is where the
+ * target's cursor is.
+ */
+const ARROW_PX = 22;
+const ARROW_TIP_PX = (3.35 * ARROW_PX) / 24;
 
 export const MobileCursorOverlay = () => {
   const [cursor, setCursor] = useState<CursorState>({ x: 0, y: 0, visible: false });
@@ -138,16 +147,17 @@ export const MobileCursorOverlay = () => {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none fixed z-[900] transition-opacity duration-100"
+      data-testid="mobile-cursor"
+      className="theme-fixed pointer-events-none fixed z-[900] transition-opacity duration-100"
       style={{
         left: cursor.x,
         top: cursor.y,
         opacity: cursor.visible ? 1 : 0,
-        transform: 'translate3d(0, 0, 0)'
+        transform: `translate3d(${-ARROW_TIP_PX}px, ${-ARROW_TIP_PX}px, 0)`
       }}
     >
       <MousePointer2Icon
-        size={22}
+        size={ARROW_PX}
         strokeWidth={2.25}
         className="text-white [filter:drop-shadow(0_1px_2px_rgba(0,0,0,0.95))]"
       />

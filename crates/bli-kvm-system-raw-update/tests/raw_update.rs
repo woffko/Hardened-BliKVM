@@ -27,6 +27,9 @@ const IMAGE: usize = 8192;
 struct FakeTools {
     corrupt_write: bool,
     fail_finish: bool,
+    fail_archive: bool,
+    /// The new root cannot be unmounted after it was prepared.
+    still_mounted: bool,
     calls: Vec<String>,
     restored: Vec<PathBuf>,
 }
@@ -67,10 +70,22 @@ impl Tools for FakeTools {
             fs::read_to_string(staging.join("shadow"))?.trim(),
             fs::read_to_string(staging.join("fstab"))?.trim()
         ));
-        self.restore_state(device, &staging.join("state.tar"))
+        self.restore_state(device, &staging.join("state.tar"))?;
+        if self.still_mounted {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "the new root is still mounted",
+            ));
+        }
+        Ok(())
     }
 
     fn archive_state(&mut self, root: &Path, paths: &[&str], target: &Path) -> io::Result<()> {
+        if self.fail_archive {
+            // As the real tool fails: its unfinished archive is left.
+            fs::write(target.with_extension("tar.new"), b"half")?;
+            return Err(io::Error::other("the device state could not be archived"));
+        }
         let present: Vec<String> = paths
             .iter()
             .filter(|path| root.join(path).exists())
@@ -126,6 +141,8 @@ struct Fixture {
     root: PathBuf,
     fstab: PathBuf,
     shadow: PathBuf,
+    passwd: PathBuf,
+    group: PathBuf,
     trust: SystemTrustRoot,
     policy: SystemVerificationPolicy,
     image: Vec<u8>,
@@ -179,6 +196,10 @@ fn fixture(sequence: u64) -> Fixture {
     fs::write(&fstab, "UUID=data /mnt ext4 defaults 0 2\n").unwrap();
     let shadow = dir.path().join("shadow");
     fs::write(&shadow, "root:$6$device:20000:0:99999:7:::\n").unwrap();
+    let passwd = dir.path().join("passwd");
+    fs::write(&passwd, "root:x:0:0::/root:/bin/sh\n").unwrap();
+    let group = dir.path().join("group");
+    fs::write(&group, "root:x:0:\n").unwrap();
     Fixture {
         _dir: dir,
         bundle,
@@ -187,6 +208,8 @@ fn fixture(sequence: u64) -> Fixture {
         root,
         fstab,
         shadow,
+        passwd,
+        group,
         trust,
         policy,
         image: payload,
@@ -208,6 +231,8 @@ fn stage_it(
             root_uuid: "a990fd36-0857-4856-b0b8-5c84a7df516f",
             fstab: &fixture.fstab,
             shadow: &fixture.shadow,
+            passwd: &fixture.passwd,
+            group: &fixture.group,
         },
         tools,
     )
@@ -266,8 +291,14 @@ fn a_staged_update_is_written_booted_restored_and_confirmed() {
         BootAction::Continue
     );
     assert_eq!(confirm(&fixture.staging).unwrap().phase, Phase::Confirmed);
-    assert!(!fixture.staging.join(BACKUP_FILE).exists());
-    assert!(!fixture.staging.join("payload.img.zst").exists());
+    // Nothing staged stays once the new system is kept: the record and the
+    // confirmed sequence alone.
+    let mut left: Vec<String> = fs::read_dir(&fixture.staging)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["apply.json", "confirmed-sequence"]);
     assert!(confirm(&fixture.staging).is_err());
 }
 
@@ -394,6 +425,182 @@ fn old_sequences_bad_bundles_and_cancellation() {
 }
 
 #[test]
+fn a_failed_stage_leaves_nothing_behind() {
+    // What a failed stage left (the payload, the unfinished archive) was
+    // counted by the next upload's space check and removed by nothing
+    // (security review of 2026-10-18, N4).
+    let fixture = fixture(3);
+    let mut tools = FakeTools {
+        fail_archive: true,
+        ..FakeTools::default()
+    };
+    assert!(stage_it(&fixture, &mut tools).is_err());
+    let left: Vec<String> = fs::read_dir(&fixture.staging)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "apply.json")
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+    // The next stage goes through.
+    let mut tools = FakeTools::default();
+    stage_it(&fixture, &mut tools).unwrap();
+}
+
+#[test]
+fn carried_owners_must_name_the_same_accounts_in_the_new_image() {
+    use bli_kvm_system_raw_update::owners_agree;
+    let board = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\noperator-tool:x:1500:1500::/:/bin/sh\n";
+    // The same allocation: the state's owners mean the same accounts.
+    let none = std::collections::BTreeSet::new();
+    assert_eq!(owners_agree(board, board, &none), Ok(()));
+    // Another board-only account does not matter.
+    let image = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-server:x:997:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
+    assert_eq!(owners_agree(board, image, &none), Ok(()));
+    // The image gives the server's id to another account: refused.
+    let swapped = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-quic:x:997:997::/:/usr/sbin/nologin\nhardened-blikvm-server:x:995:993::/:/usr/sbin/nologin\nhardened-blikvm-update:x:996:993::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, swapped, &none).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-server"), "{refused}");
+}
+
+#[test]
+fn carried_owners_must_still_be_accounts_of_the_same_kind() {
+    // A project account the image dropped, or a board account whose id an
+    // image's project account takes, would leave carried files to nobody or
+    // to the wrong service (code audit of 2026-10-20, AUD-12).
+    use bli_kvm_system_raw_update::owners_agree;
+    let carried = std::collections::BTreeSet::from([0, 980, 990]);
+    let board = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-gone:x:980:980::/:/usr/sbin/nologin\nmessagebus:x:990:990::/:/usr/sbin/nologin\n";
+    let dropped = "root:x:0:0::/root:/bin/sh\nmessagebus:x:990:990::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, dropped, &carried).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-gone"), "{refused}");
+    // Dropped, but owning no carried file: nothing is left to nobody.
+    assert_eq!(
+        owners_agree(board, dropped, &std::collections::BTreeSet::from([0, 990])),
+        Ok(())
+    );
+    let reused = "root:x:0:0::/root:/bin/sh\nhardened-blikvm-gone:x:980:980::/:/usr/sbin/nologin\nhardened-blikvm-new:x:990:990::/:/usr/sbin/nologin\n";
+    let refused = owners_agree(board, reused, &carried).unwrap_err();
+    assert!(refused.contains("hardened-blikvm-new"), "{refused}");
+}
+
+#[test]
+fn a_new_root_that_stays_mounted_is_not_written_over() {
+    // The restore would write the backup over a file system that is still
+    // mounted; the next boot restores it with nothing mounted (code audit
+    // of 2026-10-20, AUD-12).
+    let fixture = fixture(3);
+    let mut tools = FakeTools {
+        still_mounted: true,
+        ..FakeTools::default()
+    };
+    stage_it(&fixture, &mut tools).unwrap();
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Reboot
+    );
+    assert_ne!(fs::read(&fixture.device).unwrap(), vec![0x11; PARTITION]);
+    let record = read_record(&fixture.staging).unwrap().unwrap();
+    assert_eq!(record.phase, Phase::Writing, "{}", record.message);
+    // With nothing mounted the next boot restores the old root.
+    tools.still_mounted = false;
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Reboot
+    );
+    assert_eq!(fs::read(&fixture.device).unwrap(), vec![0x11; PARTITION]);
+}
+
+#[test]
+fn staging_keeps_the_boards_accounts_beside_its_shadow() {
+    let fixture = fixture(3);
+    let mut tools = FakeTools::default();
+    stage_it(&fixture, &mut tools).unwrap();
+    assert_eq!(
+        fs::read_to_string(fixture.staging.join("passwd")).unwrap(),
+        fs::read_to_string(&fixture.passwd).unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.staging.join("group")).unwrap(),
+        fs::read_to_string(&fixture.group).unwrap()
+    );
+}
+
+#[test]
+fn the_root_uuid_must_be_a_uuid_at_stage_and_at_boot() {
+    // tune2fs takes "random", "time", "clear" and "null" as well, and the
+    // value goes into the boot configuration (security review of
+    // 2026-10-18, MED-08).
+    let fixture = fixture(3);
+    let mut tools = FakeTools::default();
+    for wrong in [
+        "random",
+        "time",
+        "a990fd36-0857-4856-b0b8-5c84a7df516",
+        "x990fd36-0857-4856-b0b8-5c84a7df516f",
+    ] {
+        let request = StageRequest {
+            bundle: &fixture.bundle,
+            staging: &fixture.staging,
+            trust: &fixture.trust,
+            policy: &fixture.policy,
+            minimum_sequence: 2,
+            root: &fixture.root,
+            root_uuid: wrong,
+            fstab: &fixture.fstab,
+            shadow: &fixture.shadow,
+            passwd: &fixture.passwd,
+            group: &fixture.group,
+        };
+        assert!(stage(&request, &mut tools).is_err(), "{wrong}");
+    }
+    // A record changed after staging is not written.
+    let mut record = stage_it(&fixture, &mut tools).unwrap();
+    record.root_uuid = "a990fd36-0857-4856-b0b8-5c84a7df516f\nextraargs=init=/bin/sh".into();
+    bli_kvm_system_raw_update::write_record(&fixture.staging, &record).unwrap();
+    let before = fs::read(&fixture.device).unwrap();
+    assert_eq!(
+        boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+        BootAction::Continue
+    );
+    assert_eq!(fs::read(&fixture.device).unwrap(), before);
+    let after = bli_kvm_system_raw_update::read_record(&fixture.staging)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.phase, bli_kvm_system_raw_update::Phase::Failed);
+}
+
+#[test]
+fn a_staged_file_that_changed_is_not_written() {
+    // The carried state, fstab, shadow and the accounts are checked as the
+    // payload is, against a damaged card (security review of 2026-10-18,
+    // HIGH-02).
+    for file in ["state.tar", "fstab", "shadow", "passwd", "group"] {
+        let fixture = fixture(3);
+        let mut tools = FakeTools::default();
+        stage_it(&fixture, &mut tools).unwrap();
+        let path = fixture.staging.join(file);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.push(b'#');
+        fs::write(&path, bytes).unwrap();
+        let before = fs::read(&fixture.device).unwrap();
+        assert_eq!(
+            boot(&fixture.staging, &fixture.device, &mut tools).unwrap(),
+            BootAction::Continue,
+            "{file}"
+        );
+        assert_eq!(fs::read(&fixture.device).unwrap(), before, "{file}");
+        let record = bli_kvm_system_raw_update::read_record(&fixture.staging)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.phase,
+            bli_kvm_system_raw_update::Phase::Failed,
+            "{file}"
+        );
+    }
+}
+
+#[test]
 fn boot_configuration_follows_the_device() {
     assert_eq!(
         patch_armbian_env("verbosity=1\nrootdev=UUID=new\nrootfstype=ext4\n", "old"),
@@ -451,6 +658,29 @@ fn the_operator_can_roll_back_and_confirmed_sequences_are_the_floor() {
     confirm(&fixture.staging).unwrap();
     assert_eq!(minimum_sequence(&fixture.staging), 4);
     assert!(!fixture.staging.join("shadow").exists());
+}
+
+#[test]
+fn the_floor_counts_the_running_systems_own_sequence() {
+    use bli_kvm_system_raw_update::{SYSTEM_SEQUENCE_FILE, accepted_minimum};
+    // A fresh card has no confirmed sequence; its root says which system it
+    // is, so an older signed bundle is refused (security review of
+    // 2026-10-18, MED-07).
+    let staging = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 1);
+    let file = root.path().join(SYSTEM_SEQUENCE_FILE);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "6\n").unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 6);
+    fs::write(staging.path().join("confirmed-sequence"), "7\n").unwrap();
+    assert_eq!(accepted_minimum(staging.path(), root.path()).unwrap(), 8);
+    // A floor or a sequence that cannot be read is no floor of 1.
+    fs::write(staging.path().join("confirmed-sequence"), "seven\n").unwrap();
+    assert!(accepted_minimum(staging.path(), root.path()).is_err());
+    fs::remove_file(staging.path().join("confirmed-sequence")).unwrap();
+    fs::write(&file, "x\n").unwrap();
+    assert!(accepted_minimum(staging.path(), root.path()).is_err());
 }
 
 /// The real zstd, e2fsprogs and tar on image files; only mounting (which
@@ -582,6 +812,8 @@ fn real_tools_write_grow_and_relabel_an_ext4_image() {
         backup_sha256: String::new(),
         boot_attempts: 0,
         message: String::new(),
+        // A record of an older stage, without the staged files' digests.
+        staged_sha256: Default::default(),
     };
     bli_kvm_system_raw_update::write_record(&staging, &record).unwrap();
     let mut tools = RealExceptMount(bli_kvm_system_raw_update::SystemTools);
@@ -667,6 +899,7 @@ fn the_bundle_builder_output_stages_and_writes() {
         "mke2fs",
         "e2fsck",
         "resize2fs",
+        "debugfs",
         "tar",
     ]
     .iter()
@@ -722,6 +955,11 @@ fn the_bundle_builder_output_stages_and_writes() {
     let content = dir.path().join("content");
     fs::create_dir_all(content.join("etc")).unwrap();
     fs::write(content.join("etc/marker"), "built root\n").unwrap();
+    // The image builder names the system sequence in the root, and the
+    // bundle builder refuses a root that does not name its own.
+    let sequence_file = content.join(bli_kvm_system_raw_update::SYSTEM_SEQUENCE_FILE);
+    fs::create_dir_all(sequence_file.parent().unwrap()).unwrap();
+    fs::write(&sequence_file, "5\n").unwrap();
     let rootfs = dir.path().join("root.ext4");
     run(
         "mke2fs",
@@ -788,6 +1026,10 @@ fn the_bundle_builder_output_stages_and_writes() {
     fs::write(&fstab, "").unwrap();
     let shadow = dir.path().join("shadow");
     fs::write(&shadow, "root:!:1::::::\n").unwrap();
+    let passwd = dir.path().join("passwd");
+    fs::write(&passwd, "root:x:0:0::/root:/bin/sh\n").unwrap();
+    let group = dir.path().join("group");
+    fs::write(&group, "root:x:0:\n").unwrap();
     let mut tools = RealExceptMount(bli_kvm_system_raw_update::SystemTools);
     let request = StageRequest {
         bundle: &bundle,
@@ -799,6 +1041,8 @@ fn the_bundle_builder_output_stages_and_writes() {
         root_uuid: "a990fd36-0857-4856-b0b8-5c84a7df516f",
         fstab: &fstab,
         shadow: &shadow,
+        passwd: &passwd,
+        group: &group,
     };
     let record = stage(&request, &mut tools).unwrap();
     assert_eq!((record.version.as_str(), record.sequence), ("1.4.0", 5));
@@ -857,6 +1101,27 @@ fn every_ssh_host_key_type_is_carried() {
 }
 
 #[test]
+fn the_application_update_state_is_carried() {
+    // The journal (floor and confirmed slot), the slot pointer and the
+    // protected copies' selection: without them the board starts the image's
+    // own application after the update, with the image's floor (security
+    // review of 2026-10-18, HIGH-04).
+    for path in [
+        "var/lib/hardened-blikvm-update",
+        "var/lib/hardened-blikvm-update-v2",
+        "var/lib/hardened-blikvm-slots",
+        "var/lib/hardened-blikvm-slots-v2",
+        "var/lib/hardened-blikvm-exec",
+        "var/lib/hardened-blikvm-exec-ledger",
+    ] {
+        assert!(
+            bli_kvm_system_raw_update::CARRIED_STATE.contains(&path),
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn the_network_identity_is_carried() {
     for path in [
         "etc/NetworkManager/system-connections",
@@ -893,4 +1158,38 @@ fn leftovers_of_a_finished_update_can_be_discarded() {
     }
     let record = read_record(&fixture.staging).unwrap().unwrap();
     assert_eq!(record.phase, Phase::RolledBack);
+}
+
+#[test]
+fn a_new_roots_nginx_configuration_is_the_images_with_the_carried_redirect() {
+    // The carried /etc/hardened-blikvm held the board's nginx.conf, so a
+    // board updated by RAW kept the configuration of the image it was first
+    // written from, and no system release could change it (code audit of
+    // 2026-10-20, V1).
+    use bli_kvm_system_raw_update::kept_nginx_conf;
+    let server = |extra: &str| {
+        format!(
+            "events {{}}\nhttp {{\n    server {{\n        listen 80 default_server;\n        listen [::]:80 default_server;\n{extra}    }}\n    server {{\n        listen 443 ssl default_server;\n        ssl_ciphers NEW;\n    }}\n}}\n"
+        )
+    };
+    let shipped_redirect = "        return 308 https://$host$request_uri;\n";
+    let image = server(shipped_redirect);
+    let carried = server(shipped_redirect).replace("ssl_ciphers NEW;", "ssl_ciphers OLD;");
+    assert_eq!(kept_nginx_conf(&image, &carried), image);
+    // The owner's redirect, switched on in a configuration without one, is
+    // carried into the image's.
+    let image = server("");
+    let carried =
+        bli_kvm_core::nginx_redirect::render_redirect(&server("").replace("NEW", "OLD"), true);
+    let kept = kept_nginx_conf(&image, &carried);
+    assert!(kept.contains("ssl_ciphers NEW;"), "{kept}");
+    assert!(
+        bli_kvm_core::nginx_redirect::redirects_port_80(&kept),
+        "{kept}"
+    );
+    // Without a redirect in the carried file, the image's stays as it is.
+    assert_eq!(
+        kept_nginx_conf(&image, &server("").replace("NEW", "OLD")),
+        image
+    );
 }

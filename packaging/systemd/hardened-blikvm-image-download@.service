@@ -6,11 +6,14 @@ After=local-fs.target network-online.target
 [Service]
 Type=simple
 # The only unit with outbound network access; the web server itself may
-# reach localhost alone. It runs as the web-server account and can write only
-# the image store, the media catalog and the PicoClaw runtime directory
-# (docs/design/admin-features-v1.md).
-User=hardened-blikvm-server
-Group=hardened-blikvm
+# reach localhost alone. It runs under an account of its own, in no group
+# another account shares but for the web server, and can write only the file
+# the web server prepares in the image store's drop directory (bound below);
+# the web server checks and publishes the image. PicoClaw is installed by a
+# unit and an account of its own (code audit of 2026-10-20, AUD-05.2;
+# docs/design/admin-features-v1.md).
+User=hardened-blikvm-download
+Group=hardened-blikvm-download
 StandardInput=socket
 StandardOutput=journal
 StandardError=journal
@@ -18,11 +21,12 @@ ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --download --peer-us
 RuntimeDirectory=hardened-blikvm-download
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
-StateDirectory=hardened-blikvm-picoclaw-runtime
-StateDirectoryMode=0755
 UMask=0022
 KillMode=control-group
 TimeoutStopSec=10
+# Just above the helper's two hours for a transfer: a curl or a helper that
+# hangs ends with the unit (code audit of 2026-10-20, AUD-05.3).
+RuntimeMaxSec=7500
 TasksMax=32
 LimitNOFILE=256
 MemoryMax=256M
@@ -30,7 +34,8 @@ NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
-ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
+BindPaths=-/var/lib/hardened-blikvm-gadget/images/.downloads:/run/hardened-blikvm-download/drop
+InaccessiblePaths=-/run/hardened-blikvm-gadget -/run/hardened-blikvm -/run/hardened-blikvm-admin -/run/hardened-blikvm-update-api -/run/hardened-blikvm-exec-api -/run/hardened-blikvm-hid -/etc/hardened-blikvm-gadget
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

@@ -9,135 +9,184 @@ uses a platform-neutral core and explicit hardware adapters so that security,
 API, update, and recovery invariants remain testable across platforms.
 
 The canonical GitHub repository is
-[`woffko/Hardened-BliKVM`](https://github.com/woffko/Hardened-BliKVM).
+[`woffko/Hardened-BliKVM`](https://github.com/woffko/Hardened-BliKVM); the
+project's page is <https://woffko.github.io/Hardened-BliKVM/>.
 Private device credentials, runtime configuration and hardware receipts are
 excluded from Git. This source repository is not a complete device image.
 
-The current maintenance priority is updating the existing device's OS/package
-baseline before final project acceptance. See
-[`docs/baselines/system-maintenance.md`](docs/baselines/system-maintenance.md).
+## Status
 
-## Current status
+Beta. A pre-release carries an SD card image for the BliKVM v4 (Allwinner
+H616), a signed application bundle for a board that already runs one, and
+(since 0.1.0-beta.3) a signed RAW system bundle that gives such a board the
+image's system; see the
+[releases](https://github.com/woffko/Hardened-BliKVM/releases) for the files,
+how to write the card or update a board, the first boot and the known
+limitations. A board that loses power while a RAW update writes its root does
+not start; `tools/image/restore_raw_backup.py` writes the root back from the
+backup on the card, with the card in a reader of another Linux computer
+([`system-raw-update-v1.md`](docs/design/system-raw-update-v1.md)).
+Everything was verified on one board. Expect rough edges and report what you
+find.
 
-The reversible H616 prototype and the application-update core are implemented:
+## What it does
 
-- versioned capability, runtime-inventory, and broker contracts;
-- a fail-closed, fully rebranded GUI with first-account setup;
-- Argon2id passwords, opaque HttpOnly sessions, CSRF/origin checks, revocation,
-  and scoped login lockout;
-- a loopback-only Axum server with protected `/api/inventory`;
-- a credential-isolated read-only platform broker and bounded KVMD Unix-socket
-  client; broker schema v1 has no mutation variants;
-- bounded read-only H616 thermal observation through runtime-inventory schema
-  v3, plus external-RTC epoch/offset observation, with no clock, fan, PWM, or
-  GPIO control path;
-- an isolated read-only MJPEG proxy with session-bound browser delivery;
-- fail-closed Rust HID, ATX, and virtual-media transition cores that are not yet
-  wired to a hardware-mutating backend;
-- pure host-only fan policy and mock-backed supervisor crates that enforce
-  failsafe/latch semantics but are not linked to any runtime or hardware
-  backend;
-- pure typed diagnostic export/source/protocol/window/peer layers plus an
-  unlinked safe fixed-account and Unix-peer adapter, with no raw message, path,
-  or identity output;
-- an unlinked fixed-size XChaCha20-Poly1305 diagnostic journal and fixed-root
-  atomic A/B store with OS entropy, a fixed 96-byte systemd key loader, and a
-  cancellation-aware `no_std` write-before-ack coordinator; all enforce strict
-  floor/reselection/inode/ACL/zeroization checks and have no provisioned key,
-  live transport/store link, API, or UI;
-- an unlinked default-off diagnostic persistence adapter that composes only
-  the accepted typed keys, fixed store, fixed export client, and coordinator;
-  it has no floor source, executable, service, package, HTTP, or UI;
-- an unshipped zero-argument synthetic persistence gate and rollback harness,
-  accepted reversibly on H616 and absent from the prototype payload;
-- an authenticated GET-only `/api/diagnostics` current-health view for
-  temperature, RTC, and fixed component states; persistent history is
-  explicitly unavailable and the server has no key/store/floor/ACK authority;
-- a dedicated responsive Diagnostics GUI with exact 26-locale coverage,
-  cancellation-safe refresh, explicit loading/unavailable/stale/error states,
-  and reversible desktop/mobile Chromium acceptance on H616;
-- an unshipped empty-only diagnostic maintenance binary whose static units,
-  synthetic systemd credential, encrypted store initialization, nonmutating
-  inspection, and full rollback passed on the H616 test device;
-- a signed Ed25519 application verifier, immutable stager, anti-rollback
-  journal, one-use health credential, watchdog rollback, and transactional
-  slot garbage collection;
-- a pure Rust public-only application trust enrollment contract that validates
-  the Ed25519 point/fingerprint and renders only fixed supervisor configuration;
-- a host-only, separately keyed system-image verifier bound to an explicit
-  recovery/boot-control/layout policy and incapable of selecting a disk;
-- a recovery-only geometry validator that requires equal A/B roots, redundant
-  state policy, bounded sunxi raw ranges, and rejects the current live layout;
-- a pure dual-copy system journal/selector model that hard-stops split brain,
-  generation gaps, mismatched evidence, and increasing attempt counters;
-- a canonical recovery-input gate requiring pinned provenance, corresponding
-  source, explicit redistribution clearance, and SPDX 3.0.1 validation;
-- H616 gates for systemd credential delivery, a real candidate server, health
-  confirmation, rejected candidate timeout, rollback, and restored service;
-- a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;
-- reproducible stripped AArch64 static-PIE builds for all shipped Rust
-  processes and the prototype bundle, with host build paths remapped and
-  rejected by the ELF privacy gate;
-- a deterministic inert `arm64` Debian runtime package whose real H616
-  install/hash/mode verification/purge transaction and crash-guarded retained
-  installation passed;
-- a separate reproducible inert application-update package, retained on H616
-  with its Rust supervisor/reporter and systemd templates disabled/inactive,
-  no trust/configuration/state/slots, and no restart of the working GUI;
-- rollback-gated fixed service identities and a separate device-generated KVMD
-  credential, followed by a rollback-gated persistent web cutover: PiKVM Nginx
-  is disabled, the Hardened broker/video/server/Nginx units are enabled, and
-  the account-free First Setup page passed tunneled and direct-LAN Chromium;
-- reversible installed-unit activation for platform broker, MJPEG proxy, and
-  loopback server, including systemd isolation, Diagnostics, video reconnect,
-  session revocation, and complete state/drop-in/cgroup cleanup;
-- installed-runtime TLS 1.2/1.3 and full desktop/mobile Chromium acceptance
-  behind an unprivileged loopback-only shadow Nginx, with the working PiKVM
-  proxy unchanged and complete rollback;
-- persistent TLS 1.2/1.3 on public 80/443 using the unchanged device
-  certificate, split-privilege Nginx, disabled vendor web service, and zero
-  browser control requests;
-- direct-LAN operator-account login/logout plus a 30-sample persistent
-  resource/TLS/auth-denial soak with stable service PIDs and restart counters;
-- a rollback-gated upgrade to the reproducible `0.1.0~dev2` runtime package,
-  followed by a real guarded BliKVM software reboot, preserved account/TLS,
-  persistent services, decoded/reconnected MJPEG, Diagnostics, and final
-  zero-restart/zero-guard inspection;
-- architecture, field-image, upstream, licensing, and security baselines;
-- project-scoped semantic LSP smoke fixtures.
+- **Remote desktop**: keyboard and mouse (absolute and relative; on a target
+  whose desktop spans several monitors, the absolute mouse kept on the
+  captured one by a layout set in the Mouse menu,
+  [`docs/design/screen-area-v1.md`](docs/design/screen-area-v1.md)), a touch
+  layout for phones with an on-screen keyboard and a row of extra keys, the
+  ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
+  storage). Remote control is taken by the first click, tap or key on the
+  screen after a confirmation, and given back from the Mouse menu; a window
+  that loses focus gives the keyboard and mouse back and takes them again
+  with its next input, without asking. No key or move is dropped on the way:
+  what meets a lease that ended (a QUIC session that opened again) is sent
+  again with a new one, or control turns off with a notice.
+- **Video**, chosen in the Screen menu: MJPEG (the capture passed through),
+  H.264 and VP8 (libvpx) over WebRTC with a choice of quality, and H.264
+  over the QUIC transport. H.264 is encoded by the H616's video engine
+  (H.264 HW) or by x264 (H.264 SW), one choice for the whole board; where
+  the engine cannot be had, x264 encodes and the menu says why
+  ([`docs/design/h616-ve-h264-encoder.md`](docs/design/h616-ve-h264-encoder.md)).
+  The encoders work only while someone watches.
+- **Upscaling**, in the Screen menu (Auto by default, or Off, and a
+  sharpness): where the browser draws with a GPU, a picture shown larger
+  than its size is drawn sharply (a deringing pass for the capture's JPEG
+  and SGSR 1) in every view, filling the window or at the target's
+  resolution, a pinch on a phone kept smooth; a watchdog turns it off where
+  frames are lost to it, and a browser that draws in software draws as
+  before ([`docs/design/screen-upscaling-v1.md`](docs/design/screen-upscaling-v1.md)).
+- **Quality monitor**: QM on the toolbar opens a window over the picture
+  with what arrives (speed, delay, frames a second, codec, bitrate), and in
+  its Extended level the transport's, the board's encoder's and the
+  browser's decoder's numbers, the upscaler's and how much of a second the
+  page's own picture code takes; on a phone it spans the screen
+  ([`docs/design/h264-engine-choice-and-quality-monitor-v1.md`](docs/design/h264-engine-choice-and-quality-monitor-v1.md)).
+- **Transport**: the standard one (HTTPS, WebSocket, WebRTC), or QUIC
+  (WebTransport on UDP 443) for the keyboard, the mouse and the H.264
+  picture: a group of pictures on a stream of its own, what the path loses
+  sent again, and the H.264 bitrate fitted to the narrowest path of the
+  sessions that watch. A session that is lost opens again by itself, with
+  remote control kept and the last frame shown meanwhile; the board's
+  journal says why each one ended, from the gateway's side (with the path's
+  round trip, MTU and losses) and from the page's. QUIC has a switch on the
+  board, off by default, and a choice in each browser (Settings > System >
+  Network > Transport,
+  [`docs/design/quic-transport-v1.md`](docs/design/quic-transport-v1.md)).
+- **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
+  system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
+  of the main connection), a firewall with four modes and a confirmation that
+  rolls back by itself, time, system log, Tailscale, account (a new password
+  needs the current one), session lock,
+  and the board's display (the vendor's status screen, the vendor's way up)
+  going dark after a time without activity (its button lights it again).
+- **Updates**: signed application slots with a health check and automatic
+  rollback, and signed RAW system updates behind their own switch, which
+  keep the board's accounts, keys, network settings and switches and write
+  the old system back if the new one does not start.
+- **Target agent** (Windows, off by default; Settings > Device): with its
+  switch on, the board's mouse device carries a vendor collection that a
+  small agent on the target talks to, and a read-only drive carries the
+  agent. The page then knows the target's Windows, its monitors (the
+  absolute mouse kept on the captured one without a layout set by hand; one
+  monitor, or monitors duplicated, is the whole desktop; the agent's layout
+  is kept on the board for when the agent is not running) and
+  its keyboard layouts, and at the operator's action under remote control
+  switches the layout (also to the on-screen keyboard's language and to
+  the letters typed on a phone; the on-screen keyboard does not follow a
+  layout switched on the target itself, as by Alt+Shift), changes the
+  monitors' mode (undone after 15 s unless kept), passes clipboard text both
+  ways and locks the session; while the target's session is locked the
+  agent refuses the clipboard, the layout and the monitors. "Start the
+  agent" types its start line on the target, which runs only a file with
+  the board's agent's SHA-256, also as "Update the agent" over an agent that
+  is not the board's version, which then leaves; the agent's own menu can start it at
+  sign-in, from a copy that follows the agent started last. Only the agent
+  of the session at the console serves the board. The quality monitor's
+  Agent row says its state
+  ([`docs/design/target-agent-v1.md`](docs/design/target-agent-v1.md)).
+- **Administration features** that stay off until they are switched on: web
+  terminal, scripts, remote ISO download, PicoClaw, RAW system updates. Each
+  switch is enforced below the web server
+  ([`docs/design/admin-features-v1.md`](docs/design/admin-features-v1.md)).
 
-No hardware-mutating backend, production updater installation, production
-signing key, full-system image, H616 A/B recovery path, or production release
-is accepted yet. One guarded software reboot is accepted, but host builds and
-isolated device gates do not establish the remaining repeated/interrupted
-reboot, physical, or power-cut matrices. The
-user-supplied field image is truncated relative to its partition table and is
-explicitly rejected as a recovery/release image.
+Not there: audio, and updates fetched from a feed (they are uploaded). The
+time, NTP, remote system log and autostart script settings are shown
+read-only.
 
-## Architecture
+## Screenshots
+
+![The remote desktop with the toolbar](docs/screenshots/02-desktop.png)
+
+| | |
+| --- | --- |
+| ![Monitors menu with the target agent](docs/screenshots/11-monitors-menu.png) | ![System settings: network and transport](docs/screenshots/25-settings-system.png) |
+| ![Firewall modes](docs/screenshots/28-settings-system-firewall.png) | ![A phone in landscape with the extra keys](docs/screenshots/42-phone-keyboard-key-row.png) |
+
+Every menu and settings page is in [`docs/screenshots.md`](docs/screenshots.md)
+(anonymized: documentation addresses, made-up names, a drawn target screen).
+
+## How it is put together
+
+The vendor's KVMD services are masked or disabled; the board runs these
+processes instead, each as its own systemd unit with a sandbox:
+
+| Process | Runs as | What it does |
+| --- | --- | --- |
+| nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server, which it reaches through a Unix socket that serves nginx alone |
+| `bli-kvm-server` | `hardened-blikvm-server`, from the active signed slot | login, sessions, the API and its policy, the web interface, WebRTC signalling, the QUIC gateway's link; no device access of its own |
+| board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the target agent's channel and drive, the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
+| `bli-kvm-boardd` | root | the fan and the board's peripherals |
+| uStreamer and the MJPEG proxy | `hardened-blikvm-video` | the capture, and its MJPEG stream for the server |
+| video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches; H.264 with the video engine or with x264 |
+| encoder driver (`hardened-blikvm-ve-enc`) | kernel module, loaded by its own unit | gives the H.264 encoder the video engine, to one opener at a time |
+| Janus | dynamic user | WebRTC media, streaming plugin only |
+| QUIC gateway (`bli-kvm-quic-gateway`) | `hardened-blikvm-quic` | QUIC and TLS on UDP 443 while its switch is on; it holds no authority and passes on what the server allows |
+| update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back; start the application at boot, again after a failed attempt |
+| administration helpers | socket-activated, per request; an image download and PicoClaw's installer each as an account of its own | the features behind the switches; PicoClaw starts only from a copy checked against its pinned release |
 
 ```text
-React/TypeScript web UI
-        |
-        | HTTPS / WebSocket
-        v
-bli-kvm-server (unprivileged Rust process)
-        |
-        | restricted Unix socket
-        v
-bli-platform-broker (credential-isolated Rust process)
-        |
-        +-- now: five allowlisted read-only KVMD GETs
-        +-- later: typed HID / USB configfs / virtual media
-        +-- later: ATX / fan / OLED / RTC / buttons / serial switch
-
-Separate media services
-        +-- loopback/Unix-socket uStreamer transition
+Browser
+  |  HTTPS, WebSocket (TCP 443)      WebRTC media (UDP)      QUIC (UDP 443, optional)
+  v                                       ^                        ^
+nginx --> bli-kvm-server ---------> Janus <-- RTP --+              |
+              |      ^------------------------------|--- link ---- QUIC gateway
+              |                                     |                  ^ frames
+              v  typed requests                video encoders ---------+
+        board owner                                 ^ MJPEG
+   (USB gadget, ATX, network, firewall)        uStreamer (capture)
 ```
 
-See [the architecture](docs/architecture.md),
-[implementation plan](docs/implementation-plan.md), and
-[security boundaries](docs/security-boundaries.md).
+On the target, the optional agent (`hardened-blikvm-agent.exe`, built
+reproducibly from `crates/bli-kvm-target-agent` by
+`scripts/build-target-agent.sh`) runs as the signed-in user, finds the
+board's collection and answers only the calls the protocol names
+(`crates/bli-kvm-agent-protocol`); it opens no network connection, runs
+no command and loads DLLs from the system folder only.
+
+Design notes are under [`docs/design`](docs/design): the QUIC transport, the
+firewall contract, the administration features, the video encoders (software,
+and H.264 on the video engine with its driver), the engine choice and the
+quality monitor, the RAW system update, the screen's upscaling, the target
+agent. Plans, audits and what was shown on the test board are under
+[`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261025-remote-control.md`](docs/baselines/audit-20261025-remote-control.md),
+[`audit-20261020-code-review.md`](docs/baselines/audit-20261020-code-review.md),
+[`audit-20261018-security-review.md`](docs/baselines/audit-20261018-security-review.md),
+[`audit-20261017-review.md`](docs/baselines/audit-20261017-review.md),
+[`audit-20261014-target-agent.md`](docs/baselines/audit-20261014-target-agent.md),
+[`audit-20261009-upscaling-phases.md`](docs/baselines/audit-20261009-upscaling-phases.md),
+[`audit-20261008-upscaling-gate0.md`](docs/baselines/audit-20261008-upscaling-gate0.md),
+[`audit-20261004-review.md`](docs/baselines/audit-20261004-review.md)
+and [`audit-20261004-h264-choice-quality-monitor.md`](docs/baselines/audit-20261004-h264-choice-quality-monitor.md).
+[`docs/security-boundaries.md`](docs/security-boundaries.md) and
+[`docs/licensing.md`](docs/licensing.md) hold the security model and the
+licences. [`docs/architecture.md`](docs/architecture.md),
+[`docs/implementation-plan.md`](docs/implementation-plan.md) and
+[`docs/feature-matrix.md`](docs/feature-matrix.md) were written during the
+transition from the vendor's software and describe that stage; where they
+differ from the design notes, the design notes are newer.
 
 ## Development
 
@@ -152,6 +201,10 @@ large temporary frontend dependencies. Override it with the task-specific
 `BLI_KVM_PNPM_STORE` variable when that path is unavailable.
 
 The development server binds to `127.0.0.1:18080` and refuses non-loopback
-binds. Device exposure must use a separately hardened TLS reverse proxy. Do not
-place device images, credentials, private evidence, or extracted root
-filesystems in this repository.
+binds. Device exposure must use a separately hardened TLS reverse proxy. On
+the board nginx reaches the server through a Unix socket
+(`BLI_KVM_PROXY_SOCKET`) that serves only nginx's worker user
+(`BLI_KVM_PROXY_USER`); the server believes the forwarded client address
+there and nowhere else, so another local process counts as itself for the
+login limiter. Do not place device images, credentials, private evidence, or
+extracted root filesystems in this repository.

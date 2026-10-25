@@ -18,6 +18,15 @@ The development server binds to loopback and refuses a public bind. Passwords
 are sent only over the TLS/reverse-proxy boundary; BLi-KVM
 does not use a fixed browser-side key as reversible password obfuscation.
 
+On the board nginx reaches the server through a Unix socket of its own,
+which the server accepts only from nginx's worker user. The server believes
+the forwarded client address only on that socket; a request over the
+loopback TCP port, from the QUIC gateway, Janus, an encoder or PicoClaw's
+runtime, counts as its own address for the login, password and terminal
+limiters (code audit of 2026-10-20, AUD-16.2). A system that names no
+proxy socket keeps the older rule: the header is believed from a loopback
+peer.
+
 ## Privileged broker
 
 The broker accepts typed operations over a permission-restricted Unix socket.
@@ -457,11 +466,56 @@ corresponding source, reviewed `cleared` status, and exact SPDX 3.0.1 offline
 resource bindings. It does not make a legal decision or parse the full SPDX
 license grammar; the pinned offline validator remains mandatory.
 
-## Media processes
+## Administration features
 
-Transition uStreamer and Janus processes bind to loopback or Unix sockets and
-run under dedicated service identities. Only the authenticated Rust server is
-network-facing.
+The web terminal, scripts, remote image download, PicoClaw and RAW system
+updates stay off until their switches are turned on, and each switch is
+enforced below the web server by socket-activated helpers that serve one
+request each (`docs/design/admin-features-v1.md`). An image download's
+worker runs as an account of its own: of the image store it can write only
+the one file the server prepared for it, never the catalog, and on the
+board itself it reaches the local resolver only. PicoClaw is installed by
+an installer with an account and a socket of its own; no image download
+writes PicoClaw's files, and its unit starts only a copy that a root step
+checked against the pinned release's size and SHA-256 (code audit of
+2026-10-20, AUD-05.2).
+
+## Media and transport processes
+
+uStreamer, the MJPEG proxy and the video encoders talk over Unix sockets and
+loopback and run under identities of their own. Besides nginx (TCP 80 for the
+redirect and TCP 443 in front of the authenticated server), these face the
+network:
+
+- Janus, for WebRTC media on UDP 20000-20099: the streaming plugin only, no
+  administration API, host candidates only; its signalling goes through the
+  authenticated server (`docs/design/h616-software-video-encoder.md`);
+- the QUIC gateway, on UDP 443 while its switch is on: a user of its own, one
+  capability, no authority. Every session presents a single-use token that
+  the server issued to an authenticated web session, and what the session may
+  do is decided by the server (`docs/design/quic-transport-v1.md`);
+- the SSH server, behind its own switch.
+
+The firewall mode decides from where each of them can be reached
+(`docs/design/firewall-reference-contract.md`).
+
+The H.264 encoder may encode with the board's video engine, through the
+project's encoder driver (`docs/design/h616-ve-encoder-driver-v1.md`). No
+IOMMU stands between that engine and the board's memory, so the driver is
+the confinement: its one client, the encoder's unit (a dynamic user, the
+only member of the device node's group), sends pictures, QPs and the bits
+of its headers, never an address or a register value; every register and
+address is the driver's, from a register plan that is tested on the build
+host with random requests and against the lab's hypothesis; the buffers
+belong to one open device and are freed only after the engine is reset;
+and a client's mistake writes no line into the kernel's log. The encoder's
+unit may open that device and no other (`DevicePolicy=closed`). The driver
+is loaded at boot by a oneshot unit whose only capability is the one that
+loads a module, from a directory named for the kernel release, and only on
+a board where `tools/device/deploy_ve.sh` switched it on; the decoder
+driver `cedrus`, which nothing of the product uses, is then not loaded. The
+lab module of that plan, which gives the whole engine to a root process,
+is never packaged.
 
 ## Filesystem and update boundary
 

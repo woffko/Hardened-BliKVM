@@ -7,9 +7,13 @@ the frame left it (the board keeps NTP time). Two viewers read
 slower link (a capped reading rate and a small receive buffer, so frames
 cannot wait in its own socket). A frame's delay is its complete arrival in
 true time minus its stamp. Arrivals are taken on this host's monotonic clock
-and converted to true time with two SNTP readings, before and after: a WSL
-host's monotonic clock was seen running at a steady 0.9 of true time while
-its wall clock was stepped back and forth.
+and converted to true time with SNTP readings every two seconds, each
+arrival by the two readings around it: a WSL host's monotonic clock was seen
+running at 0.9 to 1.1 of true time and changing its rate in steps every few
+seconds, while its wall clock was stepped back and forth, and readings only
+before and after a run carried such a step into every arrival between them
+(the full-speed viewer's median delay moved from -46 to +121 ms between
+runs).
 
 The GUI password is read from stdin (via project-memory-exec); a receipt is
 written under evidence/private.
@@ -18,6 +22,7 @@ written under evidence/private.
 from __future__ import annotations
 
 import argparse
+import bisect
 import http.client
 import http.cookiejar
 import json
@@ -32,6 +37,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 NTP_EPOCH = 2208988800
+# SNTP is read this often while the viewers watch.
+ANCHOR_EVERY = 2.0
 
 
 def sntp_anchor(server: str) -> tuple[float, float]:
@@ -48,6 +55,16 @@ def sntp_anchor(server: str) -> tuple[float, float]:
         return seconds - NTP_EPOCH + fraction / 2**32
 
     return (sent + received) / 2, (stamp(32) + stamp(40)) / 2
+
+
+def anchor_while(server: str, stop: threading.Event, anchors: list[tuple[float, float]]) -> None:
+    """SNTP readings every ANCHOR_EVERY seconds until `stop` is set; one that
+    gets no answer is left out."""
+    while not stop.wait(ANCHOR_EVERY):
+        try:
+            anchors.append(sntp_anchor(server))
+        except OSError:
+            pass
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -146,7 +163,10 @@ def main() -> int:
         f"slow{args.slow_mbit:g}Mbit": (args.slow_mbit, args.slow_receive_buffer),
     }
     arrivals: dict[str, list[tuple[float, float]]] = {name: [] for name in viewers}
-    before = sntp_anchor(args.ntp_server)
+    anchors = [sntp_anchor(args.ntp_server)]
+    stop = threading.Event()
+    anchoring = threading.Thread(target=anchor_while, args=(args.ntp_server, stop, anchors))
+    anchoring.start()
     threads = [
         threading.Thread(
             target=watch,
@@ -158,17 +178,33 @@ def main() -> int:
         thread.start()
     for thread in threads:
         thread.join()
-    after = sntp_anchor(args.ntp_server)
-    rate = (after[1] - before[1]) / (after[0] - before[0])
+    stop.set()
+    anchoring.join()
+    anchors.append(sntp_anchor(args.ntp_server))
+    anchors.sort()
+    rate = (anchors[-1][1] - anchors[0][1]) / (anchors[-1][0] - anchors[0][0])
+    rates = [
+        (later[1] - earlier[1]) / (later[0] - earlier[0])
+        for earlier, later in zip(anchors, anchors[1:])
+    ]
+    monotonic_at = [anchor[0] for anchor in anchors]
 
     def true_time(monotonic: float) -> float:
-        return before[1] + (monotonic - before[0]) * rate
+        # The readings around it; the first or the last two outside them.
+        at = min(max(bisect.bisect_left(monotonic_at, monotonic), 1), len(anchors) - 1)
+        (early, early_true), (late, late_true) = anchors[at - 1], anchors[at]
+        return early_true + (monotonic - early) * (late_true - early_true) / (late - early)
 
     receipt: dict = {
         "schemaVersion": 1,
         "probe": "mjpeg-latency",
         "seconds": args.seconds,
         "hostMonotonicRate": round(rate, 5),
+        "anchors": len(anchors),
+        "hostMonotonicRateBetweenAnchors": {
+            "lowest": round(min(rates), 5),
+            "highest": round(max(rates), 5),
+        },
         "viewers": {},
     }
     passed = True

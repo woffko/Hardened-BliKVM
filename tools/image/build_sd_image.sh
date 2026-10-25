@@ -24,6 +24,12 @@ ENDPOINT_HOST=${BLI_KVM_DEVICE_HOST:?set BLI_KVM_DEVICE_HOST to the board addres
 # The release the image belongs to, shown on the About page.
 IMAGE_RELEASE=${BLI_KVM_IMAGE_RELEASE:-development}
 case "$IMAGE_RELEASE" in *[!A-Za-z0-9.+-]*|"") echo "BLI_KVM_IMAGE_RELEASE is invalid" >&2; exit 2 ;; esac
+# The system sequence of the RAW bundle built from this image's root. The root
+# keeps it, so a card written from the image refuses older system bundles, and
+# the bundle builder checks it against its own (empty: none, a development
+# image).
+SYSTEM_SEQUENCE=${BLI_KVM_IMAGE_SYSTEM_SEQUENCE:-}
+case "$SYSTEM_SEQUENCE" in *[!0-9]*) echo "BLI_KVM_IMAGE_SYSTEM_SEQUENCE is invalid" >&2; exit 2 ;; esac
 KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
 IMAGE_BYTES=$((28 * 1024 * 1024 * 1024))
 ROOT_START=8192
@@ -98,7 +104,7 @@ assemble() {
   # A fresh random salt per build; the password itself is the documented default.
   root_hash=$(openssl passwd -6 1234)
   fakeroot -s "$work/fakeroot.state" -- sh -eu -c '
-    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8
+    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8 system_sequence=$9
     # ACLs (journal directories) and xattrs are not reproduced; systemd
     # recreates the journal ACLs on the device.
     tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
@@ -131,13 +137,43 @@ assemble() {
     # The source board'"'"'s switches, confirmed firewall mode and journals do
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
-    # off, empty media, ATX and HID journals, and the video settings at the
-    # defaults of the capture unit.
+    # and the target agent off, the display never going dark, empty media,
+    # ATX and HID journals, the video settings at the defaults of the
+    # capture unit, and the mouse
+    # over the whole desktop of the target (the monitors of the source
+    # target are not those of a new one). The record the board owner keeps of the
+    # switches in system files (SSH, QUIC, Tailscale, mDNS) is the source
+    # board'"'"'s: a new card makes its own at its first start, from the units
+    # of the image.
     gadget_state="$staging/var/lib/hardened-blikvm-gadget"
     rm -f "$gadget_state/admin-features.json" "$gadget_state/firewall-mode.json" \
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
-      "$gadget_state/hid-only.env" "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
+      "$gadget_state/hid-only.env" "$gadget_state/display-sleep.env" \
+      "$gadget_state/target-agent.env" "$gadget_state/system-switches.json" \
+      "$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json \
+      "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
+      "$staging/var/lib/hardened-blikvm/screen-area.json"
+    # The system-action journal is the source board'"'"'s reboots under its boot
+    # identities, one perhaps not yet accepted, and it has room for sixteen:
+    # a new card'"'"'s owner starts an empty one.
+    rm -f "$staging/var/lib/hardened-blikvm-system-actions/journal-a.bin" \
+      "$staging/var/lib/hardened-blikvm-system-actions/journal-b.bin"
+    if [ -n "$(find "$staging/var/lib/hardened-blikvm-system-actions" -type f 2>/dev/null | head -n 1)" ]; then
+      echo "source board state remains: the system-action journal" >&2
+      exit 1
+    fi
+    # The mouse jiggler'"'"'s switch and a network change awaiting its
+    # confirmation are the source board'"'"'s too (security review of
+    # 2026-10-18, LOW-04).
+    if [ -n "$(find "$gadget_state" -maxdepth 1 \( -name mouse-jiggler.env -o -name "network-revert-*.json" \) 2>/dev/null | head -n 1)" ]; then
+      echo "source board state remains: the mouse jiggler or a network revert record" >&2
+      exit 1
+    fi
+    # The QUIC switch is the enablement of the gateway unit, not a file of
+    # the board owner: a new card starts with the gateway disabled
+    # (docs/design/quic-transport-v1.md).
+    rm -f "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-quic.service"
     # Leftovers of earlier deployments on the source board; nothing refers to
     # them.
     rm -rf "$gadget_state"/kvmd-backup-* "$gadget_state"/unit-owner-* \
@@ -146,10 +182,13 @@ assemble() {
     leftover=$(find "$gadget_state" "$staging/etc/hardened-blikvm" -maxdepth 1 \
       \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
       -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
-      -o -name hid-only.env -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
+      -o -name hid-only.env -o -name display-sleep.env -o -name target-agent.env \
+      -o -name system-switches.json \
+      -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
     [ ! -e "$staging/var/lib/hardened-blikvm-video/ustreamer.env" ] || leftover="$leftover ustreamer.env"
+    [ ! -e "$staging/var/lib/hardened-blikvm/screen-area.json" ] || leftover="$leftover screen-area.json"
     if [ -n "$leftover" ]; then
       echo "source board state remains: $leftover" >&2
       exit 1
@@ -211,10 +250,10 @@ assemble() {
         exit 1
       fi
     done
-    # nginx must use the TLS pair the first boot generates; the board'"'"'s
-    # own certificate (rendered into its nginx.conf) is excluded above.
-    sed -i -e "s#/etc/kvmd/nginx/ssl/server.crt;#/etc/hardened-blikvm/tls.crt;#" \
-      -e "s#/etc/kvmd/nginx/ssl/server.key;#/etc/hardened-blikvm/tls.key;#" \
+    # nginx.conf comes from packaging, not from the source board, whose copy
+    # may be an older rendering (security review of 2026-10-18, LOW-04); it
+    # uses the TLS pair the first boot generates.
+    install -m 0600 -o 0 -g 0 "$script_dir/../../packaging/nginx/hardened-blikvm.conf" \
       "$staging/etc/hardened-blikvm/nginx.conf"
     # The rendered nginx unit also starts only when that pair exists.
     for unit in "$staging"/etc/systemd/system/hardened-blikvm-nginx.service; do
@@ -232,9 +271,14 @@ assemble() {
     # The board'"'"'s connection profiles are excluded, but the directory is part
     # of the board owner'"'"'s sandbox (ReadWritePaths) and must exist.
     install -d -m 0700 -o 0 -g 0 "$staging/etc/NetworkManager/system-connections"
-    # The image store starts empty on a new card, and so does its catalog.
+    # The image store starts empty on a new card, and so does its catalog:
+    # empty in its former place, which tmpfiles copies into the directory of
+    # the server at the first boot. A catalog in the new place would also be
+    # kept by a RAW update over a board whose catalog is still in the former
+    # place, and the catalog of that board would not be copied.
     printf "%s\n" "{" "  \"schemaVersion\": 1," "  \"entries\": []" "}" \
       > "$staging/etc/hardened-blikvm-gadget/catalog.json"
+    rm -rf "$staging/var/lib/hardened-blikvm-gadget/catalog"
     # Default credentials follow the Armbian convention: root/1234, expired, so
     # the first SSH login must set a new password. The blikvm user is locked.
     awk -F: -v OFS=: -v hash="$root_hash" '"'"'$1 == "root" { $2 = hash; $3 = 0 }
@@ -264,7 +308,12 @@ assemble() {
     # The About page shows this as the system image version.
     printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"
-  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash" "$IMAGE_RELEASE"
+    if [ -n "$system_sequence" ]; then
+      install -d -m 0755 -o 0 -g 0 "$staging/usr/share/hardened-blikvm/system-update"
+      printf "%s\n" "$system_sequence" > "$staging/usr/share/hardened-blikvm/system-update/system-sequence"
+      chmod 0644 "$staging/usr/share/hardened-blikvm/system-update/system-sequence"
+    fi
+  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash" "$IMAGE_RELEASE" "$SYSTEM_SEQUENCE"
 
   # The image's initramfs must carry the RAW system update step.
   for initrd in "$staging"/boot/initrd.img-*; do
@@ -274,6 +323,12 @@ assemble() {
     }
   done
 
+  # The encoder driver of the video engine loads on one kernel release.
+  # What the image carries of it must be that driver for the kernel the
+  # image boots, and an image that enables the driver's unit must carry it:
+  # a module for another kernel would sit in the image as if it worked.
+  python3 "$script_dir/../ve_module.py" image "$staging"
+
   # Every path the units that start need must exist in the image, or be one
   # the first boot creates: a missing sandbox path stops a unit before it
   # runs (the board owner, and with it the whole application, on a card
@@ -282,6 +337,10 @@ assemble() {
   # rendered units in /etc/systemd/system, the packaged units that are
   # enabled, and the socket-activated services behind enabled sockets.
   created_at_first_boot="/etc/hardened-blikvm/tls.crt /etc/hardened-blikvm/tls.key /etc/hardened-blikvm-gadget/serial"
+  # The board owner makes the system-action journal at its first start; the
+  # units that read it are installed, not enabled (the acceptance unit is
+  # started by hand).
+  created_at_first_boot="$created_at_first_boot /var/lib/hardened-blikvm-system-actions/journal-a.bin"
   # Default-off features whose files appear only once switched on.
   optional_until_enabled="/mnt/.hardened-system-update /mnt/.hardened-system-update/apply.json /var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
   enabled=$(find "$staging/etc/systemd/system" -path "*.wants/hardened-blikvm-*" -exec basename {} \; | sort -u)
@@ -328,12 +387,12 @@ assemble() {
   msd_sectors=$((IMAGE_BYTES / 512 - msd_start))
   fakeroot -- mke2fs -q -t ext4 -L MSD -U "$msd_uuid" -E root_owner=0:0 "$work/msd.ext4" $((msd_sectors / 2))k
   # The server stores uploads on this partition: its root carries the image
-  # store's mode and group (tmpfiles: 0770 root:hardened-blikvm).
+  # store's mode and group (tmpfiles: 1770 root:hardened-blikvm).
   store_gid=$(awk -F: '$1 == "hardened-blikvm" { print $3 }' "$staging/etc/group")
   case "$store_gid" in ''|*[!0-9]*) echo "the hardened-blikvm group is missing from the image" >&2; exit 1 ;; esac
-  debugfs -w -R "set_inode_field / mode 040770" "$work/msd.ext4" >/dev/null 2>&1
+  debugfs -w -R "set_inode_field / mode 041770" "$work/msd.ext4" >/dev/null 2>&1
   debugfs -w -R "set_inode_field / gid $store_gid" "$work/msd.ext4" >/dev/null 2>&1
-  debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -q "Mode:  0770" &&
+  debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -q "Mode:  01770" &&
     debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -Eq "Group: +$store_gid( |\$)" || {
       echo "the image store's owner could not be set" >&2
       exit 1

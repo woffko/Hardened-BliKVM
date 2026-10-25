@@ -9,7 +9,9 @@ use thiserror::Error;
 
 pub const CONTROL_SCHEMA_VERSION: u16 = 1;
 pub const CONTROL_SCHEMA_VERSION_V2: u16 = 2;
-pub const MAX_CONTROL_MESSAGE_BYTES: usize = 4 * 1024;
+/// The largest message either way: room for the target agent's answers (a
+/// message of the agent's protocol is at most 16 KiB) in their envelope.
+pub const MAX_CONTROL_MESSAGE_BYTES: usize = 24 * 1024;
 const OPERATION_ID_LENGTH: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +156,11 @@ pub enum ControlResponse {
     HidOnlyState {
         enabled: bool,
     },
+    /// How long the board's display stays lit without activity, in seconds;
+    /// 0 is never.
+    DisplaySleepState {
+        seconds: u32,
+    },
     /// The connected interfaces and a pending addressing revert, if any.
     NetworkInfo {
         interfaces: Vec<NetworkInterfaceInfo>,
@@ -163,6 +170,42 @@ pub enum ControlResponse {
     SshState {
         enabled: bool,
         active: bool,
+    },
+    /// The QUIC gateway: enabled at boot and running now.
+    QuicState {
+        enabled: bool,
+        active: bool,
+    },
+    /// The target agent's switch and channel: the switch, whether the
+    /// channel should be open (the switch is on and the gadget carries the
+    /// agent's collection), whether its device is open or why not, the
+    /// connected agent's hello, why the last hello was refused, and the
+    /// messages each way.
+    TargetAgentState {
+        enabled: bool,
+        wanted: bool,
+        open: bool,
+        problem: Option<String>,
+        agent: Option<bli_kvm_agent_protocol::Hello>,
+        refused: Option<String>,
+        messages_in: u64,
+        messages_out: u64,
+        dropped: u64,
+        /// The commit the owner was built from, which its hello names to the
+        /// agent (at most `MAX_HELLO_TEXT` characters, none a control
+        /// character); empty from an owner from before.
+        #[serde(default)]
+        board_commit: String,
+    },
+    /// The connected agent's answer to a call, and the round trip.
+    TargetAgentAnswer {
+        answer: bli_kvm_agent_protocol::Answer,
+        round_trip_us: u64,
+    },
+    /// The connected agent did not do the call, and said why (at most
+    /// `MAX_AGENT_REASON` characters, none a control character).
+    TargetAgentRefused {
+        reason: String,
     },
     /// The persisted administration feature switches.
     AdminFeatureState {
@@ -439,6 +482,17 @@ pub fn decode_response_v2(bytes: &[u8]) -> Result<ControlResponseEnvelope, Contr
     Ok(response)
 }
 
+/// The longest reason the agent's refusal carries to the server.
+pub const MAX_AGENT_REASON: usize = 160;
+
+/// Whether the agent's reason may cross: some text, within its bound, with
+/// no control character.
+pub fn agent_reason_is_valid(reason: &str) -> bool {
+    !reason.is_empty()
+        && reason.chars().count() <= MAX_AGENT_REASON
+        && !reason.chars().any(char::is_control)
+}
+
 pub fn encode_response_v2(
     response: &ControlResponseEnvelope,
 ) -> Result<Vec<u8>, ControlProtocolError> {
@@ -521,6 +575,33 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
                 .flatten()
                 .chain(dns)
                 .any(|value| value.is_empty() || value.len() > 64))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::TargetAgentState {
+        problem,
+        agent,
+        refused,
+        board_commit,
+        ..
+    } = response
+        && ([problem, refused].into_iter().flatten().any(|text| {
+            text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
+        }) || agent
+            .as_ref()
+            .is_some_and(|hello| hello.refusal().is_some())
+            || board_commit.chars().count() > bli_kvm_agent_protocol::MAX_HELLO_TEXT
+            || board_commit.chars().any(char::is_control))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::TargetAgentAnswer { answer, .. } = response
+        && !answer.is_valid()
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::TargetAgentRefused { reason } = response
+        && !agent_reason_is_valid(reason)
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
@@ -890,6 +971,111 @@ mod tests {
         let json = encode_response_v2(&response).unwrap();
         assert_eq!(decode_response_v2(&json).unwrap(), response);
         assert!(!String::from_utf8_lossy(&json).contains("message"));
+    }
+
+    #[test]
+    fn target_agent_responses_round_trip_and_odd_text_is_refused() {
+        let hello = bli_kvm_agent_protocol::Hello::new("hardened-blikvm-agent", "0.1.0", "abc");
+        let envelope = |response| ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 26,
+            operation_id: OPERATION_ID.into(),
+            response,
+        };
+        let state = |problem: Option<&str>, agent: Option<bli_kvm_agent_protocol::Hello>| {
+            ControlResponse::TargetAgentState {
+                enabled: true,
+                wanted: true,
+                open: problem.is_none(),
+                problem: problem.map(str::to_owned),
+                agent,
+                refused: None,
+                messages_in: 3,
+                messages_out: 3,
+                dropped: 1,
+                board_commit: "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890".into(),
+            }
+        };
+        for response in [
+            state(None, Some(hello.clone())),
+            state(Some("/dev/hidg1 could not be opened"), None),
+            ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Pong,
+                round_trip_us: 2_100,
+            },
+            ControlResponse::TargetAgentRefused {
+                reason: "Windows refused the monitors' configuration (87)".into(),
+            },
+        ] {
+            let response = envelope(response);
+            let json = encode_response_v2(&response).unwrap();
+            assert_eq!(decode_response_v2(&json).unwrap(), response);
+        }
+        // The board's commit is a hello's text: within its bound, on one line.
+        for board_commit in ["abc\n".to_string(), "9".repeat(65)] {
+            let mut odd = state(None, None);
+            if let ControlResponse::TargetAgentState {
+                board_commit: commit,
+                ..
+            } = &mut odd
+            {
+                *commit = board_commit;
+            }
+            assert!(encode_response_v2(&envelope(odd)).is_err());
+        }
+        // A refusal's reason is some text within its bound, on one line.
+        for reason in [
+            String::new(),
+            "bell\u{7}".into(),
+            "x".repeat(MAX_AGENT_REASON + 1),
+        ] {
+            assert!(
+                encode_response_v2(&envelope(ControlResponse::TargetAgentRefused { reason }))
+                    .is_err()
+            );
+        }
+        assert!(agent_reason_is_valid(&"ü".repeat(MAX_AGENT_REASON)));
+        let mut monitors = vec![bli_kvm_agent_protocol::Monitor {
+            id: "0123456789abcdef".into(),
+            name: "DELL U2719D".into(),
+            maker: "DEL".into(),
+            product: 1,
+            x: 0,
+            y: 0,
+            width: 2560,
+            height: 1440,
+            refresh_millihertz: 60_000,
+            primary: true,
+            scale: 100,
+            board: false,
+        }];
+        let answer = envelope(ControlResponse::TargetAgentAnswer {
+            answer: bli_kvm_agent_protocol::Answer::Monitors(monitors.clone()),
+            round_trip_us: 5_000,
+        });
+        assert_eq!(
+            decode_response_v2(&encode_response_v2(&answer).unwrap()).unwrap(),
+            answer
+        );
+        monitors[0].width = 0;
+        assert!(
+            encode_response_v2(&envelope(ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Monitors(monitors),
+                round_trip_us: 5_000,
+            }))
+            .is_err()
+        );
+        let mut newer = hello.clone();
+        newer.protocol = 2;
+        let long = "x".repeat(161);
+        for invalid in [
+            state(Some(""), None),
+            state(Some(&long), None),
+            state(Some("line\nbreak"), None),
+            state(None, Some(newer)),
+        ] {
+            assert!(encode_response_v2(&envelope(invalid)).is_err());
+        }
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub(crate) struct ScreenBody {
     pub value: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScreenOutcome {
     /// Configured capture mode; independent from observed frame dimensions.
@@ -60,10 +60,46 @@ pub(crate) struct ScreenOutcome {
     pub height: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queued_fps: Option<f64>,
+    /// The WebRTC encoders' target bitrate in kbit/s, when WebRTC is offered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webrtc_kbps: Option<u32>,
+    /// What encodes H.264: `hardware` (the board's video engine) or `x264`.
+    /// Absent while the encoder has not said, which it does with its first
+    /// frame for a viewer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_encoder: Option<&'static str>,
+    /// The board's choice of the H.264 engine, `hardware` or `software`,
+    /// where the choice is offered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_engine: Option<&'static str>,
+    /// Whether the board's video engine can encode H.264, from the
+    /// encoder's report, and why not; absent while it has not reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_hardware_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_hardware_reason: Option<String>,
+}
+
+/// The H.264 encoder's own word for what encodes, from the file it keeps.
+/// Anything but the two words it has is no answer.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn read_h264_encoder(path: &std::path::Path) -> Option<&'static str> {
+    use std::io::Read;
+    let mut word = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(16)
+        .read_to_string(&mut word)
+        .ok()?;
+    match word.trim_end_matches('\n') {
+        "hardware" => Some("hardware"),
+        "x264" => Some("x264"),
+        _ => None,
+    }
 }
 
 #[cfg(feature = "restricted-control-surface")]
-fn operation_id(session_token: &str) -> String {
+pub(crate) fn operation_id(session_token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(VIDEO_SETTINGS_OP_DOMAIN);
     hasher.update(session_token.as_bytes());
@@ -118,15 +154,8 @@ fn change_from_body(body: &ScreenBody) -> Result<VideoSettingsChange, &'static s
 fn outcome(response: ControlResponse) -> ScreenOutcome {
     match response {
         ControlResponse::Applied => ScreenOutcome {
-            requested_resolution: None,
             applied: true,
-            rejection: None,
-            fps: 0,
-            quality: 0,
-            captured_fps: None,
-            width: None,
-            height: None,
-            queued_fps: None,
+            ..ScreenOutcome::default()
         },
         ControlResponse::VideoState {
             fps,
@@ -135,35 +164,17 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
         } => ScreenOutcome {
             requested_resolution: resolution,
             applied: true,
-            rejection: None,
             fps,
             quality,
-            captured_fps: None,
-            width: None,
-            height: None,
-            queued_fps: None,
+            ..ScreenOutcome::default()
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
-            requested_resolution: None,
-            applied: false,
             rejection: Some(rejection_name(code)),
-            fps: 0,
-            quality: 0,
-            captured_fps: None,
-            width: None,
-            height: None,
-            queued_fps: None,
+            ..ScreenOutcome::default()
         },
         _ => ScreenOutcome {
-            requested_resolution: None,
-            applied: false,
             rejection: Some("unexpected_response"),
-            fps: 0,
-            quality: 0,
-            captured_fps: None,
-            width: None,
-            height: None,
-            queued_fps: None,
+            ..ScreenOutcome::default()
         },
     }
 }
@@ -174,19 +185,21 @@ pub(crate) async fn update_screen(
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<ScreenBody>,
 ) -> AppResult<Json<ApiResponse<ScreenOutcome>>> {
+    // The WebRTC quality and the H.264 engine belong to the server and its
+    // encoders, not to the owner's capture settings.
+    if body.kind == "webrtc_kbps" {
+        return set_webrtc_bitrate(&state, body.value)
+            .map(|outcome| Json(ApiResponse::ok(outcome)));
+    }
+    if body.kind == "h264_engine" {
+        return set_h264_engine(&state, body.value).map(|outcome| Json(ApiResponse::ok(outcome)));
+    }
     let change = match change_from_body(&body) {
         Ok(change) => change,
         Err(rejection) => {
             return Ok(Json(ApiResponse::ok(ScreenOutcome {
-                requested_resolution: None,
-                applied: false,
                 rejection: Some(rejection),
-                fps: 0,
-                quality: 0,
-                captured_fps: None,
-                width: None,
-                height: None,
-                queued_fps: None,
+                ..ScreenOutcome::default()
             })));
         }
     };
@@ -203,6 +216,83 @@ pub(crate) async fn update_screen(
         .await
         .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?;
     Ok(Json(ApiResponse::ok(outcome(response))))
+}
+
+/// Stores the chosen WebRTC bitrate and sends it to the encoders of every
+/// viewer; nothing restarts. Only the offered levels are accepted.
+#[cfg(feature = "restricted-control-surface")]
+fn set_webrtc_bitrate(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
+    let Some(gateway) = state
+        .webrtc
+        .as_ref()
+        .filter(|_| state.options.offers_webrtc_quality())
+    else {
+        return Ok(ScreenOutcome {
+            rejection: Some("unsupported_setting"),
+            ..ScreenOutcome::default()
+        });
+    };
+    let Some(kbps) = u32::try_from(value)
+        .ok()
+        .filter(|kbps| crate::webrtc::BITRATE_LEVELS_KBPS.contains(kbps))
+    else {
+        return Ok(ScreenOutcome {
+            rejection: Some("value_out_of_range"),
+            ..ScreenOutcome::default()
+        });
+    };
+    if let Err(error) = gateway.choose_bitrate(&state.options.state_dir, kbps) {
+        eprintln!("webrtc: the bitrate could not be saved: {error}");
+        return Err(AppError::ServiceUnavailable(
+            "the WebRTC quality could not be saved".into(),
+        ));
+    }
+    Ok(ScreenOutcome {
+        applied: true,
+        webrtc_kbps: Some(kbps),
+        ..ScreenOutcome::default()
+    })
+}
+
+/// Stores the board's choice of the H.264 engine and sends it to the H.264
+/// encoder over every viewer's demand connection; the encoder switches at
+/// its next frame. `1` is the video engine, `0` x264. The choice is sent
+/// even where it is the one already made: the encoder then tries an engine
+/// again that it could not have before.
+#[cfg(feature = "restricted-control-surface")]
+fn set_h264_engine(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
+    use crate::webrtc::H264Engine;
+    let Some(gateway) = state
+        .webrtc
+        .as_ref()
+        .filter(|gateway| gateway.h264_demand.is_some() && state.options.offers_engine_choice())
+    else {
+        return Ok(ScreenOutcome {
+            rejection: Some("unsupported_setting"),
+            ..ScreenOutcome::default()
+        });
+    };
+    let engine = match value {
+        1 => H264Engine::Hardware,
+        0 => H264Engine::Software,
+        _ => {
+            return Ok(ScreenOutcome {
+                rejection: Some("value_out_of_range"),
+                ..ScreenOutcome::default()
+            });
+        }
+    };
+    if let Err(error) = gateway.choose_engine(&state.options.state_dir, engine) {
+        eprintln!("webrtc: the H.264 engine could not be saved: {error}");
+        return Err(AppError::ServiceUnavailable(
+            "the H.264 engine could not be saved".into(),
+        ));
+    }
+    Ok(ScreenOutcome {
+        applied: true,
+        h264_engine: Some(engine.name()),
+        ..ScreenOutcome::default()
+    })
 }
 
 /// Read back the settings the owner will run the engine with.
@@ -225,6 +315,29 @@ pub(crate) async fn screen_state(
         .await
         .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?;
     let mut outcome = outcome(response);
+    outcome.webrtc_kbps = state
+        .webrtc
+        .as_ref()
+        .map(|gateway| *gateway.bitrate.borrow());
+    outcome.h264_encoder = state
+        .options
+        .h264_encoder_status
+        .as_deref()
+        .and_then(read_h264_encoder);
+    outcome.h264_engine = state
+        .webrtc
+        .as_ref()
+        .filter(|gateway| gateway.h264_demand.is_some() && state.options.offers_engine_choice())
+        .map(|gateway| gateway.engine.borrow().name());
+    if let Some(availability) = state
+        .options
+        .h264_encoder_report
+        .as_deref()
+        .and_then(crate::encoder_report::read_engine_availability)
+    {
+        outcome.h264_hardware_available = Some(availability.available);
+        outcome.h264_hardware_reason = availability.reason;
+    }
     // Read the measured state only for an applied state and only when the engine
     // socket is configured; an unreachable engine simply omits the fields.
     if outcome.applied {
@@ -269,6 +382,28 @@ pub(crate) async fn screen_state(
 #[cfg(all(test, feature = "restricted-control-surface"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_h264_encoder_is_named_by_its_own_word_and_no_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("encoder");
+        assert_eq!(read_h264_encoder(&path), None);
+        for (written, read) in [
+            ("hardware\n", Some("hardware")),
+            ("x264\n", Some("x264")),
+            ("x264", Some("x264")),
+            ("", None),
+            ("vp8\n", None),
+            ("hardware and more\n", None),
+            ("hardware\nx264\n", None),
+        ] {
+            std::fs::write(&path, written).unwrap();
+            assert_eq!(read_h264_encoder(&path), read, "{written:?}");
+        }
+        // A file that is not the encoder's small word is not read to its end.
+        std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
+        assert_eq!(read_h264_encoder(&path), None);
+    }
 
     #[test]
     fn maps_the_reference_request_to_a_bounded_change() {

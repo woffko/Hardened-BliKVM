@@ -212,6 +212,10 @@ type SharedRunner = Arc<Mutex<Box<dyn WifiRunner>>>;
 struct PendingPreference {
     generation: u64,
     deadline: Instant,
+    /// Whether WiFi was the main connection when the window opened: what
+    /// its revert restores, whatever changes come inside it (code audit of
+    /// 2026-10-20, AUD-08).
+    before: bool,
 }
 
 pub struct WifiState {
@@ -841,37 +845,47 @@ impl WifiState {
         if wifi && !self.status().map(|status| status.up).unwrap_or(false) {
             return reject(ControlRejectionCode::InvalidState);
         }
-        let metric = if wifi {
-            ETHERNET_BACKUP_METRIC
-        } else {
-            ETHERNET_DEFAULT_METRIC
+        let metric_of = |wifi: bool| {
+            if wifi {
+                ETHERNET_BACKUP_METRIC
+            } else {
+                ETHERNET_DEFAULT_METRIC
+            }
         };
-        let previous = if before {
-            ETHERNET_BACKUP_METRIC
-        } else {
-            ETHERNET_DEFAULT_METRIC
-        };
+        // Inside a window the revert keeps the state the window opened with.
+        let first = lock(&self.pending).as_ref().map(|pending| pending.before);
+        let target = first.unwrap_or(before);
         // Written before the change: a restart from here on still reverts it.
-        if wifi != before
+        if wifi != target
             && let Some(journal) = &self.journal
             && let Err(error) = journal.write(&PreferenceRecord {
                 profiles: profiles.clone(),
-                restore_metric: previous.to_string(),
+                restore_metric: metric_of(target).to_string(),
             })
         {
             eprintln!("wifi: the revert journal could not be written: {error}");
             return reject(ControlRejectionCode::BackendRejected);
         }
-        if let Err(reason) = Self::set_ethernet_metric(&self.runner, &profiles, metric) {
+        if let Err(reason) = Self::set_ethernet_metric(&self.runner, &profiles, metric_of(wifi)) {
             eprintln!("wifi: main connection change failed: {reason}");
-            let _ = Self::set_ethernet_metric(&self.runner, &profiles, previous);
-            if let Some(journal) = &self.journal {
+            // The state before this change comes back; a pending revert and
+            // its record stay as they were.
+            let _ = Self::set_ethernet_metric(&self.runner, &profiles, metric_of(before));
+            if first.is_none()
+                && let Some(journal) = &self.journal
+            {
                 journal.clear();
             }
             return reject(ControlRejectionCode::BackendRejected);
         }
-        if wifi != before {
-            self.arm_revert(profiles, before);
+        if wifi != target {
+            self.arm_revert(profiles, target);
+        } else if first.is_some() {
+            // Back to the state the window opened with: nothing to revert.
+            *lock(&self.pending) = None;
+            if let Some(journal) = &self.journal {
+                journal.clear();
+            }
         }
         ControlResponse::Applied
     }
@@ -882,6 +896,7 @@ impl WifiState {
         *lock(&self.pending) = Some(PendingPreference {
             generation,
             deadline: Instant::now() + self.revert_after,
+            before,
         });
         let pending = Arc::clone(&self.pending);
         let runner = Arc::clone(&self.runner);
@@ -1467,6 +1482,87 @@ mod tests {
         assert_eq!(state.prefer(true), ControlResponse::Applied);
         assert_eq!(state.confirm_preference(), ControlResponse::Applied);
         assert!(journal.read::<PreferenceRecord>().is_none());
+    }
+
+    #[test]
+    fn a_second_preference_in_the_window_reverts_to_the_first_state() {
+        let metric = format!("-g ipv4.route-metric connection show uuid {ETH}");
+        let profiles = format!("{ETH}:802-3-ethernet\n{OLD}:802-11-wireless\n");
+        let answers: Vec<(&str, Result<&str, &str>)> = vec![
+            ("-t -f UUID,TYPE connection show", Ok(profiles.as_str())),
+            (metric.as_str(), Ok("-1\n")),
+            (
+                "-t -f DEVICE,TYPE,STATE,CONNECTION device",
+                Ok("eth0:ethernet:connected:Wired\nwlan0:wifi:connected:home\n"),
+            ),
+            (
+                "-t -f DEVICE,TYPE,STATE device",
+                Ok("eth0:ethernet:connected\nwlan0:wifi:connected\n"),
+            ),
+        ];
+        let modify = |value: &str| {
+            format!(
+                "connection modify uuid {ETH} ipv4.route-metric {value} ipv6.route-metric {value}"
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("wifi.json"));
+
+        // WiFi first, then Ethernet again before a confirmation: the state
+        // the window started from is back, and nothing reverts to WiFi.
+        let (state, fake) = fixture(&answers);
+        // A window long enough for a loaded host between the two changes.
+        let mut state = state
+            .with_journal(journal.clone())
+            .with_revert_after(Duration::from_millis(2_000));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        fake.lock()
+            .unwrap()
+            .answers
+            .insert(metric.clone(), Ok("700\n".into()));
+        assert_eq!(state.prefer(false), ControlResponse::Applied);
+        fake.lock()
+            .unwrap()
+            .answers
+            .insert(metric.clone(), Ok("-1\n".into()));
+        std::thread::sleep(Duration::from_millis(4_500));
+        assert_eq!(
+            fake.lock().unwrap().calls.last().cloned(),
+            Some("device reapply eth0".into())
+        );
+        let modifies: Vec<String> = fake
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|call| call.contains("modify"))
+            .cloned()
+            .collect();
+        assert_eq!(modifies, [modify("700"), modify("-1")]);
+        assert!(journal.read::<PreferenceRecord>().is_none());
+
+        // A second change that fails keeps the window's revert and journal.
+        let (state, fake) = fixture(&answers);
+        let mut state = state
+            .with_journal(journal.clone())
+            .with_revert_after(Duration::from_secs(3600));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        {
+            let mut fake = fake.lock().unwrap();
+            fake.answers.insert(metric.clone(), Ok("700\n".into()));
+            fake.answers.insert(modify("-1"), Err("refused".into()));
+        }
+        assert_eq!(
+            state.prefer(false),
+            rejected(ControlRejectionCode::BackendRejected)
+        );
+        assert!(state.revert_in_seconds() > 0);
+        assert_eq!(
+            journal
+                .read::<PreferenceRecord>()
+                .map(|record| record.restore_metric),
+            Some("-1".to_string())
+        );
     }
 
     #[test]

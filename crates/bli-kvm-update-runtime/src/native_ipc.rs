@@ -348,11 +348,12 @@ mod tests {
 
     #[test]
     fn control_frames_use_the_real_protocol_and_bound_the_prefix() {
-        use bli_kvm_control_protocol::{decode_frame, encode_frame};
+        use bli_kvm_control_protocol::{MAX_CONTROL_MESSAGE_BYTES, decode_frame, encode_frame};
+        let too_long = MAX_CONTROL_MESSAGE_BYTES as u32 + 1;
         for (reply, expected) in [
             (encode_frame(b"{}\n").unwrap(), None),
             (
-                4097_u32.to_be_bytes().to_vec(),
+                too_long.to_be_bytes().to_vec(),
                 Some(io::ErrorKind::InvalidData),
             ),
             (

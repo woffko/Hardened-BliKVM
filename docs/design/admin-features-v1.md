@@ -33,6 +33,28 @@ privilege boundary of every feature and the reference contract we keep.
   switch is off, and the helper that does the work re-reads the switch file
   and refuses on its own. A GUI that ignores the state gains nothing.
 
+## The QUIC transport's switch (plan of 2026-10-01)
+
+"QUIC on this device" (Settings > Network > Transport,
+`docs/design/quic-transport-v1.md`) is a switch of the same kind and is off
+by default, but it is not a key of the switch file above. Like the SSH
+switch it is the enablement of a unit: on enables and starts
+`hardened-blikvm-quic.service`, off stops and disables it, and the state is
+read back from systemd, so one state survives a reboot and the switch file,
+which refuses unknown keys, keeps its format for older slots.
+
+- Only an authenticated session with CSRF may change it
+  (`POST /api/transport/quic/enable`, `.../disable`); switching it on asks
+  first and names the UDP port.
+- It is enforced twice, below the web server: while it is off the unit does
+  not run and nothing listens on the port, and the server hands out no
+  session token because no gateway is on its link
+  (`the_switch_is_enforced_twice`).
+- The gateway is a process of its own under its own user, with one
+  capability (binding the port) and no authority: it redeems the page's
+  token at the server and passes requests on. What a session may do is
+  decided by the server for the web session behind it.
+
 ## Privilege boundaries
 
 The network-facing server stays unprivileged. Privileged work runs in helpers
@@ -49,37 +71,83 @@ and are socket-activated per connection.
     (foreground: 60 s, 256 KiB captured; background: detached transient
     unit with a 1-hour limit).
 - **Image download helper** (`hardened-blikvm-image-download@.service`, the
-  same binary with `--download`, running as the web-server account with no
-  capabilities, write access only to the image store and the media catalog):
+  same binary with `--download`, running with no capabilities as
+  `hardened-blikvm-download`, an account of its own in no group another
+  account shares; the web server is the one other member of its group (a
+  sysusers fragment of its own, `packaging/sysusers.d/hardened-blikvm-download.conf`,
+  shipped with the update runtime as an example: the runtime's identities
+  are a pinned set). It
+  ran as the web-server account until the security review of 2026-10-18,
+  N1):
   - it is the only unit with outbound network access (the web server may
     reach localhost alone); it may not reach the board's own loopback,
-    link-local or multicast addresses, except a local DNS stub;
-  - it accepts only `http`/`https` URLs without credentials whose last path
-    segment is an `.iso` name the store accepts, one download at a time
-    (a lock next to the status file);
-  - `curl` runs with a cleared environment and the reference limits (HTTP(S)
-    redirects only, 5 redirects, 2 h, a stall limit), except that a file may
-    be as large as an upload (64 GiB, the reference's is 8 GiB), into a
-    hidden temporary file; progress goes to
-    `/run/hardened-blikvm-download/status.json` in the reference shape;
-  - a finished file must carry the ISO 9660 magic, then it is hashed,
-    published atomically (0644) and recorded in the media catalog as a
-    CD-ROM or read-only removable image; any failure removes the temporary
-    file and reports `failed` for 30 seconds;
+    link-local or multicast addresses, except a local DNS stub, nor the
+    board owner's, the admin helper's or the update services' sockets;
+  - it accepts only `http`/`https` URLs without credentials, with an ASCII
+    host name and none of `[ ] { }` anywhere (so no IPv6 literal host),
+    whose last path segment is an `.iso` name the store accepts, one
+    download at a time (a lock next to the status file, 0640, which the web
+    server probes);
+  - before forwarding a download, the web server empties the drop directory
+    `.downloads` in the image store (the server's, 0750, the helper's group)
+    and prepares in it one empty file for the image (the server's, 0660, the
+    helper's group). The unit binds that directory at
+    `/run/hardened-blikvm-download/drop` and can write nothing else of the
+    store, the catalog or `/etc/hardened-blikvm-gadget`; it passes through
+    `/var/lib/hardened-blikvm-gadget` only to read the switches (an ACL
+    entry `u:hardened-blikvm-download:--x`);
+  - `curl` runs with a cleared environment, URL globbing off and the
+    reference limits (HTTP(S) only, 2 h, a stall limit), except that a file
+    may be as large as an upload (64 GiB, the reference's is 8 GiB), into the
+    prepared file; progress goes to `/run/hardened-blikvm-download/status.json`
+    in the reference shape;
+  - the helper follows redirects itself, up to 5: it resolves each hop's
+    host, pins curl to those addresses (`--resolve`) and reads the next hop
+    from curl's `--write-out`. Once a hop was on a public address, a hop into
+    a private, CGNAT, unique-local, loopback or link-local one is refused
+    before anything is sent to it; the operator's own URL may name a private
+    address (security review of 2026-10-18, MED-05, N8);
+  - a finished file must carry the ISO 9660 magic, and the helper reports it
+    `finished` (read as idle by the page); a failure empties the file and
+    reports `failed` for 30 seconds;
+  - the web server then checks the file again (still its own, one link,
+    within the size bound, the ISO 9660 magic), hashes it, looks at the
+    switch and at the attached image once more, and publishes it as it does
+    an upload: renamed into the store (0644) and recorded in the media
+    catalog as a CD-ROM or read-only removable image. Until then the status
+    reads `in_progress` at 100 %; a refused publish reads `failed` for 30
+    seconds. A server restarted during a download takes the publish up again
+    from the helper's status;
   - it re-reads the switch while downloading and stops when it is turned off.
+  The application slot that prepares and publishes comes with the system
+  that runs the helper under its own account: an older system's helper
+  publishes on its own and leaves the prepared file empty, which the server
+  removes; an older slot on the newer system finds its downloads refused
+  ("the web server prepared no file for this download").
   Local image upload stays in the web server (`POST /api/download/file`) and
   needs no switch; the Download menu that carries both is shown whenever the
   image store is configured.
 - **PicoClaw** (the reference's AI assistant, runtime v0.2.8):
-  - install: the download helper fetches the pinned upstream release archive
+  - install: PicoClaw's installer (`hardened-blikvm-picoclaw-install@.service`
+    behind its own socket, as `hardened-blikvm-pico-install`, an account in
+    no shared group) fetches the pinned upstream release archive
     (`picoclaw_Linux_arm64.tar.gz` of sipeed/picoclaw v0.2.8) and accepts it
     only when its SHA-256 matches the digest pinned in the source (the
     reference fetches its checksum from the same CDN as the archive); only
     the `picoclaw` member is unpacked into
-    `/var/lib/hardened-blikvm-picoclaw-runtime` (web-server account, 0755),
-    so the runtime cannot modify its own binary. Uninstall removes the binary
-    and the runtime's home;
-  - runtime: `hardened-blikvm-picoclaw.service` runs `picoclaw gateway` as
+    `/var/lib/hardened-blikvm-picoclaw-runtime` (the installer's account,
+    0755), so the runtime cannot modify its own binary. No image download
+    writes that directory: the download template had it, and an ISO
+    download's worker could replace the executable (code audit of
+    2026-10-20, AUD-05.2); its helper now refuses PicoClaw requests, and the
+    web server sends them to the installer when the system names it.
+    Uninstall removes the binary and the runtime's home;
+  - runtime: before every start a root step checks the installed executable
+    against the pinned release's size and SHA-256 and copies it into
+    `/run/hardened-blikvm-picoclaw-exec`, root's; the unit starts that copy,
+    so whoever can write the installed file cannot choose what runs, and a
+    file that differs is not started. `hardened-blikvm-picoclaw.service` runs
+    `picoclaw gateway` as
     the dedicated `hardened-blikvm-picoclaw` user with a sandbox in which only
     its home (`/var/lib/hardened-blikvm-picoclaw`) is writable. It has network
     access for the model API but not to link-local or multicast addresses. Its
@@ -100,7 +168,12 @@ and are socket-activated per connection.
     actions) with an internal token the server generates and keeps in its
     state directory. The server accepts those calls only directly on
     loopback (not through the TLS proxy, which always adds
-    `X-Forwarded-For`), with the token and the switch on. Actions are sent as
+    `X-Forwarded-For`), with the token and the switch on. The TLS proxy
+    reaches the server through a socket of its own, which serves nginx's
+    user alone and is the only place the server believes `X-Forwarded-For`;
+    any other local process on the TCP port, the runtime included, counts as
+    its own address for the login limiter (code audit of 2026-10-20,
+    AUD-16.2). Actions are sent as
     HID reports through the HID lease of the operator session that opened the
     assistant, so the assistant can only act while that operator's KVM page
     holds the keyboard and mouse. While the assistant session holds its lock

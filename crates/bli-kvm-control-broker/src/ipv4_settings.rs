@@ -40,10 +40,19 @@ struct Snapshot {
     ignore_auto_dns: String,
 }
 
+/// An interface's unconfirmed addressing change: the state its revert
+/// restores is the one before the first unconfirmed change, whatever
+/// changes come after it inside the window (code audit of 2026-10-20,
+/// AUD-08).
 struct Pending {
     generation: u64,
     deadline: Instant,
+    uuid: String,
+    before: Snapshot,
 }
+
+/// Pending reverts by device.
+type PendingReverts = Arc<Mutex<std::collections::BTreeMap<String, Pending>>>;
 
 /// What an unconfirmed addressing change must restore, kept across a restart.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -53,9 +62,19 @@ struct RevertRecord {
     before: Snapshot,
 }
 
+/// The journal's records, one for each interface with an unconfirmed
+/// change; a single one is written as older owners wrote theirs, so they
+/// still read it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum RevertRecords {
+    One(RevertRecord),
+    Many(Vec<RevertRecord>),
+}
+
 pub struct Ipv4Settings {
     runner: Runner,
-    pending: Arc<Mutex<Option<Pending>>>,
+    pending: PendingReverts,
     generation: u64,
     revert_after: Duration,
     journal: Option<RevertJournal>,
@@ -121,7 +140,7 @@ impl Ipv4Settings {
     pub fn open(runner: Box<dyn WifiRunner>) -> Self {
         Self {
             runner: Arc::new(Mutex::new(runner)),
-            pending: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             generation: 0,
             revert_after: REVERT_AFTER,
             journal: None,
@@ -142,8 +161,12 @@ impl Ipv4Settings {
         let Some(journal) = self.journal.clone() else {
             return false;
         };
-        let Some(record) = journal.read::<RevertRecord>() else {
+        let Some(records) = journal.read::<RevertRecords>() else {
             return false;
+        };
+        let mut records = match records {
+            RevertRecords::One(record) => vec![record],
+            RevertRecords::Many(records) => records,
         };
         let runner = Arc::clone(&self.runner);
         std::thread::spawn(move || {
@@ -151,7 +174,11 @@ impl Ipv4Settings {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_secs(5));
                 }
-                if Self::revert_record(&runner, &journal, &record) {
+                records.retain(|record| !Self::revert_record(&runner, record));
+                if let Err(error) = write_records(&journal, records.clone()) {
+                    eprintln!("network: the revert journal could not be written: {error}");
+                }
+                if records.is_empty() {
                     return;
                 }
             }
@@ -160,7 +187,7 @@ impl Ipv4Settings {
         true
     }
 
-    fn revert_record(runner: &Runner, journal: &RevertJournal, record: &RevertRecord) -> bool {
+    fn revert_record(runner: &Runner, record: &RevertRecord) -> bool {
         match Self::apply(
             runner,
             &record.device,
@@ -168,7 +195,6 @@ impl Ipv4Settings {
             &Self::restore_settings(&record.before),
         ) {
             Ok(()) => {
-                journal.clear();
                 eprintln!(
                     "network: unconfirmed IPv4 change on {} reverted after a restart",
                     record.device
@@ -345,10 +371,11 @@ impl Ipv4Settings {
         })
     }
 
+    /// The soonest pending revert.
     fn revert_in_seconds(&self) -> u32 {
         let pending = self.pending.lock().expect("pending poisoned");
         pending
-            .as_ref()
+            .values()
             .map(|pending| {
                 pending
                     .deadline
@@ -356,6 +383,7 @@ impl Ipv4Settings {
                     .as_secs()
                     .max(1) as u32
             })
+            .min()
             .unwrap_or(0)
     }
 
@@ -440,7 +468,7 @@ impl Ipv4Settings {
         else {
             return reject(ControlRejectionCode::InvalidState);
         };
-        let (uuid, before) = match self
+        let (uuid, current) = match self
             .profile_uuid(&connection)
             .and_then(|uuid| self.snapshot(&uuid).map(|snapshot| (uuid, snapshot)))
         {
@@ -450,6 +478,16 @@ impl Ipv4Settings {
                 return reject(ControlRejectionCode::BackendRejected);
             }
         };
+        // Inside a window the revert keeps its first state.
+        let first = self
+            .pending
+            .lock()
+            .expect("pending poisoned")
+            .get(&device)
+            .filter(|pending| pending.uuid == uuid)
+            .map(|pending| pending.before.clone());
+        let in_window = first.is_some();
+        let before = first.unwrap_or_else(|| current.clone());
         let mut settings: Vec<(&str, String)> = Vec::new();
         if change.dhcp {
             settings.extend([
@@ -475,30 +513,30 @@ impl Ipv4Settings {
             ]);
         }
         // Written before the change: a restart from here on still reverts it.
-        if let Some(journal) = &self.journal
-            && let Err(error) = journal.write(&RevertRecord {
-                device: device.clone(),
-                uuid: uuid.clone(),
-                before: before.clone(),
-            })
-        {
+        if let Err(error) = self.write_journal(Some(RevertRecord {
+            device: device.clone(),
+            uuid: uuid.clone(),
+            before: before.clone(),
+        })) {
             eprintln!("network: the revert journal could not be written: {error}");
             return reject(ControlRejectionCode::BackendRejected);
         }
         if let Err(reason) = Self::apply(&self.runner, &device, &uuid, &settings) {
             eprintln!("network: applying the IPv4 change failed: {reason}");
+            // The state before this change comes back; a pending revert
+            // stays as it was.
             let _ = Self::apply(
                 &self.runner,
                 &device,
                 &uuid,
-                &Self::restore_settings(&before),
+                &Self::restore_settings(&current),
             );
-            if let Some(journal) = &self.journal {
-                journal.clear();
+            if let Err(error) = self.write_journal(None) {
+                eprintln!("network: the revert journal could not be written: {error}");
             }
             return reject(ControlRejectionCode::BackendRejected);
         }
-        let after = self.snapshot(&uuid).unwrap_or_else(|_| before.clone());
+        let after = self.snapshot(&uuid).unwrap_or_else(|_| current.clone());
         let addressing_changed = after.method != before.method
             || after.addresses != before.addresses
             || after.gateway != before.gateway;
@@ -511,22 +549,43 @@ impl Ipv4Settings {
                 ""
             }
         );
-        if addressing_changed {
+        if addressing_changed || in_window {
+            // A change inside a window, the resolvers' alone included, keeps
+            // the window's revert and starts its time again.
             self.arm_revert(device, uuid, before);
-        } else if let Some(journal) = &self.journal {
+        } else if let Err(error) = self.write_journal(None) {
             // A change of the resolvers alone needs no confirmation.
-            journal.clear();
+            eprintln!("network: the revert journal could not be written: {error}");
         }
         self.info()
+    }
+
+    /// Writes the pending reverts, with `adding` among them, before a change.
+    fn write_journal(&self, adding: Option<RevertRecord>) -> std::io::Result<()> {
+        let Some(journal) = &self.journal else {
+            return Ok(());
+        };
+        let pending = self.pending.lock().expect("pending poisoned");
+        let mut records = pending_records(&pending);
+        if let Some(adding) = adding {
+            records.retain(|record| record.device != adding.device);
+            records.push(adding);
+        }
+        write_records(journal, records)
     }
 
     fn arm_revert(&mut self, device: String, uuid: String, before: Snapshot) {
         self.generation += 1;
         let generation = self.generation;
-        *self.pending.lock().expect("pending poisoned") = Some(Pending {
-            generation,
-            deadline: Instant::now() + self.revert_after,
-        });
+        self.pending.lock().expect("pending poisoned").insert(
+            device.clone(),
+            Pending {
+                generation,
+                deadline: Instant::now() + self.revert_after,
+                uuid,
+                before,
+            },
+        );
         let pending = Arc::clone(&self.pending);
         let runner = Arc::clone(&self.runner);
         let journal = self.journal.clone();
@@ -534,18 +593,29 @@ impl Ipv4Settings {
         std::thread::spawn(move || {
             std::thread::sleep(wait);
             let mut current = pending.lock().expect("pending poisoned");
-            if current.as_ref().map(|pending| pending.generation) != Some(generation) {
+            if current.get(&device).map(|pending| pending.generation) != Some(generation) {
                 return;
             }
-            *current = None;
+            let Some(due) = current.remove(&device) else {
+                return;
+            };
             drop(current);
-            match Self::apply(&runner, &device, &uuid, &Self::restore_settings(&before)) {
+            match Self::apply(
+                &runner,
+                &device,
+                &due.uuid,
+                &Self::restore_settings(&due.before),
+            ) {
                 Ok(()) => {
                     if let Some(journal) = &journal {
-                        journal.clear();
+                        let current = pending.lock().expect("pending poisoned");
+                        if let Err(error) = write_records(journal, pending_records(&current)) {
+                            eprintln!("network: the revert journal could not be written: {error}");
+                        }
                     }
                     eprintln!("network: unconfirmed IPv4 change on {device} reverted");
                 }
+                // The journal keeps its record: the next owner tries again.
                 Err(reason) => eprintln!("network: reverting {device} failed: {reason}"),
             }
         });
@@ -614,8 +684,8 @@ impl Ipv4Settings {
 
     pub fn confirm(&mut self) -> ControlResponse {
         self.cache = None;
-        let confirmed = self.pending.lock().expect("pending poisoned").take();
-        if confirmed.is_some() {
+        let confirmed = std::mem::take(&mut *self.pending.lock().expect("pending poisoned"));
+        if !confirmed.is_empty() {
             if let Some(journal) = &self.journal {
                 journal.clear();
             }
@@ -631,27 +701,91 @@ fn reject(code: ControlRejectionCode) -> ControlResponse {
     ControlResponse::Rejected { code }
 }
 
+fn pending_records(pending: &std::collections::BTreeMap<String, Pending>) -> Vec<RevertRecord> {
+    pending
+        .iter()
+        .map(|(device, pending)| RevertRecord {
+            device: device.clone(),
+            uuid: pending.uuid.clone(),
+            before: pending.before.clone(),
+        })
+        .collect()
+}
+
+/// One record is written alone, as older owners read it; none clears the
+/// journal.
+fn write_records(journal: &RevertJournal, mut records: Vec<RevertRecord>) -> std::io::Result<()> {
+    match records.len() {
+        0 => {
+            journal.clear();
+            Ok(())
+        }
+        1 => journal.write(&RevertRecords::One(records.remove(0))),
+        _ => journal.write(&RevertRecords::Many(records)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A NetworkManager stand-in for one wired profile.
+    const WIRED_UUID: &str = "8fe436fc-dbd5-3398-9d6d-669fa69d8a73";
+    const WIRELESS_UUID: &str = "1b2c3d4e-0000-4000-8000-000000000077";
+
+    /// A NetworkManager stand-in for one wired profile, and a wireless one
+    /// when `wlan` is set.
     struct FakeNm {
         profile: Arc<Mutex<Snapshot>>,
+        wlan: Option<Arc<Mutex<Snapshot>>>,
         calls: Arc<Mutex<Vec<String>>>,
         ipv6: Arc<Mutex<std::collections::BTreeMap<String, String>>>,
+        /// Refuses the next `connection modify` before it changes anything.
+        fail_modify: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl FakeNm {
+        fn wired(profile: &Arc<Mutex<Snapshot>>) -> Self {
+            Self {
+                profile: Arc::clone(profile),
+                wlan: None,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                ipv6: Arc::new(Mutex::new(
+                    [("ipv6.method".to_string(), "auto".to_string())].into(),
+                )),
+                fail_modify: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        fn profile_of(&self, uuid: &str) -> Arc<Mutex<Snapshot>> {
+            match (&self.wlan, uuid) {
+                (Some(wlan), WIRELESS_UUID) => Arc::clone(wlan),
+                _ => Arc::clone(&self.profile),
+            }
+        }
     }
 
     impl WifiRunner for FakeNm {
         fn nmcli(&mut self, args: &[&str]) -> Result<String, String> {
             self.calls.lock().unwrap().push(args.join(" "));
-            let profile = self.profile.lock().unwrap().clone();
+            let uuid = match args {
+                ["-g", _, "connection", "show", uuid] | ["connection", "modify", uuid, ..] => *uuid,
+                _ => WIRED_UUID,
+            };
+            let selected = self.profile_of(uuid);
+            let profile = selected.lock().unwrap().clone();
             Ok(match args {
                 ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"] => {
-                    "eth0:ethernet:connected:Wired connection 1\nwlan0:wifi:disconnected:\nlo:loopback:unmanaged:\n".into()
+                    if self.wlan.is_some() {
+                        "eth0:ethernet:connected:Wired connection 1\nwlan0:wifi:connected:Home\nlo:loopback:unmanaged:\n".into()
+                    } else {
+                        "eth0:ethernet:connected:Wired connection 1\nwlan0:wifi:disconnected:\nlo:loopback:unmanaged:\n".into()
+                    }
                 }
                 ["-g", "connection.uuid", "connection", "show", "Wired connection 1"] => {
-                    "8fe436fc-dbd5-3398-9d6d-669fa69d8a73\n".into()
+                    format!("{WIRED_UUID}\n")
+                }
+                ["-g", "connection.uuid", "connection", "show", "Home"] if self.wlan.is_some() => {
+                    format!("{WIRELESS_UUID}\n")
                 }
                 ["-g", "ipv6.method,ipv6.addresses,ipv6.gateway", "connection", "show", _] => {
                     let ipv6 = self.ipv6.lock().unwrap();
@@ -687,8 +821,17 @@ mod tests {
                     profile.ignore_auto_dns
                 ),
                 ["-g", _, "device", "show", "eth0"] => "192.0.2.118/24\n192.0.2.5\n192.0.2.5\nint\nrouters = 192.0.2.5 | domain_name_servers = 192.0.2.5 192.0.2.6 | subnet_mask = 255.255.255.0\n\n\n8fe436fc-dbd5-3398-9d6d-669fa69d8a73\n".into(),
+                ["-g", _, "device", "show", "wlan0"] if self.wlan.is_some() => {
+                    format!("198.51.100.20/24\n198.51.100.1\n198.51.100.1\n\n\n\n\n{WIRELESS_UUID}\n")
+                }
                 ["connection", "modify", _, rest @ ..] => {
-                    let mut profile = self.profile.lock().unwrap();
+                    if self
+                        .fail_modify
+                        .swap(false, std::sync::atomic::Ordering::SeqCst)
+                    {
+                        return Err("modify refused".into());
+                    }
+                    let mut profile = selected.lock().unwrap();
                     for pair in rest.chunks(2) {
                         let value = pair[1].to_string();
                         match pair[0] {
@@ -716,7 +859,7 @@ mod tests {
                     }
                     String::new()
                 }
-                ["device", "reapply", "eth0"] => String::new(),
+                ["device", "reapply", "eth0" | "wlan0"] => String::new(),
                 _ => return Err(format!("unexpected {}", args.join(" "))),
             })
         }
@@ -745,14 +888,7 @@ mod tests {
     }
 
     fn settings(profile: &Arc<Mutex<Snapshot>>, revert_after: Duration) -> Ipv4Settings {
-        Ipv4Settings::open(Box::new(FakeNm {
-            profile: Arc::clone(profile),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            ipv6: Arc::new(Mutex::new(
-                [("ipv6.method".to_string(), "auto".to_string())].into(),
-            )),
-        }))
-        .with_revert_after(revert_after)
+        Ipv4Settings::open(Box::new(FakeNm::wired(profile))).with_revert_after(revert_after)
     }
 
     fn manual(address: Option<&str>) -> Ipv4Change {
@@ -794,14 +930,9 @@ mod tests {
     #[test]
     fn one_reading_serves_the_pages_that_ask_together() {
         let profile = Arc::new(Mutex::new(dhcp_profile()));
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut ipv4 = Ipv4Settings::open(Box::new(FakeNm {
-            profile: Arc::clone(&profile),
-            calls: Arc::clone(&calls),
-            ipv6: Arc::new(Mutex::new(
-                [("ipv6.method".to_string(), "auto".to_string())].into(),
-            )),
-        }));
+        let nm = FakeNm::wired(&profile);
+        let calls = Arc::clone(&nm.calls);
+        let mut ipv4 = Ipv4Settings::open(Box::new(nm));
         let first = ipv4.info();
         let reads = calls.lock().unwrap().len();
         // The device list, the device (with its profile's UUID) and one
@@ -897,6 +1028,125 @@ mod tests {
         ipv4.set(&manual(Some("192.0.2.200")));
         assert_eq!(ipv4.confirm(), ControlResponse::Applied);
         assert!(journal.read::<RevertRecord>().is_none());
+    }
+
+    #[test]
+    fn a_second_change_in_the_window_still_reverts_to_the_first_state() {
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        // Windows long enough for a loaded host, which takes its time
+        // between the two changes.
+        let mut ipv4 = settings(&profile, Duration::from_millis(2_000));
+        ipv4.set(&manual(Some("192.0.2.50")));
+        ipv4.set(&manual(Some("192.0.2.60")));
+        assert_eq!(profile.lock().unwrap().addresses, "192.0.2.60/24");
+        assert!(ipv4.revert_in_seconds() > 0);
+        std::thread::sleep(Duration::from_millis(4_500));
+        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+        assert_eq!(ipv4.revert_in_seconds(), 0);
+    }
+
+    #[test]
+    fn a_resolver_edit_in_the_window_keeps_the_revert_across_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        let mut ipv4 = settings(&profile, Duration::from_secs(3600)).with_journal(journal.clone());
+        ipv4.set(&manual(Some("192.0.2.200")));
+        let mut resolvers = manual(None);
+        resolvers.dns = vec!["192.0.2.54".into()];
+        ipv4.set(&resolvers);
+        assert!(ipv4.revert_in_seconds() > 0);
+        assert!(journal.read::<RevertRecords>().is_some());
+        drop(ipv4);
+
+        let next = settings(&profile, REVERT_AFTER).with_journal(journal.clone());
+        assert!(next.reconcile());
+        for _ in 0..50 {
+            if journal.read::<RevertRecords>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+    }
+
+    #[test]
+    fn a_change_on_another_interface_keeps_the_first_ones_revert() {
+        let wired = Arc::new(Mutex::new(dhcp_profile()));
+        let wireless = Arc::new(Mutex::new(dhcp_profile()));
+        let mut nm = FakeNm::wired(&wired);
+        nm.wlan = Some(Arc::clone(&wireless));
+        let mut ipv4 =
+            Ipv4Settings::open(Box::new(nm)).with_revert_after(Duration::from_millis(2_000));
+        ipv4.set(&manual(Some("192.0.2.200")));
+        let mut other = manual(Some("198.51.100.77"));
+        other.interface = "wlan0".into();
+        other.gateway = Some("198.51.100.1".into());
+        ipv4.set(&other);
+        assert_eq!(wired.lock().unwrap().method, "manual");
+        assert_eq!(wireless.lock().unwrap().method, "manual");
+        std::thread::sleep(Duration::from_millis(4_500));
+        assert_eq!(*wired.lock().unwrap(), dhcp_profile());
+        assert_eq!(*wireless.lock().unwrap(), dhcp_profile());
+    }
+
+    #[test]
+    fn a_failed_change_in_the_window_keeps_the_pending_revert() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        let nm = FakeNm::wired(&profile);
+        let fail = Arc::clone(&nm.fail_modify);
+        let mut ipv4 = Ipv4Settings::open(Box::new(nm))
+            .with_revert_after(Duration::from_secs(3600))
+            .with_journal(journal.clone());
+        ipv4.set(&manual(Some("192.0.2.200")));
+        fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            ipv4.set(&manual(Some("192.0.2.60"))),
+            reject(ControlRejectionCode::BackendRejected)
+        );
+        // The state before the failed change, and the window's revert to
+        // the state it opened with.
+        assert_eq!(profile.lock().unwrap().addresses, "192.0.2.200/24");
+        assert!(ipv4.revert_in_seconds() > 0);
+        assert_eq!(
+            journal.read::<RevertRecords>(),
+            Some(RevertRecords::One(RevertRecord {
+                device: "eth0".into(),
+                uuid: WIRED_UUID.into(),
+                before: dhcp_profile(),
+            }))
+        );
+    }
+
+    #[test]
+    fn an_older_owners_single_record_is_still_reverted() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let profile = Arc::new(Mutex::new(Snapshot {
+            method: "manual".into(),
+            addresses: "192.0.2.200/24".into(),
+            gateway: "192.0.2.5".into(),
+            dns: "192.0.2.53".into(),
+            ignore_auto_dns: "yes".into(),
+        }));
+        journal
+            .write(&RevertRecord {
+                device: "eth0".into(),
+                uuid: WIRED_UUID.into(),
+                before: dhcp_profile(),
+            })
+            .unwrap();
+        let next = settings(&profile, REVERT_AFTER).with_journal(journal.clone());
+        assert!(next.reconcile());
+        for _ in 0..50 {
+            if journal.read::<RevertRecords>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
     }
 
     #[test]

@@ -125,6 +125,20 @@ impl SessionStore {
             for seen in self.last_seen.write().await.values_mut() {
                 *seen = now;
             }
+            // No session, and so none of its open streams, outlives the new
+            // lock from now; a shorter deadline is kept.
+            let ttl = Duration::from_secs(seconds);
+            let unix_limit = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .saturating_add(ttl)
+                .as_secs();
+            for session in self.sessions.write().await.values_mut() {
+                if session.expires_at() > now + ttl {
+                    session.set_expiry(now + ttl);
+                    session.expires_at_unix = session.expires_at_unix.min(unix_limit);
+                }
+            }
         }
     }
 
@@ -263,6 +277,28 @@ mod tests {
         assert!(store.retime("unknown", 1800).await.is_none());
         store.revoke(&session.token).await;
         assert!(store.retime(&session.token, 1800).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn setting_the_lock_shortens_every_session_to_it() {
+        let store = SessionStore::with_lock_after_seconds(0);
+        let first = store.issue("operator", 86_400).await;
+        let other = store.issue("operator", 86_400).await;
+        let short = store.issue("operator", 10).await;
+        store.set_lock_after_seconds(60).await;
+        let unix_limit = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 60;
+        for session in [&first, &other] {
+            // The clone a stream holds sees the new deadline.
+            assert!(session.expires_at() <= Instant::now() + Duration::from_secs(60));
+            let stored = store.validate(&session.token).await.unwrap();
+            assert!(stored.expires_at_unix <= unix_limit);
+        }
+        // Never lengthened.
+        assert!(short.expires_at() <= Instant::now() + Duration::from_secs(10));
     }
 
     #[tokio::test]

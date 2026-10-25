@@ -1,19 +1,15 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Divider } from 'antd';
 import clsx from 'clsx';
-import { useAtomValue } from 'jotai';
-import { GripVerticalIcon } from 'lucide-react';
+import { useAtomValue, useSetAtom } from 'jotai';
+import { ChevronDownIcon, GripVerticalIcon } from 'lucide-react';
 import Draggable, { DraggableData, DraggableEvent } from 'react-draggable';
+import { useTranslation } from 'react-i18next';
 
-import {
-  isAvailable,
-  supportsMenuItem,
-  supportsRestrictedControls,
-  type CapabilityMenuItem
-} from '@/lib/capabilities.ts';
+import { isAvailable, supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
 import { HARDENED_LOGO_SRC, HARDENED_NAME, HARDENED_SHORT_NAME } from '@/lib/hardened.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
-import { menuDisabledItemsAtom } from '@/jotai/settings.ts';
+import { menuBarOccupiesTopAtom, menuDisabledItemsAtom } from '@/jotai/settings.ts';
 import { useMenuBounds } from '@/hooks/useMenuBounds.ts';
 import { useMenuVisibility } from '@/hooks/useMenuVisibility.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
@@ -23,11 +19,12 @@ import { Fullscreen } from './fullscreen';
 import { Image } from './image';
 import { Keyboard } from './keyboard';
 import { LocalKeyboardButton } from './local-keyboard-button';
+import { Monitors } from './monitors';
 import { Mouse } from './mouse';
 import { Collapse, Expand } from './operations';
 import { Picoclaw } from './picoclaw';
 import { Power } from './power';
-import { RemoteControl } from './remote-control.tsx';
+import { QualityMonitorButton } from './quality-monitor-button.tsx';
 import { Screen } from './screen';
 import { Script } from './script';
 import { Settings } from './settings';
@@ -35,12 +32,12 @@ import { Terminal } from './terminal';
 import { Wol } from './wol';
 
 export const Menu = () => {
+  const { t } = useTranslation();
   const nodeRef = useRef<HTMLDivElement | null>(null);
   const isDesktopLayout = useIsDesktopLayout();
 
   const capabilities = useAtomValue(capabilitiesAtom);
   const hidAvailable = Boolean(capabilities && isAvailable(capabilities.hid.status));
-  const restrictedHid = supportsRestrictedControls(capabilities);
   const menuDisabledItems = useAtomValue(menuDisabledItemsAtom);
 
   const {
@@ -48,13 +45,24 @@ export const Menu = () => {
     isMenuExpanded,
     isMenuHidden,
     handleHovered,
+    handleTouched,
     handleMoved,
     setIsMenuExpanded
   } = useMenuVisibility();
 
   const menuBounds = useMenuBounds(nodeRef, isMenuExpanded);
   const showExpandedMenu = isDesktopLayout ? isMenuExpanded : true;
-  const shouldAutoHide = isDesktopLayout && isMenuHidden;
+  // Auto hide works on both layouts. Without a mouse, a touch on the bar
+  // restarts its countdown and a tab at the top edge brings it back.
+  const shouldAutoHide = isMenuHidden;
+
+  // While the bar shows on the touch layout, the screen goes below it.
+  const setMenuBarOccupiesTop = useSetAtom(menuBarOccupiesTopAtom);
+  const occupiesTop = !isDesktopLayout && isInitialized && !shouldAutoHide;
+  useEffect(() => {
+    setMenuBarOccupiesTop(occupiesTop);
+  }, [occupiesTop, setMenuBarOccupiesTop]);
+  useEffect(() => () => setMenuBarOccupiesTop(false), [setMenuBarOccupiesTop]);
 
   function onDragStop(_e: DraggableEvent, data: DraggableData) {
     if (!isDesktopLayout) return;
@@ -81,18 +89,43 @@ export const Menu = () => {
           'fixed left-1/2 top-[10px] z-[1000] -translate-x-1/2 transition-opacity duration-300',
           isInitialized ? 'opacity-100' : 'opacity-0'
         )}
-        onMouseEnter={() => handleHovered(true)}
-        onMouseLeave={() => handleHovered(false)}
-        onBlur={() => handleHovered(false)}
+        // A tap also fires mouse events, and the mouse never leaves on a
+        // touch screen: there, touches drive the countdown instead.
+        onMouseEnter={isDesktopLayout ? () => handleHovered(true) : undefined}
+        onMouseLeave={isDesktopLayout ? () => handleHovered(false) : undefined}
+        onBlur={isDesktopLayout ? () => handleHovered(false) : undefined}
+        onPointerDownCapture={isDesktopLayout ? undefined : handleTouched}
       >
+        {/* Touch layout: the tab that brings the hidden bar back */}
+        {!isDesktopLayout && shouldAutoHide && (
+          <button
+            type="button"
+            data-testid="menu-reveal"
+            aria-label={t('menu.show')}
+            className="absolute -top-[10px] left-1/2 z-10 flex h-[22px] w-[52px] -translate-x-1/2 items-center justify-center rounded-b bg-neutral-800/80 text-neutral-300"
+            onClick={handleTouched}
+          >
+            <ChevronDownIcon size={16} />
+          </button>
+        )}
+
         {/* Trigger area for auto-show when hidden */}
         {isDesktopLayout && isMenuExpanded && (
           <div className="absolute -top-[10px] left-0 right-0 h-[46px] w-full bg-transparent" />
         )}
 
         {/* Menubar */}
-        <div className="sticky top-[10px] flex w-full justify-center">
+        <div
+          className={clsx(
+            'sticky top-[10px] flex w-full justify-center',
+            // Hidden on a touch screen, the bar must not take the touches
+            // meant for the remote screen or for the tab above.
+            !isDesktopLayout && shouldAutoHide && 'pointer-events-none'
+          )}
+        >
           <div
+            data-testid="menu-bar"
+            data-hidden={shouldAutoHide ? 'true' : 'false'}
             className={clsx(
               'h-[36px] max-w-[calc(100vw-12px)] items-center overflow-x-auto rounded bg-neutral-800/80 pl-1 pr-2 transition-all duration-300',
               showExpandedMenu ? 'flex' : 'hidden',
@@ -107,7 +140,7 @@ export const Menu = () => {
             {isDesktopLayout && <Divider type="vertical" />}
 
             <div
-              className="flex h-[30px] w-[32px] select-none items-center justify-start overflow-hidden rounded bg-white sm:w-[98px] sm:justify-center"
+              className="flex h-[30px] w-[32px] select-none items-center justify-start overflow-hidden rounded bg-[#fff] sm:w-[98px] sm:justify-center"
               title={HARDENED_NAME}
             >
               <img
@@ -119,10 +152,11 @@ export const Menu = () => {
             <Divider type="vertical" />
 
             <Screen />
-            {restrictedHid && <RemoteControl />}
+            {isEnabled('qualityMonitor') && <QualityMonitorButton />}
             {hidAvailable && <LocalKeyboardButton />}
             {hidAvailable && <Keyboard />}
             {hidAvailable && <Mouse />}
+            {hidAvailable && <Monitors />}
             <Divider type="vertical" />
 
             {isEnabled('image') && <Image />}

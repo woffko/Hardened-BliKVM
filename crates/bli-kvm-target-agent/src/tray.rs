@@ -1,0 +1,379 @@
+//! The agent's icon in the notification area, the project's mark from the
+//! program's resources: its name, version and commit and whether it is
+//! connected to the board on the icon and in its menu (right or left
+//! click), what it reads shown on request, Stop and Start for the channel,
+//! and Exit; in Russian on a Russian Windows. One agent runs in a user's
+//! session: a second start of the same commit leaves the first; one of
+//! another commit asks the first to leave (its menu's Exit) and takes its
+//! place, the sign-in start's copy with it (decision 1 of
+//! `docs/baselines/work-plan-20261017-review-fixes.md`). The icon comes back
+//! when the taskbar is started again. Windows' calls are this module's
+//! unsafe code.
+
+use std::mem::zeroed;
+use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+
+use bli_kvm_target_agent::names::{self, Arrival, Words, describe, words};
+use bli_kvm_target_agent::{source_commit, title, wide};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM,
+};
+use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Threading::CreateMutexW;
+use windows_sys::Win32::UI::Shell::{
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowTextW,
+    HICON, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTCOLOR, LoadIconW, LoadImageW, MB_ICONINFORMATION,
+    MB_OK, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON,
+    SM_CYSMICON, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
+    WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+    WS_OVERLAPPED,
+};
+
+/// What the icon sends its window when it is clicked.
+const ICON_MESSAGE: u32 = WM_APP + 1;
+/// The menu's Exit.
+const EXIT: usize = 1;
+/// The menu's "Show what the agent reads".
+const SHOW: usize = 2;
+/// The menu's Stop or Start.
+const STOP_OR_START: usize = 3;
+/// The menu's "Start at sign-in", checked while it is on.
+const AUTOSTART: usize = 4;
+/// The agent's icon in its resources (build.rs).
+const ICON_RESOURCE: u16 = 1;
+
+/// The words of the user's interface language.
+fn texts() -> Words {
+    // SAFETY: reads the user's interface language.
+    words(unsafe { GetUserDefaultUILanguage() })
+}
+/// What the channel sends the window when its status changes.
+const STATUS_MESSAGE: u32 = WM_APP + 2;
+/// The icon's number among the window's icons.
+const ICON_ID: u32 = 1;
+/// The agent's window class and its session's mutex, every agent's since
+/// the first: an older one is found by them and asked to leave.
+const CLASS: &str = "HardenedBliKVMAgent";
+const SESSION_MUTEX: &str = "Local\\HardenedBliKVMAgent";
+/// How long an agent asked to leave is waited for.
+const LEAVE_WAIT: Duration = Duration::from_secs(5);
+/// The message the taskbar sends every window when it starts again.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+
+/// Shows the icon and runs until Quit; the process's exit code.
+pub fn run() -> i32 {
+    // SAFETY: each call gets what Windows documents for it: zero-ended UTF-16
+    // that outlives the call, structures zeroed and then filled, and the
+    // window procedure below for the class it registers.
+    unsafe {
+        // Kept for the process's life: the session's agent holds it.
+        let _session = match take_session() {
+            Ok(mutex) => mutex,
+            Err(code) => return code,
+        };
+        if names::refreshes_sign_in(
+            crate::autostart::enabled(),
+            crate::autostart::runs_from_kept_copy(),
+        ) {
+            // The sign-in start keeps the agent that runs now: one started
+            // from the board's drive after an update replaces the older
+            // copy. A copy that cannot be made now is made at the next start.
+            let _ = crate::autostart::enable();
+        }
+        let instance = GetModuleHandleW(null());
+        let class = wide(CLASS, 64);
+        let mut window_class: WNDCLASSW = zeroed();
+        window_class.lpfnWndProc = Some(window_procedure);
+        window_class.hInstance = instance;
+        window_class.lpszClassName = class.as_ptr();
+        if RegisterClassW(&window_class) == 0 {
+            return 1;
+        }
+        let caption = wide(&title(), 128);
+        let window = CreateWindowExW(
+            0,
+            class.as_ptr(),
+            caption.as_ptr(),
+            WS_OVERLAPPED,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            instance,
+            null(),
+        );
+        if window.is_null() {
+            return 1;
+        }
+        let restarted = wide("TaskbarCreated", 32);
+        TASKBAR_CREATED.store(
+            RegisterWindowMessageW(restarted.as_ptr()),
+            Ordering::Relaxed,
+        );
+        if !add_icon(window) {
+            DestroyWindow(window);
+            return 1;
+        }
+        crate::channel::start(window as isize, STATUS_MESSAGE, texts());
+        let mut message: MSG = zeroed();
+        while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        0
+    }
+}
+
+/// The session's mutex, taken: from no agent, or from an agent of another
+/// commit, which is asked to leave by its menu's Exit and waited for. Else
+/// the process's exit code: 0 while an agent of this commit runs, or one
+/// asked to leave stays; 1 when the mutex cannot be made.
+unsafe fn take_session() -> Result<HANDLE, i32> {
+    let name = wide(SESSION_MUTEX, 64);
+    let class = wide(CLASS, 64);
+    let mut asked: Option<Instant> = None;
+    // SAFETY: zero-ended names; a handle that is not kept is closed; the
+    // title's buffer goes with its length.
+    unsafe {
+        loop {
+            let mutex = CreateMutexW(null(), 0, name.as_ptr());
+            if mutex.is_null() {
+                return Err(1);
+            }
+            if GetLastError() != ERROR_ALREADY_EXISTS {
+                return Ok(mutex);
+            }
+            // Closed, so that the mutex goes with the agent that holds it.
+            CloseHandle(mutex);
+            match asked {
+                None => {
+                    let running = FindWindowW(class.as_ptr(), null());
+                    if running.is_null() {
+                        return Err(0);
+                    }
+                    let mut units = [0_u16; 128];
+                    let length = GetWindowTextW(running, units.as_mut_ptr(), units.len() as i32);
+                    let running_title = String::from_utf16_lossy(&units[..length.max(0) as usize]);
+                    if names::arrival(source_commit(), &running_title) != Arrival::Replace {
+                        return Err(0);
+                    }
+                    PostMessageW(running, WM_COMMAND, EXIT, 0);
+                    asked = Some(Instant::now());
+                }
+                Some(at) if at.elapsed() >= LEAVE_WAIT => return Err(0),
+                Some(_) => {}
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+/// The icon's description for `Shell_NotifyIconW`.
+unsafe fn icon_data(window: HWND) -> NOTIFYICONDATAW {
+    // SAFETY: a zeroed NOTIFYICONDATAW is valid; the fields set are its own.
+    unsafe {
+        let mut data: NOTIFYICONDATAW = zeroed();
+        data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+        data.hWnd = window;
+        data.uID = ICON_ID;
+        data
+    }
+}
+
+/// The icon's tip: the agent's title and its status.
+fn tip() -> String {
+    format!("{}\n{}", title(), crate::channel::status())
+}
+
+unsafe fn add_icon(window: HWND) -> bool {
+    // SAFETY: as in `run`; the tip is copied into the structure.
+    unsafe {
+        let mut data = icon_data(window);
+        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        data.uCallbackMessage = ICON_MESSAGE;
+        data.hIcon = icon();
+        let tip = wide(&tip(), data.szTip.len());
+        data.szTip[..tip.len()].copy_from_slice(&tip);
+        Shell_NotifyIconW(NIM_ADD, &data) != 0
+    }
+}
+
+/// The agent's icon at the notification area's size, or Windows' own when
+/// the program has none.
+unsafe fn icon() -> HICON {
+    // SAFETY: the resource is this program's; a missing one gives none, and
+    // Windows' own icon is used instead.
+    unsafe {
+        let loaded = LoadImageW(
+            GetModuleHandleW(null()),
+            ICON_RESOURCE as usize as *const u16,
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR,
+        );
+        if loaded.is_null() {
+            LoadIconW(null_mut(), IDI_APPLICATION)
+        } else {
+            loaded as HICON
+        }
+    }
+}
+
+unsafe fn update_tip(window: HWND) {
+    // SAFETY: as in `add_icon`.
+    unsafe {
+        let mut data = icon_data(window);
+        data.uFlags = NIF_TIP;
+        let tip = wide(&tip(), data.szTip.len());
+        data.szTip[..tip.len()].copy_from_slice(&tip);
+        Shell_NotifyIconW(NIM_MODIFY, &data);
+    }
+}
+
+/// What the agent reads, in a message box, as the board would be told it.
+unsafe fn show_reads(window: HWND) {
+    let text = describe(
+        &crate::reads::system(),
+        &crate::reads::monitors(),
+        &crate::reads::keyboard(),
+    );
+    let text = wide(&text, 8192);
+    let caption = wide(&title(), 128);
+    // SAFETY: zero-ended texts that outlive the call.
+    unsafe {
+        MessageBoxW(
+            window,
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONINFORMATION,
+        );
+    }
+}
+
+unsafe fn remove_icon(window: HWND) {
+    // SAFETY: as in `run`.
+    unsafe {
+        let data = icon_data(window);
+        Shell_NotifyIconW(NIM_DELETE, &data);
+    }
+}
+
+/// The icon's menu at the pointer: the agent's title and status, greyed,
+/// what it reads, Stop or Start, and Exit.
+unsafe fn show_menu(window: HWND) {
+    // SAFETY: as in `run`; the menu is destroyed after it was shown.
+    unsafe {
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            return;
+        }
+        let words = texts();
+        let caption = wide(&title(), 128);
+        let status = wide(&crate::channel::status(), 160);
+        let show = wide(words.show, 64);
+        let stop_or_start = wide(
+            if crate::channel::stopped() {
+                words.start
+            } else {
+                words.stop
+            },
+            32,
+        );
+        let exit = wide(words.exit, 32);
+        let autostart = wide(words.autostart, 64);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, caption.as_ptr());
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        AppendMenuW(menu, MF_STRING, SHOW, show.as_ptr());
+        AppendMenuW(menu, MF_STRING, STOP_OR_START, stop_or_start.as_ptr());
+        AppendMenuW(
+            menu,
+            MF_STRING
+                | if crate::autostart::enabled() {
+                    MF_CHECKED
+                } else {
+                    MF_UNCHECKED
+                },
+            AUTOSTART,
+            autostart.as_ptr(),
+        );
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        AppendMenuW(menu, MF_STRING, EXIT, exit.as_ptr());
+        let mut point: POINT = zeroed();
+        GetCursorPos(&mut point);
+        // Without it the menu would not close when clicked beside.
+        SetForegroundWindow(window);
+        TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, window, null());
+        PostMessageW(window, WM_NULL, 0, 0);
+        DestroyMenu(menu);
+    }
+}
+
+unsafe extern "system" fn window_procedure(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // SAFETY: called by Windows for this class's window, with its arguments.
+    unsafe {
+        match message {
+            ICON_MESSAGE => {
+                let event = (lparam as u32) & 0xffff;
+                if event == WM_RBUTTONUP || event == WM_LBUTTONUP || event == WM_CONTEXTMENU {
+                    show_menu(window);
+                }
+                0
+            }
+            WM_COMMAND => {
+                match wparam & 0xffff {
+                    EXIT => {
+                        DestroyWindow(window);
+                    }
+                    SHOW => show_reads(window),
+                    STOP_OR_START => crate::channel::set_stopped(!crate::channel::stopped()),
+                    AUTOSTART => {
+                        let result = if crate::autostart::enabled() {
+                            crate::autostart::disable()
+                        } else {
+                            crate::autostart::enable()
+                        };
+                        if let Err(reason) = result {
+                            let text = wide(&reason, 512);
+                            let caption = wide(&title(), 128);
+                            MessageBoxW(window, text.as_ptr(), caption.as_ptr(), MB_OK);
+                        }
+                    }
+                    _ => {}
+                }
+                0
+            }
+            STATUS_MESSAGE => {
+                update_tip(window);
+                0
+            }
+            WM_DESTROY => {
+                remove_icon(window);
+                PostQuitMessage(0);
+                0
+            }
+            _ if message != 0 && message == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+                add_icon(window);
+                0
+            }
+            _ => DefWindowProcW(window, message, wparam, lparam),
+        }
+    }
+}

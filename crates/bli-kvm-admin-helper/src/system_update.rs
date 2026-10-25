@@ -14,8 +14,8 @@ use std::process::{Command, Stdio};
 use bli_kvm_admin_helper::{FRAME_DATA, MAX_SYSTEM_BUNDLE_BYTES, SystemUpdateState, read_frame};
 use bli_kvm_system_image_verifier::SystemVerificationPolicy;
 use bli_kvm_system_raw_update::{
-    Phase, Record, StageRequest, SystemTools, UpdateError, cancel, confirm, load_trust,
-    minimum_sequence, read_record, request_rollback, stage, staging_path,
+    Phase, Record, StageRequest, SystemTools, UpdateError, accepted_minimum, cancel, confirm,
+    load_trust, minimum_sequence, read_record, request_rollback, stage, staging_path,
 };
 
 pub const TRUST_FILE: &str = "/usr/share/hardened-blikvm/system-update/system-trust.json";
@@ -36,7 +36,9 @@ fn error(error: UpdateError) -> io::Error {
 }
 
 fn view(staging: &Path, record: Option<Record>) -> SystemUpdateState {
-    let minimum_sequence = minimum_sequence(staging);
+    // Shown as the floor; staging refuses when it cannot be read.
+    let minimum_sequence =
+        accepted_minimum(staging, Path::new("/")).unwrap_or_else(|_| minimum_sequence(staging));
     match record {
         Some(record) => SystemUpdateState {
             phase: serde_json::to_value(record.phase)
@@ -105,12 +107,48 @@ fn prepare_staging() -> io::Result<PathBuf> {
     Ok(staging)
 }
 
+/// Held while a request changes the staging directory: upload, stage,
+/// confirm, roll back and cancel run one at a time (code audit of
+/// 2026-10-20, AUD-12).
+pub struct StagingLock(#[allow(dead_code)] File);
+
+const LOCK_FILE: &str = ".lock";
+
+fn lock_in(staging: &Path) -> io::Result<StagingLock> {
+    use std::os::fd::AsRawFd;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(staging.join(LOCK_FILE))?;
+    // SAFETY: flock on a descriptor this function owns; the lock goes with
+    // the file.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(io::Error::other("another system update request is running"));
+    }
+    Ok(StagingLock(file))
+}
+
+/// Takes the staging directory for one changing request.
+pub fn lock() -> io::Result<StagingLock> {
+    lock_in(&prepare_staging()?)
+}
+
+/// What a helper stopped during an upload left: removed before a new one,
+/// under the lock, so it is no other request's.
+fn discard_stale_upload(staging: &Path) {
+    let _ = fs::remove_file(staging.join(UPLOAD_FILE));
+}
+
 /// Checks that an upload of `size` bytes can be staged and applied.
 pub fn check_upload(size: u64) -> io::Result<()> {
     if !(1..=MAX_SYSTEM_BUNDLE_BYTES).contains(&size) {
         return Err(io::Error::other("the system bundle size is not accepted"));
     }
     let staging = prepare_staging()?;
+    discard_stale_upload(&staging);
     if let Some(record) = read_record(&staging).map_err(error)?
         && matches!(
             record.phase,
@@ -210,11 +248,13 @@ pub fn stage_upload(upload: &Path) -> io::Result<SystemUpdateState> {
                 staging: &staging,
                 trust: &trust,
                 policy: &policy,
-                minimum_sequence: minimum_sequence(&staging),
+                minimum_sequence: accepted_minimum(&staging, Path::new("/")).map_err(error)?,
                 root: Path::new("/"),
                 root_uuid: &uuid,
                 fstab: Path::new("/etc/fstab"),
                 shadow: Path::new("/etc/shadow"),
+                passwd: Path::new("/etc/passwd"),
+                group: Path::new("/etc/group"),
             },
             &mut SystemTools,
         )
@@ -251,4 +291,28 @@ pub fn cancel_update() -> io::Result<SystemUpdateState> {
     cancel(&staging).map_err(error)?;
     eprintln!("admin helper: staged system update cancelled");
     status()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_request_at_a_time_changes_the_staging_directory() {
+        // Upload, stage and cancel ran unserialised on four connections
+        // (code audit of 2026-10-20, AUD-12).
+        let dir = tempfile::tempdir().unwrap();
+        let first = lock_in(dir.path()).unwrap();
+        assert!(lock_in(dir.path()).is_err());
+        drop(first);
+        assert!(lock_in(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn a_stale_upload_is_removed_before_a_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(UPLOAD_FILE), b"half a bundle").unwrap();
+        discard_stale_upload(dir.path());
+        assert!(!dir.path().join(UPLOAD_FILE).exists());
+    }
 }

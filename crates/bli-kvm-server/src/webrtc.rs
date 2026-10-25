@@ -6,7 +6,12 @@
 //! offer/answer and trickle candidates, keeps the session alive and destroys
 //! it when either side leaves. No Janus request is ever forwarded verbatim.
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, PoisonError},
+    time::Duration,
+};
 
 use axum::{
     extract::{
@@ -16,11 +21,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use bli_kvm_quic_protocol::link::LEAST_VIDEO_SHARE;
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, UnixStream},
     sync::Semaphore,
 };
@@ -32,6 +38,7 @@ use tokio_tungstenite::{
 use crate::{
     AppState,
     auth::{middleware::CurrentSession, session::Session},
+    quic::FULL_SHARE,
     ws::origin_allowed,
 };
 
@@ -55,6 +62,111 @@ pub(crate) struct WebRtcGateway {
     pub demand: Option<PathBuf>,
     /// The H.264 encoder's; set, H.264 is offered.
     pub h264_demand: Option<PathBuf>,
+    /// The encoders' target bitrate in kbit/s, sent to them over the demand
+    /// connections and changed through the Screen menu's quality.
+    pub bitrate: tokio::sync::watch::Sender<u32>,
+    /// The board's choice of the H.264 engine, sent to the H.264 encoder
+    /// the same way and changed through the video menu.
+    pub engine: tokio::sync::watch::Sender<H264Engine>,
+    /// The share of the bitrate, in percent, that the QUIC sessions which
+    /// watch ask for (`docs/design/quic-transport-v1.md`, "The bitrate"),
+    /// where the board has the QUIC transport: the H.264 encoder, which
+    /// every viewer of H.264 shares, is sent the chosen bitrate times it.
+    h264_share: std::sync::OnceLock<tokio::sync::watch::Receiver<u8>>,
+    /// Held while a choice is stored and sent: two choices made at once leave
+    /// the file, the channel and the encoders with the same one.
+    choices: std::sync::Mutex<()>,
+}
+
+/// The WebRTC qualities the Screen menu offers, in kbit/s.
+pub(crate) const BITRATE_LEVELS_KBPS: [u32; 4] = [1500, 2500, 5000, 8000];
+/// The encoder units' own bitrate (`BLI_KVM_VP8_KBPS`), until one is chosen.
+pub(crate) const DEFAULT_BITRATE_KBPS: u32 = 2500;
+/// The chosen quality survives server restarts and updates.
+const BITRATE_FILE: &str = "webrtc-bitrate.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedBitrate {
+    kbps: u32,
+}
+
+/// The engine that encodes H.264 for every viewer of the board
+/// (`docs/design/h264-engine-choice-and-quality-monitor-v1.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum H264Engine {
+    /// The board's video engine, where it can be had.
+    Hardware,
+    /// x264.
+    Software,
+}
+
+impl H264Engine {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Hardware => "hardware",
+            Self::Software => "software",
+        }
+    }
+}
+
+/// The chosen engine survives server restarts and updates, like the
+/// quality.
+const ENGINE_FILE: &str = "h264-engine.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedEngine {
+    engine: H264Engine,
+}
+
+/// The chosen engine, or the video engine where nothing was chosen or the
+/// file cannot be understood.
+pub(crate) fn load_engine(state_dir: &std::path::Path) -> H264Engine {
+    std::fs::read(state_dir.join(ENGINE_FILE))
+        .ok()
+        .filter(|bytes| bytes.len() <= 256)
+        .and_then(|bytes| serde_json::from_slice::<PersistedEngine>(&bytes).ok())
+        .map_or(H264Engine::Hardware, |persisted| persisted.engine)
+}
+
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn store_engine(state_dir: &std::path::Path, engine: H264Engine) -> std::io::Result<()> {
+    crate::state_file::replace(
+        state_dir,
+        ".h264-engine-",
+        ENGINE_FILE,
+        &serde_json::to_vec(&PersistedEngine { engine }).map_err(std::io::Error::other)?,
+    )
+}
+
+/// The chosen bitrate, or the default.
+pub(crate) fn load_bitrate(state_dir: &std::path::Path) -> u32 {
+    std::fs::read(state_dir.join(BITRATE_FILE))
+        .ok()
+        .filter(|bytes| bytes.len() <= 256)
+        .and_then(|bytes| serde_json::from_slice::<PersistedBitrate>(&bytes).ok())
+        .map(|persisted| persisted.kbps)
+        .filter(|kbps| BITRATE_LEVELS_KBPS.contains(kbps))
+        .unwrap_or(DEFAULT_BITRATE_KBPS)
+}
+
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn store_bitrate(state_dir: &std::path::Path, kbps: u32) -> std::io::Result<()> {
+    crate::state_file::replace(
+        state_dir,
+        ".webrtc-bitrate-",
+        BITRATE_FILE,
+        &serde_json::to_vec(&PersistedBitrate { kbps }).map_err(std::io::Error::other)?,
+    )
+}
+
+/// Holds an encoder's demand connection; dropping it ends the demand.
+pub(crate) struct DemandGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for DemandGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The codec a viewer asked for (`?codec=`).
@@ -90,6 +202,8 @@ impl WebRtcGateway {
         janus: SocketAddr,
         demand: Option<PathBuf>,
         h264_demand: Option<PathBuf>,
+        kbps: u32,
+        engine: H264Engine,
     ) -> Option<Arc<Self>> {
         janus.ip().is_loopback().then(|| {
             Arc::new(Self {
@@ -97,27 +211,189 @@ impl WebRtcGateway {
                 viewers: Arc::new(Semaphore::new(2)),
                 demand,
                 h264_demand,
+                bitrate: tokio::sync::watch::channel(kbps).0,
+                engine: tokio::sync::watch::channel(engine).0,
+                h264_share: std::sync::OnceLock::new(),
+                choices: std::sync::Mutex::new(()),
             })
         })
     }
 
-    /// Asks the codec's encoder to run while the returned connection is
-    /// held: it otherwise decodes and encodes every changed frame for nobody.
-    /// The first line names the codec. An encoder without the socket runs
+    /// The H.264 encoder follows the share of the bitrate that the QUIC
+    /// sessions ask for from now on.
+    pub(crate) fn follow_share(&self, share: tokio::sync::watch::Receiver<u8>) {
+        let _ = self.h264_share.set(share);
+    }
+
+    /// Stores the board's choice of the H.264 engine and sends it to the
+    /// encoder's connections, as one step.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn choose_engine(
+        &self,
+        state_dir: &std::path::Path,
+        engine: H264Engine,
+    ) -> std::io::Result<()> {
+        let _held = self.choices.lock().unwrap_or_else(PoisonError::into_inner);
+        store_engine(state_dir, engine)?;
+        self.engine.send_replace(engine);
+        Ok(())
+    }
+
+    /// Stores the WebRTC quality and sends it to the encoders' connections,
+    /// as one step.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn choose_bitrate(
+        &self,
+        state_dir: &std::path::Path,
+        kbps: u32,
+    ) -> std::io::Result<()> {
+        let _held = self.choices.lock().unwrap_or_else(PoisonError::into_inner);
+        store_bitrate(state_dir, kbps)?;
+        self.bitrate.send_replace(kbps);
+        Ok(())
+    }
+
+    /// Asks the codec's encoder to run while the returned guard is held: it
+    /// otherwise decodes and encodes every changed frame for nobody. The
+    /// first line names the codec, the next the bitrate, and a new `kbps`
+    /// line follows every change of the quality. The H.264 encoder is asked
+    /// for the chosen bitrate times the share that the QUIC sessions ask
+    /// for, and for the new bitrate whenever the share changes; it also gets
+    /// the board's choice of the engine after the bitrate, and an `engine`
+    /// line whenever the choice is made. An encoder without the socket runs
     /// anyway, so a failure only means no demand is signalled.
-    pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<UnixStream> {
+    ///
+    /// The connection is the demand. An encoder that ends, to be started
+    /// again by its unit, takes it along: the guard then asks again until
+    /// the encoder is back, or its viewer would wait for a picture that
+    /// nobody makes.
+    pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<DemandGuard> {
         let socket = match codec {
             StreamCodec::Vp8 => self.demand.as_ref(),
             StreamCodec::H264 => self.h264_demand.as_ref(),
-        }?;
+        }?
+        .clone();
+        // Only the H.264 encoder has an engine to choose.
+        let chooses = codec == StreamCodec::H264;
         let codec = codec.name();
-        let mut connection = UnixStream::connect(socket).await.ok()?;
-        connection
-            .write_all(format!("{codec}\n").as_bytes())
-            .await
-            .ok()?;
-        Some(connection)
+        let mut bitrate = self.bitrate.subscribe();
+        let mut engine = self.engine.subscribe();
+        let mut share = chooses.then(|| self.h264_share.get().cloned()).flatten();
+        let mut sent = asked_kbps(&mut bitrate, &mut share);
+        let chosen = chooses.then(|| *engine.borrow_and_update());
+        let mut connection = open_demand(&socket, codec, sent, chosen).await?;
+        Some(DemandGuard(tokio::spawn(async move {
+            // Nobody changes the quality, the share or the engine once its
+            // sender is gone.
+            let mut quality_changes = true;
+            let mut engine_changes = chooses;
+            loop {
+                // The encoder never writes: its side ends when it does.
+                let mut ended = [0_u8; 1];
+                let lost = tokio::select! {
+                    changed = bitrate.changed(), if quality_changes => {
+                        if changed.is_err() {
+                            quality_changes = false;
+                            false
+                        } else {
+                            let kbps = asked_kbps(&mut bitrate, &mut share);
+                            ask_kbps(&mut connection, &mut sent, kbps).await
+                        }
+                    }
+                    changed = share_changed(&mut share) => {
+                        if changed.is_err() {
+                            share = None;
+                        }
+                        let kbps = asked_kbps(&mut bitrate, &mut share);
+                        ask_kbps(&mut connection, &mut sent, kbps).await
+                    }
+                    changed = engine.changed(), if engine_changes => {
+                        if changed.is_err() {
+                            engine_changes = false;
+                            false
+                        } else {
+                            let chosen = *engine.borrow_and_update();
+                            connection
+                                .write_all(format!("engine {}\n", chosen.name()).as_bytes())
+                                .await
+                                .is_err()
+                        }
+                    }
+                    read = connection.read(&mut ended) => !matches!(read, Ok(read) if read > 0),
+                };
+                if !lost {
+                    continue;
+                }
+                connection = loop {
+                    tokio::time::sleep(DEMAND_RETRY).await;
+                    sent = asked_kbps(&mut bitrate, &mut share);
+                    let chosen = chooses.then(|| *engine.borrow_and_update());
+                    if let Some(connection) = open_demand(&socket, codec, sent, chosen).await {
+                        break connection;
+                    }
+                };
+            }
+        })))
     }
+}
+
+/// Between attempts to reach an encoder that went away.
+const DEMAND_RETRY: Duration = Duration::from_millis(500);
+
+/// The bitrate an encoder is asked for: the chosen one, times the share of
+/// it that the QUIC sessions ask for where the encoder follows it.
+fn asked_kbps(
+    bitrate: &mut tokio::sync::watch::Receiver<u32>,
+    share: &mut Option<tokio::sync::watch::Receiver<u8>>,
+) -> u32 {
+    let kbps = *bitrate.borrow_and_update();
+    match share {
+        Some(share) => {
+            let percent = (*share.borrow_and_update()).clamp(LEAST_VIDEO_SHARE, FULL_SHARE);
+            (u64::from(kbps) * u64::from(percent) / u64::from(FULL_SHARE)) as u32
+        }
+        None => kbps,
+    }
+}
+
+/// A change of the share, where the encoder follows one; otherwise never.
+async fn share_changed(
+    share: &mut Option<tokio::sync::watch::Receiver<u8>>,
+) -> Result<(), tokio::sync::watch::error::RecvError> {
+    match share {
+        Some(share) => share.changed().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Sends the encoder a `kbps` line for a bitrate it was not sent last; true
+/// if the connection is lost.
+async fn ask_kbps(connection: &mut UnixStream, sent: &mut u32, kbps: u32) -> bool {
+    if kbps == *sent {
+        return false;
+    }
+    *sent = kbps;
+    connection
+        .write_all(format!("kbps {kbps}\n").as_bytes())
+        .await
+        .is_err()
+}
+
+/// A demand connection of the encoder behind `socket`, with its first
+/// lines: the codec, the bitrate and, for H.264, the engine.
+async fn open_demand(
+    socket: &std::path::Path,
+    codec: &str,
+    kbps: u32,
+    engine: Option<H264Engine>,
+) -> Option<UnixStream> {
+    let mut connection = UnixStream::connect(socket).await.ok()?;
+    let mut lines = format!("{codec}\nkbps {kbps}\n");
+    if let Some(engine) = engine {
+        lines.push_str(&format!("engine {}\n", engine.name()));
+    }
+    connection.write_all(lines.as_bytes()).await.ok()?;
+    Some(connection)
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,5 +672,334 @@ async fn exchange(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+
+    /// A directory on memory where there is one: storing a choice syncs a
+    /// file, which costs a disk's time, and a race wants thousands of rounds.
+    fn fast_directory() -> (tempfile::TempDir, usize) {
+        match tempfile::tempdir_in("/dev/shm") {
+            Ok(directory) => (directory, 4000),
+            Err(_) => (tempfile::tempdir().unwrap(), 150),
+        }
+    }
+
+    /// Two choices made at once leave the file and the channel with the same
+    /// one: the store and the send are one step.
+    #[test]
+    fn two_engine_choices_made_at_once_agree() {
+        let (directory, rounds) = fast_directory();
+        let dir = directory.path();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            None,
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let mut disagreed = 0;
+        for _ in 0..rounds {
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for engine in [H264Engine::Hardware, H264Engine::Software] {
+                    let (gateway, barrier) = (&gateway, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        gateway.choose_engine(dir, engine).unwrap();
+                    });
+                }
+            });
+            if load_engine(dir) != *gateway.engine.borrow() {
+                disagreed += 1;
+            }
+        }
+        assert_eq!(
+            disagreed, 0,
+            "the file and the channel differ after {disagreed} of {rounds} rounds"
+        );
+    }
+
+    #[test]
+    fn two_quality_choices_made_at_once_agree() {
+        let (directory, rounds) = fast_directory();
+        let dir = directory.path();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            None,
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let mut disagreed = 0;
+        for _ in 0..rounds {
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for kbps in [2500, 8000] {
+                    let (gateway, barrier) = (&gateway, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        gateway.choose_bitrate(dir, kbps).unwrap();
+                    });
+                }
+            });
+            if load_bitrate(dir) != *gateway.bitrate.borrow() {
+                disagreed += 1;
+            }
+        }
+        assert_eq!(
+            disagreed, 0,
+            "the file and the channel differ after {disagreed} of {rounds} rounds"
+        );
+    }
+
+    /// The encoder learns the bitrate when a viewer comes, and every later
+    /// change of the quality while the viewer stays; the guard ends the
+    /// demand.
+    #[tokio::test]
+    async fn the_demand_connection_carries_the_bitrate_and_its_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("demand.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            Some(socket),
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let (guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::H264), listener.accept());
+        let guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("h264"));
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 2500")
+        );
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
+        );
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        drop(guard);
+        assert_eq!(lines.next_line().await.unwrap(), None, "demand ended");
+    }
+
+    /// The H.264 encoder learns the board's choice of its engine when a
+    /// viewer comes and whenever the choice is made, the same one too, and
+    /// again when it comes back after it ended; the VP8 encoder never hears
+    /// of it.
+    #[tokio::test]
+    async fn the_h264_demand_carries_the_engine_and_every_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let h264 = directory.path().join("h264.sock");
+        let vp8 = directory.path().join("vp8.sock");
+        let h264_listener = tokio::net::UnixListener::bind(&h264).unwrap();
+        let vp8_listener = tokio::net::UnixListener::bind(&vp8).unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            Some(vp8),
+            Some(h264),
+            2500,
+            H264Engine::Software,
+        )
+        .unwrap();
+        let (guard, accepted) = tokio::join!(
+            gateway.hold_demand(StreamCodec::H264),
+            h264_listener.accept()
+        );
+        let _guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["h264", "kbps 2500", "engine software"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        gateway.engine.send_replace(H264Engine::Hardware);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
+        );
+        // The same choice made again is sent again.
+        gateway.engine.send_replace(H264Engine::Hardware);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
+        );
+
+        let (vp8_guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::Vp8), vp8_listener.accept());
+        let _vp8_guard = vp8_guard.unwrap();
+        let mut vp8_lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["vp8", "kbps 2500"] {
+            assert_eq!(
+                vp8_lines.next_line().await.unwrap().as_deref(),
+                Some(expected)
+            );
+        }
+        gateway.engine.send_replace(H264Engine::Software);
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000"),
+            "no engine line for VP8"
+        );
+        let mut h264_after = Vec::new();
+        for _ in 0..2 {
+            h264_after.push(lines.next_line().await.unwrap().unwrap());
+        }
+        h264_after.sort();
+        assert_eq!(h264_after, ["engine software", "kbps 8000"]);
+
+        // The H.264 encoder ends and comes back: its new connection names
+        // the choice.
+        drop(lines);
+        let (accepted, _) = h264_listener.accept().await.unwrap();
+        let mut lines = TokioBufReader::new(accepted).lines();
+        for expected in ["h264", "kbps 8000", "engine software"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+    }
+
+    /// The H.264 encoder is asked for the chosen bitrate times the share
+    /// that the QUIC sessions ask for, and again whenever either changes, a
+    /// new connection too; the VP8 encoder only for the chosen bitrate.
+    #[tokio::test]
+    async fn the_h264_demand_follows_the_quic_sessions_share() {
+        let directory = tempfile::tempdir().unwrap();
+        let h264 = directory.path().join("h264.sock");
+        let vp8 = directory.path().join("vp8.sock");
+        let h264_listener = tokio::net::UnixListener::bind(&h264).unwrap();
+        let vp8_listener = tokio::net::UnixListener::bind(&vp8).unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            Some(vp8),
+            Some(h264),
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let share = tokio::sync::watch::Sender::new(FULL_SHARE);
+        gateway.follow_share(share.subscribe());
+        share.send_replace(50);
+        let (guard, accepted) = tokio::join!(
+            gateway.hold_demand(StreamCodec::H264),
+            h264_listener.accept()
+        );
+        let _guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["h264", "kbps 1250", "engine hardware"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        let (vp8_guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::Vp8), vp8_listener.accept());
+        let _vp8_guard = vp8_guard.unwrap();
+        let mut vp8_lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["vp8", "kbps 2500"] {
+            assert_eq!(
+                vp8_lines.next_line().await.unwrap().as_deref(),
+                Some(expected)
+            );
+        }
+
+        share.send_replace(75);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 1875")
+        );
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 6000")
+        );
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        // Below the least share a session may ask for is the least.
+        share.send_replace(5);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 2000")
+        );
+        share.send_replace(FULL_SHARE);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        share.send_replace(50);
+        // The encoder ends and comes back: its new connection is asked for
+        // the share.
+        drop(lines);
+        let (accepted, _) = h264_listener.accept().await.unwrap();
+        let mut lines = TokioBufReader::new(accepted).lines();
+        for expected in ["h264", "kbps 4000", "engine hardware"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        // VP8 heard of none of it.
+        gateway.bitrate.send_replace(1500);
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 1500")
+        );
+    }
+
+    #[test]
+    fn the_chosen_engine_survives_a_restart_and_anything_else_is_the_engine() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Hardware);
+        store_engine(directory.path(), H264Engine::Software).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Software);
+        let path = directory.path().join(ENGINE_FILE);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"engine":"software"}"#
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        // Written whole: no temporary file is left beside it.
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        store_engine(directory.path(), H264Engine::Hardware).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Hardware);
+        // A file the server cannot understand is the default.
+        let padded = format!(r#"{{"engine":"software"}}{}"#, " ".repeat(300));
+        for damaged in [
+            r#"{"engine":"x264"}"#,
+            r#"{"engine":1}"#,
+            r#"{"kbps":8000}"#,
+            r#"{"engine":"software""#,
+            "",
+            padded.as_str(),
+        ] {
+            std::fs::write(&path, damaged).unwrap();
+            assert_eq!(
+                load_engine(directory.path()),
+                H264Engine::Hardware,
+                "{damaged}"
+            );
+        }
+        std::fs::write(&path, r#"{"engine":"software"}"#).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Software);
+    }
+
+    #[test]
+    fn the_chosen_bitrate_survives_a_restart_and_only_offered_levels_load() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(load_bitrate(directory.path()), DEFAULT_BITRATE_KBPS);
+        store_bitrate(directory.path(), 5000).unwrap();
+        assert_eq!(load_bitrate(directory.path()), 5000);
+        std::fs::write(directory.path().join(BITRATE_FILE), br#"{"kbps":123}"#).unwrap();
+        assert_eq!(load_bitrate(directory.path()), DEFAULT_BITRATE_KBPS);
     }
 }

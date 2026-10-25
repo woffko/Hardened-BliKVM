@@ -1,0 +1,533 @@
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react';
+import clsx from 'clsx';
+import { getDefaultStore, useAtom, useAtomValue } from 'jotai';
+import { GripVerticalIcon, SquareIcon, XIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+
+import { pageWork } from '@/lib/busy.ts';
+import { supportsBoardFeature } from '@/lib/capabilities.ts';
+import { sampleDirect, sampleNothing, sampleQuic, sampleWebRtc } from '@/lib/page-video.ts';
+import {
+  MIN_HEIGHT,
+  MIN_WIDTH,
+  type PageSample,
+  type QualityInputs,
+  type QualityLevel,
+  type VideoPath
+} from '@/lib/quality-monitor.ts';
+import type { FromQualityWorker, QualityView, ToQualityWorker } from '@/lib/quality.worker.ts';
+import QualityWorker from '@/lib/quality.worker.ts?worker';
+import { quicSession } from '@/lib/quic/session.ts';
+import { getBaseUrl } from '@/lib/service.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
+import { upscaleStoppedAtom, videoModeAtom } from '@/jotai/screen.ts';
+import { targetAgentAtom } from '@/jotai/target-agent.ts';
+import { quicStatusAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
+import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
+
+/** The page counts its own picture this often while the monitor is open,
+ * and never while it is closed. */
+const TICK_MS = 1000;
+/** The width the window keeps for its scroll bar in Extended. */
+const SCROLL_BAR_PX = 12;
+/** Basic's width, by layout. */
+const BASIC_WIDTH = { desktop: 264, phone: 196 };
+/** Room the window keeps inside the page when it is dragged. */
+const KEEP_IN_VIEW_PX = 48;
+/** On a phone Extended keeps this much of the screen free on its sides and below. */
+const PHONE_MARGIN_PX = 8;
+
+/** The quality monitor's window, while it is open
+ * (docs/design/h264-engine-choice-and-quality-monitor-v1.md). */
+export const QualityMonitor = () => {
+  const layout = useAtomValue(qualityMonitorAtom);
+  return layout.open ? <QualityMonitorWindow /> : null;
+};
+
+/**
+ * The way the picture comes now, read from what draws it: the QUIC
+ * session's canvas, the WebRTC video element, the Direct canvas or the
+ * MJPEG image. Read once a second, so that the monitor follows no state of
+ * the page between its readings.
+ */
+function currentPath(videoMode: string | null): VideoPath {
+  if (videoMode === 'mjpeg') return 'mjpeg';
+  if (videoMode === 'direct') return 'direct';
+  return document.querySelector('canvas#screen[data-video-transport="quic"]') ? 'quic' : 'webrtc';
+}
+
+/**
+ * Whether this browser can draw the rows in a worker: it has workers and
+ * OffscreenCanvas, and a canvas can be handed over to a worker. Safari before
+ * 16.4 and some embedded web views cannot.
+ */
+function canDrawInWorker(): boolean {
+  return (
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function'
+  );
+}
+
+/**
+ * What the page counted of its picture, by the way it comes now, and how
+ * much of the last second its own picture code took on the main thread.
+ */
+async function samplePath(path: VideoPath): Promise<PageSample> {
+  const sample = await pathSample(path);
+  return {
+    ...sample,
+    upscaleStopped: getDefaultStore().get(upscaleStoppedAtom),
+    busy: { ...sample.busy, main: pageWork.share(performance.now()) }
+  };
+}
+
+/** The page's size, followed: a phone's monitor is laid out by it. */
+function useViewport(): { width: number; height: number } {
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }));
+  useEffect(() => {
+    const follow = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', follow);
+    return () => window.removeEventListener('resize', follow);
+  }, []);
+  return viewport;
+}
+
+async function pathSample(path: VideoPath): Promise<PageSample> {
+  switch (path) {
+    case 'quic': {
+      const store = getDefaultStore();
+      return sampleQuic(
+        store.get(quicStatusAtom),
+        store.get(quicVideoStatsAtom),
+        quicSession.sessionsOpened()
+      );
+    }
+    case 'webrtc':
+      return sampleWebRtc();
+    case 'direct':
+      return sampleDirect();
+    case 'mjpeg':
+      return sampleNothing();
+  }
+}
+
+/** The display's refresh, counted with animation frames over a second. */
+function useRefreshRate(measure: boolean): number | null {
+  const [hz, setHz] = useState<number | null>(null);
+  useEffect(() => {
+    if (!measure || hz !== null) return;
+    let frames = 0;
+    let first = 0;
+    let request = 0;
+    const step = (at: number) => {
+      if (!first) first = at;
+      frames += 1;
+      if (at - first >= 1000) {
+        setHz(Math.round(((frames - 1) * 1000) / (at - first)));
+        return;
+      }
+      request = requestAnimationFrame(step);
+    };
+    request = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(request);
+  }, [measure, hz]);
+  return hz;
+}
+
+/**
+ * The display's pixel ratio, followed while the window is open: zooming the
+ * page or moving it to a display of another ratio changes it, and the rows
+ * are drawn again at the new one. A media query for one ratio changes when
+ * that ratio no longer holds, so it is made again for the new one each time.
+ */
+function useDevicePixelRatio(): number {
+  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    let query: MediaQueryList | null = null;
+    const watch = () => {
+      query?.removeEventListener('change', renew);
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      query.addEventListener('change', renew);
+    };
+    const renew = () => {
+      setRatio(window.devicePixelRatio || 1);
+      watch();
+    };
+    watch();
+    return () => query?.removeEventListener('change', renew);
+  }, []);
+  return ratio;
+}
+
+/** The text's size of the rows, in CSS pixels. */
+const FONT_PX = { desktop: 12, phone: 10 };
+
+/**
+ * The rows: drawn on a canvas by the monitor's worker, which asks the board
+ * and makes them, once a second when this page sends what it counted of its
+ * own picture. The page's main thread only counts and sends; the canvas is
+ * the compositor's, so that a second's update costs the page next to
+ * nothing. In Extended the canvas scrolls inside the window.
+ */
+const MonitorBody = memo(
+  ({
+    extended,
+    videoMode,
+    isDesktop,
+    width
+  }: {
+    extended: boolean;
+    videoMode: string | null;
+    isDesktop: boolean;
+    width: number;
+  }) => {
+    const { t } = useTranslation();
+    const codec: QualityInputs['codec'] =
+      videoMode === 'mjpeg' ? 'mjpeg' : videoMode === 'vp8' ? 'vp8' : 'h264';
+    // A browser that cannot draw in a worker, or whose worker fails or is
+    // refused, gets one line in place of the rows and no second try.
+    const [unsupported, setUnsupported] = useState(() => !canDrawInWorker());
+    const refreshHz = useRefreshRate(extended && !unsupported);
+    const pixelRatio = useDevicePixelRatio();
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const workerRef = useRef<Worker | null>(null);
+    // A canvas can be handed to a worker once; a new one is mounted for the
+    // next worker.
+    const [canvasKey, setCanvasKey] = useState(0);
+    const handedOver = useRef<HTMLCanvasElement | null>(null);
+    const [height, setHeight] = useState(0);
+
+    // The target agent's state in a few words, sent with every sample: off,
+    // the channel closed, waiting for an agent, or the agent connected.
+    const capabilities = useAtomValue(capabilitiesAtom);
+    const agentState = useAtomValue(targetAgentAtom);
+    const agent =
+      !supportsBoardFeature(capabilities, 'target_agent') || !agentState
+        ? null
+        : !agentState.enabled
+          ? t('qualityMonitor.agentOff')
+          : agentState.agent
+            ? t('qualityMonitor.agentConnected', {
+                version: agentState.agent.version,
+                locked: agentState.agent.system?.locked ? t('qualityMonitor.agentLocked') : ''
+              }).trim()
+            : agentState.open
+              ? t('qualityMonitor.agentWaiting')
+              : t('qualityMonitor.agentClosed');
+    const agentRef = useRef(agent);
+    agentRef.current = agent;
+
+    const view = useMemo<QualityView>(
+      () => ({
+        level: extended ? 'extended' : 'basic',
+        codec,
+        width,
+        fontPx: isDesktop ? FONT_PX.desktop : FONT_PX.phone,
+        scale: pixelRatio,
+        labels: t('qualityMonitor', { returnObjects: true }) as Record<string, string>,
+        refreshHz
+      }),
+      [extended, codec, width, isDesktop, t, refreshHz, pixelRatio]
+    );
+    const viewRef = useRef(view);
+    viewRef.current = view;
+
+    useEffect(() => {
+      if (unsupported) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      // After a change of mode this canvas has been handed over already: a
+      // new one is mounted, once, and the effect runs again for it.
+      if (handedOver.current === canvas) {
+        setCanvasKey((key) => key + 1);
+        return;
+      }
+      let worker: Worker | undefined;
+      try {
+        const offscreen = canvas.transferControlToOffscreen();
+        handedOver.current = canvas;
+        worker = new QualityWorker();
+        worker.onmessage = (event: MessageEvent<FromQualityWorker>) => {
+          if (event.data.type === 'height') setHeight(event.data.height);
+        };
+        worker.onerror = () => setUnsupported(true);
+        worker.onmessageerror = () => setUnsupported(true);
+        const start: ToQualityWorker = {
+          type: 'start',
+          url: `${getBaseUrl('http')}/api/vm/quality`,
+          canvas: offscreen,
+          view: viewRef.current
+        };
+        worker.postMessage(start, [offscreen]);
+      } catch {
+        // The browser cannot hand the canvas over, or refuses the worker.
+        worker?.terminate();
+        setUnsupported(true);
+        return;
+      }
+      const started = worker;
+      workerRef.current = started;
+      // Once a second: what the page counted of its own picture, by the way
+      // it comes now.
+      let stopped = false;
+      const tick = async () => {
+        const path = currentPath(videoMode);
+        const sample = await samplePath(path);
+        if (stopped) return;
+        const message: ToQualityWorker = {
+          type: 'sample',
+          path,
+          sample,
+          agent: agentRef.current
+        };
+        started.postMessage(message);
+      };
+      void tick();
+      const timer = setInterval(() => void tick(), TICK_MS);
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+        started.terminate();
+        workerRef.current = null;
+      };
+    }, [canvasKey, videoMode, unsupported]);
+
+    useEffect(() => {
+      const message: ToQualityWorker = { type: 'view', view };
+      workerRef.current?.postMessage(message);
+    }, [view]);
+
+    if (unsupported) {
+      return (
+        <div data-testid="quality-monitor-unsupported" className="px-2 py-1.5 text-neutral-300">
+          {t('qualityMonitor.unsupported')}
+        </div>
+      );
+    }
+    const canvas = (
+      <canvas
+        key={canvasKey}
+        ref={canvasRef}
+        data-testid="quality-monitor-rows"
+        role="img"
+        aria-label={t('qualityMonitor.title')}
+        className="block"
+        style={{ width, height }}
+      />
+    );
+    return extended ? (
+      <div data-testid="quality-monitor-body" className="min-h-0 flex-1 overflow-auto">
+        {canvas}
+      </div>
+    ) : (
+      <div data-testid="quality-monitor-body">{canvas}</div>
+    );
+  }
+);
+MonitorBody.displayName = 'MonitorBody';
+
+const QualityMonitorWindow = () => {
+  const { t } = useTranslation();
+  const [layout, setLayout] = useAtom(qualityMonitorAtom);
+  const isDesktop = useIsDesktopLayout();
+  const videoMode = useAtomValue(videoModeAtom);
+  const extended = layout.level === 'extended';
+  const viewport = useViewport();
+  // On a phone Extended spans the screen's width and is as tall as its rows
+  // within the screen: no row out of sight, none cut short.
+  const phoneExtended = extended && !isDesktop;
+  const phoneWidth = Math.max(MIN_WIDTH, viewport.width - 2 * PHONE_MARGIN_PX);
+
+  // Dragged by its header, resized at its corner; kept when let go.
+  const [place, setPlace] = useState({ x: layout.x, y: layout.y });
+  const [size, setSize] = useState({ width: layout.width, height: layout.height });
+  const gesture = useRef<{
+    kind: 'move' | 'resize';
+    startX: number;
+    startY: number;
+    from: { a: number; b: number };
+  } | null>(null);
+
+  const begin = (kind: 'move' | 'resize') => (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    gesture.current = {
+      kind,
+      startX: event.clientX,
+      startY: event.clientY,
+      from: kind === 'move' ? { a: place.x, b: place.y } : { a: size.width, b: size.height }
+    };
+  };
+  const move = (event: ReactPointerEvent<HTMLElement>) => {
+    const current = gesture.current;
+    if (!current) return;
+    const dx = event.clientX - current.startX;
+    const dy = event.clientY - current.startY;
+    if (current.kind === 'move') {
+      setPlace({
+        x: Math.min(
+          Math.max(0, current.from.a + dx),
+          Math.max(0, window.innerWidth - KEEP_IN_VIEW_PX)
+        ),
+        y: Math.min(
+          Math.max(0, current.from.b + dy),
+          Math.max(0, window.innerHeight - KEEP_IN_VIEW_PX)
+        )
+      });
+    } else {
+      setSize({
+        width: Math.min(Math.max(MIN_WIDTH, current.from.a + dx), window.innerWidth),
+        height: Math.min(Math.max(MIN_HEIGHT, current.from.b + dy), window.innerHeight)
+      });
+    }
+  };
+  const end = () => {
+    const current = gesture.current;
+    if (!current) return;
+    gesture.current = null;
+    setLayout(current.kind === 'move' ? { x: place.x, y: place.y } : size);
+  };
+
+  const left = Math.min(place.x, Math.max(0, window.innerWidth - KEEP_IN_VIEW_PX));
+  const top = Math.min(place.y, Math.max(0, window.innerHeight - KEEP_IN_VIEW_PX));
+
+  const level = (value: QualityLevel, label: string) => (
+    <button
+      type="button"
+      data-qm-level={value}
+      aria-pressed={layout.level === value}
+      className={clsx(
+        'rounded border-0 px-1.5 py-0.5 text-[11px]',
+        layout.level === value
+          ? 'bg-neutral-600 text-white'
+          : 'bg-transparent text-neutral-400 hover:text-white'
+      )}
+      onClick={() => setLayout({ level: value })}
+    >
+      {label}
+    </button>
+  );
+
+  // Nothing here reaches the page's own pointer, wheel or touch handlers.
+  const keep = (event: { stopPropagation: () => void }) => event.stopPropagation();
+
+  return (
+    <div
+      data-testid="quality-monitor"
+      data-level={layout.level}
+      data-opaque={layout.opaque ? 'true' : 'false'}
+      className={clsx(
+        'fixed z-[950] flex flex-col overflow-hidden rounded shadow-lg',
+        isDesktop ? 'text-xs' : 'text-[10px]',
+        layout.opaque ? 'bg-neutral-900' : 'bg-neutral-900/70'
+      )}
+      style={{
+        left: phoneExtended ? PHONE_MARGIN_PX : left,
+        top,
+        // Its own layer: what changes in it is laid out and painted apart
+        // from the picture beneath.
+        contain: 'layout paint',
+        willChange: 'transform',
+        ...(phoneExtended
+          ? {
+              width: phoneWidth,
+              maxHeight: Math.max(MIN_HEIGHT, viewport.height - top - PHONE_MARGIN_PX)
+            }
+          : extended
+            ? { width: size.width, height: size.height }
+            : { width: isDesktop ? BASIC_WIDTH.desktop : BASIC_WIDTH.phone })
+      }}
+      onPointerDown={keep}
+      onMouseDown={keep}
+      onWheel={keep}
+      onTouchStart={keep}
+    >
+      <div
+        data-testid="quality-monitor-header"
+        className="flex shrink-0 cursor-move touch-none select-none items-center gap-1 border-b border-neutral-700/60 px-1 py-0.5"
+        onPointerDown={begin('move')}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+      >
+        <GripVerticalIcon size={12} className="shrink-0 text-neutral-500" />
+        <span className="font-semibold text-neutral-200">QM</span>
+        <div
+          className="ml-auto flex items-center gap-0.5"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {level('basic', t('qualityMonitor.basic'))}
+          {level('extended', t('qualityMonitor.extended'))}
+          {extended && (
+            <button
+              type="button"
+              data-testid="quality-monitor-opaque"
+              aria-pressed={layout.opaque}
+              aria-label={t('qualityMonitor.opaque')}
+              title={t('qualityMonitor.opaque')}
+              className={clsx(
+                'ml-0.5 rounded border-0 p-0.5',
+                layout.opaque
+                  ? 'bg-neutral-600 text-white'
+                  : 'bg-transparent text-neutral-400 hover:text-white'
+              )}
+              onClick={() => setLayout({ opaque: !layout.opaque })}
+            >
+              <SquareIcon size={12} fill={layout.opaque ? 'currentColor' : 'none'} />
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="quality-monitor-close"
+            aria-label={t('qualityMonitor.close')}
+            title={t('qualityMonitor.close')}
+            className="ml-0.5 rounded border-0 bg-transparent p-0.5 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+            onClick={() => setLayout({ open: false })}
+          >
+            <XIcon size={12} />
+          </button>
+        </div>
+      </div>
+
+      <MonitorBody
+        extended={extended}
+        videoMode={videoMode}
+        isDesktop={isDesktop}
+        width={
+          phoneExtended
+            ? phoneWidth - SCROLL_BAR_PX
+            : extended
+              ? Math.max(MIN_WIDTH, size.width) - SCROLL_BAR_PX
+              : isDesktop
+                ? BASIC_WIDTH.desktop
+                : BASIC_WIDTH.phone
+        }
+      />
+
+      {extended && !phoneExtended && (
+        <div
+          data-testid="quality-monitor-resize"
+          className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize touch-none border-b-2 border-r-2 border-neutral-500"
+          onPointerDown={begin('resize')}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
+        />
+      )}
+    </div>
+  );
+};

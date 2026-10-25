@@ -1,22 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
 import { Spin } from 'antd';
-import clsx from 'clsx';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as storage from '@/lib/localstorage.ts';
+import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
+import { drawsWithGpu, VP8_RANGE_FILTER_ID, vp8RangeTableValues } from '@/lib/vp8-range.ts';
 import { client } from '@/lib/websocket.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
+import {
+  resolutionAtom,
+  upscaleStoppedAtom,
+  videoScaleAtom,
+  videoStreamGenerationAtom
+} from '@/jotai/screen.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
+import { UpscaledVideo } from './upscaled-video.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
 
 type ServerMessage =
   | { type: 'offer'; sdp: string }
   | { type: 'started' }
   | { type: 'error'; code: string };
+
+// The board's VP8 samples are of the full range, which VP8 cannot say: the
+// picture is drawn through a table that undoes the browser's stretch, where
+// the browser draws with a GPU (an SVG filter on the video, or the
+// upscaler's shader when it draws the picture).
+const RANGE_TABLE = vp8RangeTableValues();
 
 function parseServerMessage(data: unknown): ServerMessage | null {
   if (typeof data !== 'string' || data.length > 65536) return null;
@@ -49,11 +63,19 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   const [attempt, setAttempt] = useState(0);
   const retries = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const [rangeFix] = useState(() => codec === 'vp8' && drawsWithGpu());
+  const { upscale, fit } = useUpscaleView();
+  const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
 
   useEffect(() => {
     // A VPN or privacy extension can replace RTCPeerConnection; report it
@@ -66,6 +88,8 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
       setIsLoading(false);
       return;
     }
+    // The quality monitor reads this connection's statistics while it is open.
+    const forgetPeer = watchPeer(peer);
     const query = codec === 'h264' ? '?codec=h264' : '';
     const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc${query}`);
     let answered = false;
@@ -157,6 +181,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
 
     return () => {
       clearTimeout(retryTimer);
+      forgetPeer();
       socket.onmessage = null;
       socket.onclose = null;
       peer.onconnectionstatechange = null;
@@ -202,19 +227,19 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
         data-kvm-screen-scroll
         className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
       >
-        <video
-          id="screen"
-          ref={videoRef}
-          className={clsx('m-auto block select-none', mouseStyle)}
-          style={mediaStyle}
-          muted
-          autoPlay
-          playsInline
-          controls={false}
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-          }}
+        <UpscaledVideo
+          videoRef={videoRef}
+          upscale={upscale}
+          vp8Range={codec === 'vp8'}
+          videoStyle={
+            rangeFix ? { ...mediaStyle, filter: `url(#${VP8_RANGE_FILTER_ID})` } : mediaStyle
+          }
+          mediaStyle={mediaStyle}
+          drawn={settled}
+          pixelRatio={pixelRatio}
+          resolution={resolution}
+          mouseStyle={mouseStyle}
+          onStopped={setUpscaleStopped}
           onResize={(event) => {
             const { videoWidth: width, videoHeight: height } = event.currentTarget;
             // The decoded frame size is the target's real resolution.
@@ -229,6 +254,18 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
           }}
         />
       </div>
+
+      {rangeFix && (
+        <svg aria-hidden="true" width="0" height="0" className="pointer-events-none absolute">
+          <filter id={VP8_RANGE_FILTER_ID} colorInterpolationFilters="sRGB">
+            <feComponentTransfer>
+              <feFuncR type="table" tableValues={RANGE_TABLE} />
+              <feFuncG type="table" tableValues={RANGE_TABLE} />
+              <feFuncB type="table" tableValues={RANGE_TABLE} />
+            </feComponentTransfer>
+          </filter>
+        </svg>
+      )}
 
       {failure ? (
         <div

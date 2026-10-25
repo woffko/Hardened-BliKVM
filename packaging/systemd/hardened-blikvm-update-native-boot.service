@@ -7,6 +7,10 @@ Documentation=https://github.com/woffko/Hardened-BliKVM
 Requires=hardened-blikvm-update-exec.socket
 After=local-fs.target systemd-tmpfiles-setup.service hardened-blikvm-update-exec.socket
 Conflicts=hardened-blikvm-update-recover.service
+# A failed attempt is tried again (see Restart= below); four attempts of at
+# most 75 s each fit in this window, so the limit ends a cause that stays.
+StartLimitIntervalSec=600
+StartLimitBurst=4
 
 [Service]
 Type=oneshot
@@ -23,6 +27,12 @@ LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.j
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config /run/credentials/%n/update-supervisor-config boot-native
 # The composition attempt is bounded to 45 seconds by the coordinator.
 TimeoutStartSec=60s
+# Early in a boot an attempt can fail on a passing cause: at gate Y of the
+# code audit of 2026-10-20 the first attempt failed while the board was busy
+# starting, and the same attempt succeeded later. The coordinator reconciles
+# what an attempt left, so a later one starts from a known state.
+Restart=on-failure
+RestartSec=15s
 NoNewPrivileges=yes
 PrivateDevices=yes
 PrivateTmp=yes

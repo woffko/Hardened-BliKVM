@@ -23,6 +23,12 @@ if [ ! -f "$BLI_KVM_X264_DIR/lib/libx264.a" ]; then
   scripts/build-x264.sh host "$BLI_KVM_X264_DIR"
 fi
 export BLI_KVM_X264_DIR
+# The encoder decodes capture frames with a pinned static libjpeg-turbo.
+BLI_KVM_LIBJPEG_TURBO_DIR="$target_root/libjpeg-turbo-3.2.0-host"
+if [ ! -f "$BLI_KVM_LIBJPEG_TURBO_DIR/lib/libturbojpeg.a" ]; then
+  scripts/build-libjpeg-turbo.sh host "$BLI_KVM_LIBJPEG_TURBO_DIR"
+fi
+export BLI_KVM_LIBJPEG_TURBO_DIR
 cargo check --workspace --all-targets --locked
 cargo check --workspace --all-targets --all-features --locked
 cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
@@ -49,20 +55,85 @@ cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hi
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
 cargo test -p bli-kvm-video-encoder --all-targets --locked --features h264
+cargo test -p bli-kvm-video-encoder --all-targets --locked --features h264,turbojpeg
+cargo test -p bli-kvm-video-encoder --all-targets --locked --no-default-features --features h264,turbojpeg
+# Randomly damaged capture frames through libjpeg-turbo, as on the board.
+BK_JPEG_DAMAGE_FRAMES=20000 cargo test -p bli-kvm-video-encoder --release --lib --locked \
+  --features h264,turbojpeg damaged_frames_never_crash
 sh -n scripts/build-libvpx.sh
 sh -n scripts/build-x264.sh
+sh -n scripts/stress-under-load.sh
 sh -n tools/device/deploy_native_profile.sh
 sh -n tools/device/deploy_vp8.sh
 sh -n tools/image/build_sd_image.sh
 sh -n tools/image/hardened-blikvm-firstboot.sh
 sh -n tools/image/hardened-blikvm-grow-image-store.sh
 sh -n packaging/system-update/initramfs-hook
+# The scripts of the hardware H.264 plan's lab: the module build recipe, a
+# lab session on the board, and the check of the recipe's modules.
+sh -n scripts/build-ve-module.sh
+sh -n scripts/build-ve-lab.sh
+sh -n tools/device/ve_lab_session.sh
+sh -n tools/device/ve_lab_run.sh
+sh -n tools/device/ve_module_check.sh
+sh -n scripts/build-ve-trace.sh
+sh -n tools/device/ve_trace_run.sh
+sh -n tools/device/ve_trace_session.sh
+sh -n tools/device/ve_quality_run.sh
+sh -n tools/device/ve_stream_run.sh
+sh -n tools/device/ve_endurance_run.sh
+sh -n tools/device/ve_driver_compare.sh
+sh -n tools/device/ve_encoder_measure.sh
+sh -n tools/device/ve_hold_run.sh
+sh -n tools/device/ve_unit_cpu.sh
+sh -n tools/device/ve_board_peers.sh
+sh -n tools/device/ve_engine_switch_run.sh
+sh -n kernel/hardened-blikvm-ve/test/run.sh
+sh -n packaging/ve/bli-kvm-ve-load
+sh -n tools/device/deploy_ve.sh
+sh -n scripts/build-ve-reference.sh
+node --check tools/playwright/ve_stream_check.mjs
+python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
+  tools/device/ve_stream_report.py tools/device/ve_enc_hostile.py \
+  tools/device/ve_capture_play.py tools/device/ve_demand_hold.py \
+  tools/device/ve_engine_switch.py tools/device/ve_engine_watch.py \
+  tools/device/ve_engine_choose.py tools/device/engine_switch_probe.py \
+  tools/device/frame_socket_tap.py tools/device/ve_device_hold.py \
+  tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
 python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
+# The target agent's Windows code is compiled only for Windows: linted and
+# built there too, reproducibly (docs/baselines/work-plan-20261014-target-agent.md).
+cargo xwin clippy --release --locked --offline --target x86_64-pc-windows-msvc \
+  -p bli-kvm-target-agent --all-targets -- -D warnings
+agent_out=$(mktemp -d)
+sh scripts/build-target-agent.sh "$agent_out/first" >/dev/null
+CARGO_TARGET_DIR="$agent_out/target" sh scripts/build-target-agent.sh "$agent_out/second" >/dev/null
+for program in hardened-blikvm-agent.exe hardened-blikvm-agent-test.exe; do
+  cmp "$agent_out/first/$program" "$agent_out/second/$program"
+done
+# Every DLL the programs import is one Windows takes from its own folder,
+# and their DLL loads are limited to it.
+python3 tools/check_agent_imports.py "$agent_out/first/hardened-blikvm-agent.exe" \
+  "$agent_out/first/hardened-blikvm-agent-test.exe"
+# The agent's drive: the same bytes twice, a fixed disk's one FAT12
+# partition from 1 MiB labelled BLIKVMAGENT, with the agent, its README and
+# its sums.
+sh scripts/build-agent-drive.sh "$agent_out/drive-first" >/dev/null
+sh scripts/build-agent-drive.sh "$agent_out/drive-second" >/dev/null
+cmp "$agent_out/drive-first/agent-drive.img" "$agent_out/drive-second/agent-drive.img"
+cmp "$agent_out/drive-first/hardened-blikvm-agent.exe" "$agent_out/first/hardened-blikvm-agent.exe"
+sfdisk -d "$agent_out/drive-first/agent-drive.img" | grep -q "start= *2048, size= *4096, type=1$"
+MTOOLS_SKIP_CHECK=1 mdir -i "$agent_out/drive-first/agent-drive.img@@1M" :: | grep -q "is BLIKVMAGENT"
+for name in README.TXT SHA256SUMS.TXT hardened-blikvm-agent.exe; do
+  MTOOLS_SKIP_CHECK=1 mdir -b -i "$agent_out/drive-first/agent-drive.img@@1M" "::$name" >/dev/null
+done
+rm -rf "$agent_out"
 cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264 -- -D warnings
+cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264,turbojpeg -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings
@@ -81,6 +152,7 @@ cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features char
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh
+sh -n scripts/musl-headers.sh
 bash -n scripts/build-board-profile.sh
 sh -n scripts/build-hid-transition-profile.sh
 bash -n scripts/build-prototype-bundle.sh
@@ -126,8 +198,39 @@ node --test tools/test_gui_parity_app.mjs
 node --test tools/test_restricted_power_probe.mjs
 node --test tools/test_restricted_keyboard_probe.mjs
 node --test tools/test_hid_report_queue.mjs
+node --test tools/test_quality_monitor.mjs
+node --test tools/test_busy_spans.mjs
 node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
+node --test tools/test_sticky_modifiers.mjs
+node --test tools/test_watching_probes.mjs
+node --test tools/test_quic_messages.mjs
+# The picture's receiver: reassembly, the chain, recovery, and 100000 random
+# and damaged datagrams and streams; the board's clock; the codec string.
+node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs tools/test_quic_h264.mjs
+# The page's table for the board's VP8 picture, and its GPU check.
+node --test tools/test_vp8_range.mjs
+# Where the pointer falls in the picture, whatever the screen element holds.
+node --test tools/test_pointer_map.mjs
+node --test tools/test_screen_area.mjs
+node --test tools/test_agent_layout.mjs
+node --test tools/test_agent_start.mjs
+node --test tools/test_terminal_serial.mjs
+node --test tools/test_picoclaw_page_state.mjs
+node --test tools/test_agent_typing.mjs
+# The upscaling setting and when a frame is enlarged.
+node --test tools/test_upscale_settings.mjs
+# The upscaler's watchdog: when frames are lost to it.
+node --test tools/test_upscale_watchdog.mjs
+# The JPEG frames of an MJPEG stream, as the upscaled MJPEG view cuts them.
+node --test tools/test_mjpeg_parts.mjs
+# The upscaler bench of phase 0 of the screen-upscaling plan: its measures, and its tools parse.
+node --test tools/test_upscale_bench.mjs
+node --check tools/upscale/bench.js
+node --check tools/upscale/patterns.js
+node --check tools/upscale/run_quality.mjs
+node --check tools/upscale/build_device_page.mjs
+node --test tools/test_impair_proxies.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
@@ -151,16 +254,61 @@ node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
 node --check tools/playwright/webrtc_unavailable_contract.mjs
 node --check tools/playwright/csp_contract.mjs
+node --check tools/playwright/menu_autohide_contract.mjs
+node --check tools/playwright/webrtc_quality_contract.mjs
+node --check tools/playwright/vp8_range_contract.mjs
+node --check tools/playwright/upscale_renderer_contract.mjs
+node --check tools/playwright/upscale_reference.mjs
+node --check tools/playwright/screen_enlargement_contract.mjs
+node --check tools/playwright/mjpeg_upscale_contract.mjs
+node --check tools/playwright/screen_area_contract.mjs
+node --check tools/playwright/target_agent_contract.mjs
+node --check tools/playwright/target_agent_reads_contract.mjs
+node --check tools/playwright/target_agent_start_contract.mjs
+node --check tools/playwright/agent_typing_contract.mjs
+node --check tools/build_agent_icon.mjs
+node --check tools/playwright/upscale_colour_device_probe.mjs
+node --check tools/playwright/theme_contract.mjs
+node --check tools/playwright/password_change_contract.mjs
+node --check tools/playwright/mobile_keys_contract.mjs
+node --check tools/playwright/touch_screen_reach_contract.mjs
+node --check tools/playwright/on_screen_keyboard_contract.mjs
+node --check tools/playwright/quic_fixture.mjs
+node --check tools/playwright/quic_transport_contract.mjs
+node --check tools/playwright/quic_transport_device_probe.mjs
+node --check tools/playwright/quic_input_contract.mjs
+node --check tools/playwright/quic_stack_rig.mjs
+node --check tools/playwright/quic_input_stack_contract.mjs
+node --check tools/playwright/quic_input_latency.mjs
+node --check tools/playwright/quic_input_device_probe.mjs
+node --check tools/playwright/quic_video_contract.mjs
+node --check tools/playwright/quic_share_contract.mjs
+node --check tools/playwright/quic_video_device_probe.mjs
+node --check tools/playwright/quic_video_measure.mjs
+node --check tools/playwright/quic_firewall_device_probe.mjs
+node --check tools/device/quic_firefox_probe.mjs
+node --check tools/net/udp_impair_proxy.mjs
+node --check tools/net/tcp_impair_proxy.mjs
+node --check tools/playwright/touch_reach_device_probe.mjs
 node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
+node --check tools/playwright/quality_fixture.mjs
+node --check tools/playwright/h264_engine_menu_contract.mjs
+node --check tools/playwright/quality_monitor_contract.mjs
+node --check tools/playwright/quality_monitor_gate.mjs
+node --check tools/playwright/quality_monitor_device_probe.mjs
+node --check tools/playwright/engine_menu_device_probe.mjs
+node --check tools/playwright/engine_busy_device_probe.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
+  tools/test_check_agent_imports.py \
   tools/test_packaging_boundaries.py \
   tools/test_build_sd_image.py \
+  tools/test_restore_raw_backup.py \
   tools/test_build_scripts_guard.py \
   tools/test_web_api_routes.py \
   tools/test_hid_credential_service.py \
@@ -299,6 +447,10 @@ python3 -m unittest \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
   tools/test_build_system_raw_bundle.py \
+  tools/test_ve_module.py \
+  tools/test_stress_under_load.py \
+  tools/test_plan_tool_headers.py \
+  tools/test_ve_device_hold.py \
   -v
 python3 -m py_compile \
   tools/device/owner_lock_probe.py \
@@ -498,7 +650,9 @@ python3 -m py_compile \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
   tools/build_system_raw_bundle.py \
-  tools/test_build_system_raw_bundle.py
+  tools/test_build_system_raw_bundle.py \
+  tools/ve_module.py \
+  tools/test_ve_module.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 node --check tools/playwright/local_application_upload.mjs
@@ -695,6 +849,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/build_system_image_test_fixture.py \
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
+    tools/check_agent_imports.py \
+    tools/test_check_agent_imports.py \
     tools/test_packaging_boundaries.py \
     tools/test_hid_credential_service.py \
     tools/test_hid_transition_service.py \
@@ -776,7 +932,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_build_update_test_fixture.py \
     tools/test_build_system_image_test_fixture.py \
     tools/build_system_raw_bundle.py \
-    tools/test_build_system_raw_bundle.py
+    tools/test_build_system_raw_bundle.py \
+    tools/ve_module.py \
+    tools/test_ve_module.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1
@@ -788,16 +946,66 @@ node tools/test_status_soak.mjs
 node tools/playwright/local_application_upload.mjs
 node tools/playwright/local_upload_logout.mjs
 pnpm_web build
+# The licence of the shader code the page ships (docs/licensing.md).
+grep -q 'Qualcomm Innovation Center' web/dist/THIRD-PARTY-NOTICES.txt
+grep -q 'Neither the name of the copyright holder' web/dist/THIRD-PARTY-NOTICES.txt
 pnpm_web lint
 node tools/playwright/restricted_control_lifecycle.mjs
 node tools/playwright/network_contract.mjs
 node tools/playwright/firewall_modes_contract.mjs
 node tools/playwright/webrtc_unavailable_contract.mjs
 node tools/playwright/csp_contract.mjs
+node tools/playwright/menu_autohide_contract.mjs
+node tools/playwright/webrtc_quality_contract.mjs
+node tools/playwright/vp8_range_contract.mjs
+# The page's upscaler against its CPU reference, its frames and its lost context.
+node tools/playwright/upscale_renderer_contract.mjs
+node tools/playwright/screen_enlargement_contract.mjs
+node tools/playwright/mjpeg_upscale_contract.mjs
+node tools/playwright/screen_area_contract.mjs
+node tools/playwright/target_agent_contract.mjs
+node tools/playwright/target_agent_reads_contract.mjs
+node tools/playwright/target_agent_start_contract.mjs
+node tools/playwright/agent_typing_contract.mjs
+node tools/playwright/h264_engine_menu_contract.mjs
+node tools/playwright/quality_monitor_contract.mjs
+node tools/playwright/theme_contract.mjs
+node tools/playwright/password_change_contract.mjs
+node tools/playwright/mobile_keys_contract.mjs
+node tools/playwright/touch_screen_reach_contract.mjs
+node tools/playwright/on_screen_keyboard_contract.mjs
+# The page against the host's build of the gateway, and input through the
+# host's builds of the gateway and the server.
+cargo build --locked -p bli-kvm-quic-gateway -p bli-kvm-server
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" node tools/playwright/quic_transport_contract.mjs
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" node tools/playwright/quic_input_contract.mjs
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_SERVER="$target_root/debug/bli-kvm-server" node tools/playwright/quic_input_stack_contract.mjs
+# The picture: the encoder's own x264 engine behind a frame socket, the
+# gateway, a relay that loses datagrams, and Chromium's decoder.
+cargo build --locked -p bli-kvm-video-encoder --features h264 --example h264_frame_source
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_video_contract.mjs
+# The share of the bitrate: a path narrowed below the picture's rate.
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_share_contract.mjs
+# The lab tool of the hardware H.264 plan: Chromium decodes what its
+# software stand-in makes through the register plans of both open maps.
+cargo build --locked -p bli-kvm-ve-lab
+BLI_KVM_VE_LAB="$target_root/debug/bli-kvm-ve-lab" node tools/playwright/ve_standin_contract.mjs
+# The register trace of the same plan: behind the closed window this
+# project's own client must come out of the trace complete and in order, and
+# the report must read a trace made by hand.
+scripts/build-ve-trace.sh host "$target_root/ve-trace"
+python3 -B -m unittest tools/ve-trace/test_ve_trace_report.py
+# The encoder driver's checks and register plan, as the kernel module has
+# them: random requests, and the plan against the lab tool's.
+kernel/hardened-blikvm-ve/test/run.sh "$target_root/ve-enc-plan" "$target_root/debug/bli-kvm-ve-lab"
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
+pnpm_web exec prettier --check '../tools/net/*.mjs'
+pnpm_web exec prettier --check '../tools/device/quic_firefox_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_impair_proxies.mjs'
+pnpm_web exec prettier --check '../tools/test_quic_video_receiver.mjs' '../tools/test_quic_board_clock.mjs' '../tools/test_quic_h264.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
@@ -806,6 +1014,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_watching_probes.mjs' '../tools/test_screen_area.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

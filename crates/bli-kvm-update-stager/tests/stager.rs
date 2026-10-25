@@ -545,6 +545,142 @@ fn upload_quota_refuses_unknown_root_content_without_removing_it() {
 }
 
 #[test]
+fn a_temporary_file_left_by_an_interrupted_copy_is_cleaned_before_staging() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    // What a power loss leaves while an older stager copies a snapshot.
+    let leftover = slots.path().join(".tmpAbC123");
+    fs::write(&leftover, b"half a copy").unwrap();
+    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o600)).unwrap();
+    let cleanup = stager.cleanup_abandoned_staging().unwrap();
+    assert_eq!(cleanup.removed, 1);
+    assert!(!leftover.exists());
+    stager
+        .stage_reader_with_quota(
+            archive.as_slice(),
+            archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 2,
+                max_payload_bytes: 1024,
+            },
+        )
+        .unwrap();
+    // Other names stay refused and kept.
+    fs::write(slots.path().join(".tmp-not-ours"), b"keep").unwrap();
+    assert!(stager.cleanup_abandoned_staging().is_ok());
+    assert!(slots.path().join(".tmp-not-ours").exists());
+}
+
+#[test]
+fn a_roots_system_sequence_is_read_only_from_a_small_regular_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("system-sequence");
+    fs::write(&path, "8\n").unwrap();
+    assert_eq!(bli_kvm_update_stager::read_system_sequence(&path), Some(8));
+    for bad in [
+        "0\n",
+        "eight\n",
+        "",
+        "1234567890123456789012345678901234567",
+    ] {
+        fs::write(&path, bad).unwrap();
+        assert_eq!(
+            bli_kvm_update_stager::read_system_sequence(&path),
+            None,
+            "{bad:?}"
+        );
+    }
+    fs::write(directory.path().join("elsewhere"), "8\n").unwrap();
+    let linked = directory.path().join("linked");
+    std::os::unix::fs::symlink(directory.path().join("elsewhere"), &linked).unwrap();
+    assert_eq!(bli_kvm_update_stager::read_system_sequence(&linked), None);
+    assert_eq!(
+        bli_kvm_update_stager::read_system_sequence(&directory.path().join("absent")),
+        None
+    );
+}
+
+#[test]
+fn a_staging_cut_before_its_receipt_is_cleaned() {
+    // The stager makes `.staging-*`, then its metadata directory, then the
+    // receipt: a power loss between them left a directory every later
+    // collection refused, which stops the board's application at every
+    // boot (code audit of 2026-10-20, AUD-04).
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let staging = |name: &str| {
+        let path = slots.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    staging(".staging-AbC123");
+    let metadata = staging(".staging-DeF456").join(".hardened-blikvm");
+    fs::create_dir(&metadata).unwrap();
+    let metadata = staging(".staging-GhI789").join(".hardened-blikvm");
+    fs::create_dir(&metadata).unwrap();
+    fs::write(metadata.join("receipt.json"), b"").unwrap();
+    fs::set_permissions(
+        metadata.join("receipt.json"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert_eq!(stager.cleanup_abandoned_staging().unwrap().removed, 3);
+    assert!(root_entries(slots.path()).is_empty());
+    // A cut staging that holds anything else stays refused.
+    let other = staging(".staging-JkL012");
+    fs::write(other.join("payload"), b"something").unwrap();
+    assert!(matches!(
+        stager.cleanup_abandoned_staging(),
+        Err(ApplicationStageError::UnsafeAbandonedStaging)
+    ));
+}
+
+#[test]
+fn the_snapshot_is_never_a_named_file_in_the_root() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    // A source that looks at the root while it is copied.
+    struct Watching<'a> {
+        archive: &'a [u8],
+        offset: usize,
+        root: PathBuf,
+        seen: Vec<String>,
+    }
+    impl std::io::Read for Watching<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.seen.extend(root_entries(&self.root));
+            let rest = &self.archive[self.offset..];
+            let count = rest.len().min(buffer.len()).min(512);
+            buffer[..count].copy_from_slice(&rest[..count]);
+            self.offset += count;
+            Ok(count)
+        }
+    }
+    let mut source = Watching {
+        archive: &archive,
+        offset: 0,
+        root: slots.path().to_path_buf(),
+        seen: Vec::new(),
+    };
+    stager
+        .stage_reader(&mut source, archive.len() as u64, &trust)
+        .unwrap();
+    assert!(
+        source.seen.iter().all(|name| !name.starts_with(".tmp")),
+        "the snapshot was named in the root: {:?}",
+        source.seen
+    );
+}
+
+#[test]
 fn upload_quota_rejects_invalid_policy_before_consuming_source() {
     let (_, trust) = keys();
     let slots = tempfile::tempdir().unwrap();

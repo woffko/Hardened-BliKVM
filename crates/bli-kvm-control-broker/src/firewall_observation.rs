@@ -1,5 +1,5 @@
 //! Verify the complete owned-table policy against observed nft JSON (schema 1).
-use crate::firewall_rules::{FirewallMode, FirewallPorts, render};
+use crate::firewall_rules::{FirewallMode, FirewallPorts, RuleForm, render};
 use serde_json::{Value, json};
 
 fn condition(left: Value, right: Value) -> Value {
@@ -42,7 +42,7 @@ fn v6_local() -> Value {
     json!({"set":[{"prefix":{"addr":"fc00::","len":7}}, {"prefix":{"addr":"fe80::","len":10}}]})
 }
 
-fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
+fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>, form: RuleForm) -> Vec<Value> {
     let restricted = mode.requires_confirmation();
     let mut input = vec![
         rule("input", vec![meta("iifname", json!("lo"))], "accept"),
@@ -96,6 +96,18 @@ fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
             }
             expr.push(state(json!("new")));
             input.push(rule("input", expr, "accept"));
+        }
+        if mode == FirewallMode::Restricted && form == RuleForm::Current {
+            for (protocol, addresses) in [("ip", v4_local()), ("ip6", v6_local())] {
+                input.push(rule(
+                    "input",
+                    vec![
+                        payload(protocol, "saddr", addresses),
+                        payload("udp", "dport", json!(ports.https_port)),
+                    ],
+                    "accept",
+                ));
+            }
         }
         if restricted {
             if let Some((first, last)) = ports.webrtc_media {
@@ -190,6 +202,18 @@ pub fn verify_with(
     ports: &FirewallPorts<'_>,
     source: CommentSource,
 ) -> Result<u64, &'static str> {
+    verify_form(document, mode, ports, source, RuleForm::Current)
+}
+
+/// Verifies the owned table against the rules of `mode` in one of the forms
+/// a build has written them in.
+pub fn verify_form(
+    document: &str,
+    mode: FirewallMode,
+    ports: &FirewallPorts<'_>,
+    source: CommentSource,
+    form: RuleForm,
+) -> Result<u64, &'static str> {
     render(mode, ports)?;
     if document.len() > 64 * 1024 {
         return Err("oversized nft observation");
@@ -244,7 +268,7 @@ pub fn verify_with(
         return Err("nft chain policy mismatch");
     }
     let mut actual = Value::Array(rules);
-    let mut expected = Value::Array(expected_rules(mode, ports));
+    let mut expected = Value::Array(expected_rules(mode, ports, form));
     normalize(&mut actual);
     normalize(&mut expected);
     if actual != expected {
@@ -253,30 +277,41 @@ pub fn verify_with(
     handle.ok_or("missing owned table")
 }
 
+/// The owned table as `nft -j list table` prints it for `mode`, with the
+/// rules in `form`: what a kernel holds after a build wrote them.
+#[cfg(test)]
+pub(crate) fn observed_document(
+    mode: FirewallMode,
+    ports: &FirewallPorts<'_>,
+    form: RuleForm,
+) -> String {
+    let mut nftables = vec![
+        json!({"metainfo": {"json_schema_version": 1}}),
+        json!({"table": {"family": "inet", "name": "hardened-blikvm", "handle": 7, "comment": format!("hardened-blikvm-owner-v2:{}", mode.as_str())}}),
+    ];
+    for chain in ["input", "forward", "output"] {
+        let policy = if mode == FirewallMode::Baseline
+            || (chain == "output" && !mode.requires_confirmation())
+        {
+            "accept"
+        } else {
+            "drop"
+        };
+        nftables.push(json!({"chain": {"family": "inet", "table": "hardened-blikvm", "name": chain, "handle": 1, "type": "filter", "hook": chain, "prio": 0, "policy": policy}}));
+    }
+    for (index, mut rule) in expected_rules(mode, ports, form).into_iter().enumerate() {
+        rule["handle"] = json!(index + 10);
+        nftables.push(json!({ "rule": rule }));
+    }
+    json!({ "nftables": nftables }).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn observed(mode: FirewallMode, ports: &FirewallPorts<'_>) -> String {
-        let mut nftables = vec![
-            json!({"metainfo": {"json_schema_version": 1}}),
-            json!({"table": {"family": "inet", "name": "hardened-blikvm", "handle": 7, "comment": format!("hardened-blikvm-owner-v2:{}", mode.as_str())}}),
-        ];
-        for chain in ["input", "forward", "output"] {
-            let policy = if mode == FirewallMode::Baseline
-                || (chain == "output" && !mode.requires_confirmation())
-            {
-                "accept"
-            } else {
-                "drop"
-            };
-            nftables.push(json!({"chain": {"family": "inet", "table": "hardened-blikvm", "name": chain, "handle": 1, "type": "filter", "hook": chain, "prio": 0, "policy": policy}}));
-        }
-        for (index, mut rule) in expected_rules(mode, ports).into_iter().enumerate() {
-            rule["handle"] = json!(index + 10);
-            nftables.push(json!({ "rule": rule }));
-        }
-        json!({ "nftables": nftables }).to_string()
+        observed_document(mode, ports, RuleForm::Current)
     }
 
     fn ports(webrtc_media: Option<(u16, u16)>) -> FirewallPorts<'static> {
@@ -325,6 +360,63 @@ mod tests {
         );
         // A JSON comment must not be present when the text source is used.
         assert!(verify_with(&observed(mode, &config), mode, &config, CommentSource::Text).is_err());
+    }
+
+    #[test]
+    fn restricted_before_the_quic_port_is_another_form_of_the_same_mode() {
+        let mode = FirewallMode::Restricted;
+        for config in [ports(None), ports(Some((20000, 20099)))] {
+            let current = observed(mode, &config);
+            let earlier = observed_document(mode, &config, RuleForm::BeforeQuicPort);
+            assert_eq!(verify(&current, mode, &config), Ok(7));
+            assert_eq!(
+                verify_form(
+                    &earlier,
+                    mode,
+                    &config,
+                    CommentSource::Json,
+                    RuleForm::BeforeQuicPort
+                ),
+                Ok(7)
+            );
+            // Each table is its own form and not the other.
+            assert_eq!(
+                verify(&earlier, mode, &config),
+                Err("nft rule content mismatch")
+            );
+            assert!(
+                verify_form(
+                    &current,
+                    mode,
+                    &config,
+                    CommentSource::Json,
+                    RuleForm::BeforeQuicPort
+                )
+                .is_err()
+            );
+            // What differs is the port, from the local ranges, over UDP.
+            let rules = |document: &str| {
+                serde_json::from_str::<Value>(document).unwrap()["nftables"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|entry| entry.get("rule").is_some())
+                    .count()
+            };
+            assert_eq!(rules(&current), rules(&earlier) + 2);
+        }
+        // The other modes have one form.
+        for mode in [
+            FirewallMode::Baseline,
+            FirewallMode::Moderate,
+            FirewallMode::Paranoid,
+        ] {
+            let config = ports(None);
+            assert_eq!(
+                observed_document(mode, &config, RuleForm::BeforeQuicPort),
+                observed(mode, &config)
+            );
+        }
     }
 
     #[test]

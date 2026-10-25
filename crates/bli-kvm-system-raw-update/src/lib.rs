@@ -30,8 +30,16 @@ pub const FSTAB_FILE: &str = "fstab";
 /// The device's `/etc/shadow`, merged into the new root per user so the
 /// image's default passwords never replace the operator's.
 pub const SHADOW_FILE: &str = "shadow";
+/// The board's accounts and groups, kept at stage to check the new image's
+/// against before the carried state is restored with its numeric owners.
+pub const PASSWD_FILE: &str = "passwd";
+pub const GROUP_FILE: &str = "group";
 /// The sequence of the last confirmed system bundle; older ones are refused.
 pub const CONFIRMED_FILE: &str = "confirmed-sequence";
+/// The system sequence of the root that carries it, relative to `/`, written
+/// by the image builder and checked by the RAW bundle builder; not carried,
+/// so it always names the root it is on.
+pub const SYSTEM_SEQUENCE_FILE: &str = "usr/share/hardened-blikvm/system-update/system-sequence";
 /// A new root that has not reported itself booted after this many boots is
 /// replaced by the backup.
 pub const MAX_BOOT_ATTEMPTS: u32 = 2;
@@ -62,8 +70,15 @@ pub const CARRIED_STATE: &[&str] = &[
     "var/lib/NetworkManager/secret_key",
     "root/.ssh",
     "var/lib/hardened-blikvm",
+    // The application's update state: the journal with its floor and
+    // confirmed slot, the slot pointer and the protected copies' selection,
+    // so the board keeps its own application across the write.
+    "var/lib/hardened-blikvm-update",
+    "var/lib/hardened-blikvm-update-v2",
     "var/lib/hardened-blikvm-exec",
+    "var/lib/hardened-blikvm-exec-ledger",
     "var/lib/hardened-blikvm-slots",
+    "var/lib/hardened-blikvm-slots-v2",
     "var/lib/hardened-blikvm-gadget",
     "var/lib/hardened-blikvm-system-actions",
     "var/lib/hardened-blikvm-video",
@@ -118,7 +133,16 @@ pub struct Record {
     pub boot_attempts: u32,
     #[serde(default)]
     pub message: String,
+    /// The SHA-256 of each file staged beside the payload (the carried state,
+    /// fstab, shadow, the accounts), checked as the payload is before
+    /// anything is written; empty in a record of an older stage.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub staged_sha256: std::collections::BTreeMap<String, String>,
 }
+
+/// The files staged beside the payload, by their names in the staging
+/// directory.
+const STAGED_FILES: [&str; 5] = [STATE_FILE, FSTAB_FILE, SHADOW_FILE, PASSWD_FILE, GROUP_FILE];
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateError {
@@ -258,6 +282,9 @@ pub struct StageRequest<'a> {
     pub fstab: &'a Path,
     /// The current `/etc/shadow`.
     pub shadow: &'a Path,
+    /// The current `/etc/passwd` and `/etc/group`.
+    pub passwd: &'a Path,
+    pub group: &'a Path,
 }
 
 /// Verifies the bundle and prepares the next boot's write.
@@ -269,6 +296,11 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
         )
     {
         return Err(UpdateError::Busy);
+    }
+    if !canonical_uuid(request.root_uuid) {
+        return Err(UpdateError::Check(
+            "the root file system's UUID is not a UUID".into(),
+        ));
     }
     let previous_generation = read_record(request.staging)?
         .map(|record| record.generation)
@@ -288,72 +320,102 @@ pub fn stage(request: &StageRequest<'_>, tools: &mut dyn Tools) -> Result<Record
         .find(|component| component.content_type == SystemContentType::Ext4Zstd)
         .ok_or_else(|| UpdateError::Bundle("the bundle has no compressed root image".into()))?
         .clone();
-    // Copy the payload out of the verified archive and hash it again: the
-    // archive could change between the two reads.
-    let payload = request.staging.join(PAYLOAD_FILE);
-    let temporary = request.staging.join(".payload.img.zst.new");
-    let mut archive = tar::Archive::new(File::open(request.bundle)?);
-    let mut copied = None;
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        if entry.path_bytes().as_ref() != format!("payload/{}", component.path).as_bytes() {
-            continue;
-        }
-        let mut out = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0_u8; BUFFER];
-        let mut total = 0_u64;
-        loop {
-            let read = entry.read(&mut buffer)?;
-            if read == 0 {
-                break;
+    let staged = (|| -> Result<Record> {
+        // Copy the payload out of the verified archive and hash it again: the
+        // archive could change between the two reads.
+        let payload = request.staging.join(PAYLOAD_FILE);
+        let temporary = request.staging.join(".payload.img.zst.new");
+        let mut archive = tar::Archive::new(File::open(request.bundle)?);
+        let mut copied = None;
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            if entry.path_bytes().as_ref() != format!("payload/{}", component.path).as_bytes() {
+                continue;
             }
-            hasher.update(&buffer[..read]);
-            out.write_all(&buffer[..read])?;
-            total += read as u64;
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = vec![0_u8; BUFFER];
+            let mut total = 0_u64;
+            loop {
+                let read = entry.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+                out.write_all(&buffer[..read])?;
+                total += read as u64;
+            }
+            out.sync_all()?;
+            copied = Some((total, hex(&hasher.finalize())));
+            break;
         }
-        out.sync_all()?;
-        copied = Some((total, hex(&hasher.finalize())));
-        break;
+        if copied != Some((component.size, component.sha256.clone())) {
+            let _ = fs::remove_file(&temporary);
+            return Err(UpdateError::Bundle(
+                "the payload changed while staging".into(),
+            ));
+        }
+        fs::rename(&temporary, &payload)?;
+        tools.archive_state(
+            request.root,
+            CARRIED_STATE,
+            &request.staging.join(STATE_FILE),
+        )?;
+        fs::copy(request.fstab, request.staging.join(FSTAB_FILE))?;
+        copy_private(request.shadow, &request.staging.join(SHADOW_FILE))?;
+        fs::copy(request.passwd, request.staging.join(PASSWD_FILE))?;
+        fs::copy(request.group, request.staging.join(GROUP_FILE))?;
+        let record = Record {
+            schema: RECORD_SCHEMA,
+            generation: previous_generation + 1,
+            phase: Phase::Staged,
+            version: manifest.version.clone(),
+            sequence: manifest.sequence,
+            manifest_sha256: verified.manifest_sha256,
+            payload_size: component.size,
+            payload_sha256: component.sha256,
+            image_size: component.image_size.unwrap_or(0),
+            image_sha256: component.image_sha256.unwrap_or_default(),
+            root_uuid: request.root_uuid.to_string(),
+            backup_size: 0,
+            backup_sha256: String::new(),
+            boot_attempts: 0,
+            message: "staged; reboot to write".into(),
+            staged_sha256: STAGED_FILES
+                .iter()
+                .map(|name| {
+                    Ok((
+                        (*name).to_string(),
+                        digest(&request.staging.join(name), None)?.1,
+                    ))
+                })
+                .collect::<io::Result<_>>()?,
+        };
+        write_record(request.staging, &record)?;
+        Ok(record)
+    })();
+    if staged.is_err() {
+        // Nothing of a failed stage stays to fill the data partition or to
+        // be taken for a staged update; a record that was staged before
+        // names files that are gone now (security review of 2026-10-18, N4).
+        discard(request.staging);
+        for leftover in [".payload.img.zst.new", "state.tar.new"] {
+            let _ = fs::remove_file(request.staging.join(leftover));
+        }
+        if let Ok(Some(mut earlier)) = read_record(request.staging)
+            && earlier.phase == Phase::Staged
+        {
+            earlier.phase = Phase::Failed;
+            earlier.message = "a later staging failed; nothing was written".into();
+            let _ = write_record(request.staging, &earlier);
+        }
     }
-    if copied != Some((component.size, component.sha256.clone())) {
-        let _ = fs::remove_file(&temporary);
-        return Err(UpdateError::Bundle(
-            "the payload changed while staging".into(),
-        ));
-    }
-    fs::rename(&temporary, &payload)?;
-    tools.archive_state(
-        request.root,
-        CARRIED_STATE,
-        &request.staging.join(STATE_FILE),
-    )?;
-    fs::copy(request.fstab, request.staging.join(FSTAB_FILE))?;
-    copy_private(request.shadow, &request.staging.join(SHADOW_FILE))?;
-    let record = Record {
-        schema: RECORD_SCHEMA,
-        generation: previous_generation + 1,
-        phase: Phase::Staged,
-        version: manifest.version.clone(),
-        sequence: manifest.sequence,
-        manifest_sha256: verified.manifest_sha256,
-        payload_size: component.size,
-        payload_sha256: component.sha256,
-        image_size: component.image_size.unwrap_or(0),
-        image_sha256: component.image_sha256.unwrap_or_default(),
-        root_uuid: request.root_uuid.to_string(),
-        backup_size: 0,
-        backup_sha256: String::new(),
-        boot_attempts: 0,
-        message: "staged; reboot to write".into(),
-    };
-    write_record(request.staging, &record)?;
-    Ok(record)
+    staged
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,8 +520,20 @@ fn apply(
 ) -> Result<BootAction> {
     let payload = staging.join(PAYLOAD_FILE);
     let checks = (|| -> io::Result<()> {
+        if !canonical_uuid(&record.root_uuid) {
+            return Err(io::Error::other(
+                "the root file system's UUID is not a UUID",
+            ));
+        }
         if digest(&payload, None)? != (record.payload_size, record.payload_sha256.clone()) {
             return Err(io::Error::other("the staged payload changed"));
+        }
+        for (name, sha256) in &record.staged_sha256 {
+            if !STAGED_FILES.contains(&name.as_str())
+                || digest(&staging.join(name), None)?.1 != *sha256
+            {
+                return Err(io::Error::other(format!("the staged {name} changed")));
+            }
         }
         if record.image_size > size_of(device)? {
             return Err(io::Error::other("the image does not fit the partition"));
@@ -522,6 +596,15 @@ fn apply(
             write_record(staging, record)?;
             Ok(BootAction::Reboot)
         }
+        Err(error) if error.kind() == io::ErrorKind::ResourceBusy => {
+            // Written over a file system that is still mounted, the backup
+            // could be undone by its later writes: the record stays at
+            // Writing, and the next boot restores it with nothing mounted
+            // (code audit of 2026-10-20, AUD-12).
+            record.message = format!("{error}; the next boot restores the backup");
+            write_record(staging, record)?;
+            Ok(BootAction::Reboot)
+        }
         Err(error) => {
             record.message = format!("the write failed ({error}); the backup was restored");
             restore_backup(record, staging, device, tools)
@@ -543,16 +626,39 @@ fn restore_backup(
     Ok(BootAction::Reboot)
 }
 
-/// Removes the staged payload, the backup, the carried state and the copies
-/// of the device's fstab and shadow once no step can use them.
+/// What an update leaves in the staging directory until it is kept or
+/// given up: the payload, the backup, the carried state and the copies of
+/// the device's fstab, shadow and accounts.
+const LEFT_FILES: [&str; 7] = [
+    BACKUP_FILE,
+    PAYLOAD_FILE,
+    STATE_FILE,
+    FSTAB_FILE,
+    SHADOW_FILE,
+    PASSWD_FILE,
+    GROUP_FILE,
+];
+
+/// The board's nginx configuration, relative to the root.
+pub const NGINX_CONF: &str = "etc/hardened-blikvm/nginx.conf";
+
+/// What the new root's nginx configuration is after the carried state is
+/// restored over it: the image's, so a system release can change it, with
+/// the HTTPS redirect the carried one had (code audit of 2026-10-20, V1).
+/// A redirect switched off in the carried file is not carried: HTTPS stays
+/// as the image has it.
+pub fn kept_nginx_conf(image: &str, carried: &str) -> String {
+    use bli_kvm_core::nginx_redirect::{redirects_port_80, render_redirect};
+    if redirects_port_80(carried) && !redirects_port_80(image) {
+        render_redirect(image, true)
+    } else {
+        image.to_string()
+    }
+}
+
+/// Removes what an update left once no step can use it.
 fn discard(staging: &Path) {
-    for file in [
-        BACKUP_FILE,
-        PAYLOAD_FILE,
-        STATE_FILE,
-        FSTAB_FILE,
-        SHADOW_FILE,
-    ] {
+    for file in LEFT_FILES {
         let _ = fs::remove_file(staging.join(file));
     }
 }
@@ -575,13 +681,9 @@ pub fn confirm(staging: &Path) -> Result<Record> {
     if record.phase != Phase::Booted {
         return Err(UpdateError::NothingToDo);
     }
-    for file in [
-        BACKUP_FILE,
-        PAYLOAD_FILE,
-        STATE_FILE,
-        FSTAB_FILE,
-        SHADOW_FILE,
-    ] {
+    // The accounts' copies too: confirming left them behind (seen on the
+    // test board on 2026-10-19).
+    for file in LEFT_FILES {
         match fs::remove_file(staging.join(file)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -622,6 +724,33 @@ pub fn minimum_sequence(staging: &Path) -> u64 {
         .ok()
         .and_then(|text| text.trim().parse::<u64>().ok())
         .map_or(1, |sequence| sequence.saturating_add(1))
+}
+
+/// The lowest system sequence `stage` may take on the device whose root is
+/// `root`: one above the last confirmed, and never below the running
+/// system's own, so a fresh card takes no older bundle either. A file that
+/// is there but cannot be read refuses, rather than counting as no floor
+/// (security review of 2026-10-18, MED-07).
+pub fn accepted_minimum(staging: &Path, root: &Path) -> Result<u64> {
+    let number = |path: &Path, what: &str| -> Result<Option<u64>> {
+        match fs::read_to_string(path) {
+            Ok(text) => text
+                .trim()
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|_| UpdateError::Check(format!("{what} cannot be read"))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    };
+    let confirmed = number(&staging.join(CONFIRMED_FILE), "the confirmed sequence")?;
+    let running = number(
+        &root.join(SYSTEM_SEQUENCE_FILE),
+        "the running system's sequence",
+    )?;
+    Ok(confirmed
+        .map_or(1, |sequence| sequence.saturating_add(1))
+        .max(running.unwrap_or(0)))
 }
 
 /// Drops a staged update that has not been written yet.
@@ -679,6 +808,108 @@ pub fn merge_fstab(new_fstab: &str, device_fstab: &str, root_uuid: &str) -> Stri
 /// Gives every account of `new_shadow` that the device also has the device's
 /// password hash and aging fields; accounts only the new image has keep its
 /// entry and accounts only the device had are dropped with it.
+/// A UUID in its canonical form (8-4-4-4-12 hexadecimal digits): the value
+/// goes into the boot configuration, the new fstab and `tune2fs -U`, which
+/// also takes words such as "random" (security review of 2026-10-18,
+/// MED-08).
+pub fn canonical_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
+}
+
+/// Whether the carried state's numeric owners mean the same accounts in the
+/// new image: root and every account of the project the board has keeps its
+/// id there, and no other account of the image takes one of those ids. The
+/// state is restored by number while the image allocates its own users, so a
+/// different allocation would give one service's files to another (security
+/// review of 2026-10-18, N5). Works for `/etc/group` as for `/etc/passwd`.
+pub fn owners_agree(
+    device: &str,
+    image: &str,
+    carried: &std::collections::BTreeSet<u32>,
+) -> std::result::Result<(), String> {
+    let entries = |text: &str| -> Vec<(String, String)> {
+        text.lines()
+            .filter_map(|line| {
+                let mut fields = line.split(':');
+                let name = fields.next()?.to_string();
+                let id = fields.nth(1)?.to_string();
+                (!name.is_empty()).then_some((name, id))
+            })
+            .collect()
+    };
+    let (device, image) = (entries(device), entries(image));
+    for (name, id) in &device {
+        if name != "root" && !name.starts_with("hardened-blikvm") {
+            continue;
+        }
+        if let Some((_, other_id)) = image.iter().find(|(other, _)| other == name)
+            && other_id != id
+        {
+            return Err(format!(
+                "{name} is {id} on the board and {other_id} in the new image"
+            ));
+        }
+        if let Some((other, _)) = image
+            .iter()
+            .find(|(other, other_id)| other_id == id && other != name)
+        {
+            return Err(format!("{name}'s {id} is {other} in the new image"));
+        }
+    }
+    // Ids the carried files are owned by must keep an account of the same
+    // kind: a project account the image dropped would leave them to
+    // nobody, and a board account whose id an image's project account takes
+    // would give them to that service (code audit of 2026-10-20, AUD-12).
+    let owns_carried = |id: &str| id.parse::<u32>().is_ok_and(|id| carried.contains(&id));
+    for (name, id) in &device {
+        if name.starts_with("hardened-blikvm")
+            && owns_carried(id)
+            && !image.iter().any(|(other, _)| other == name)
+        {
+            return Err(format!(
+                "{name} owns carried files and is gone from the new image"
+            ));
+        }
+    }
+    for (name, id) in &image {
+        if !name.starts_with("hardened-blikvm") || !owns_carried(id) {
+            continue;
+        }
+        if let Some((other, _)) = device
+            .iter()
+            .find(|(other, other_id)| other_id == id && other != name)
+        {
+            return Err(format!(
+                "{name} takes {id}, which owns {other}'s carried files on the board"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The user and group ids the carried state archive's files are owned by.
+fn carried_owners(
+    archive: &Path,
+) -> io::Result<(
+    std::collections::BTreeSet<u32>,
+    std::collections::BTreeSet<u32>,
+)> {
+    let mut users = std::collections::BTreeSet::new();
+    let mut groups = std::collections::BTreeSet::new();
+    let mut archive = tar::Archive::new(File::open(archive)?);
+    for entry in archive.entries()? {
+        let entry = entry?;
+        let header = entry.header();
+        users.insert(header.uid()? as u32);
+        groups.insert(header.gid()? as u32);
+    }
+    Ok((users, groups))
+}
+
 pub fn merge_shadow(new_shadow: &str, device_shadow: &str) -> String {
     let name = |line: &str| line.split(':').next().unwrap_or_default().to_string();
     let mut out = String::new();
@@ -820,6 +1051,20 @@ impl Tools for SystemTools {
             .ok_or_else(|| io::Error::other("mount path"))?;
         run("/bin/mount", &["-t", "ext4", device_str, mount_str])?;
         let result = (|| -> io::Result<()> {
+            // Before anything is changed: the carried owners must mean the
+            // same accounts. A stage of an older runtime kept no copies.
+            let (users, groups) = carried_owners(&staging.join(STATE_FILE))?;
+            for (kept, image, carried) in [
+                (PASSWD_FILE, "etc/passwd", &users),
+                (GROUP_FILE, "etc/group", &groups),
+            ] {
+                if let Ok(device) = fs::read_to_string(staging.join(kept)) {
+                    owners_agree(&device, &fs::read_to_string(mount.join(image))?, carried)
+                        .map_err(|conflict| {
+                            io::Error::other(format!("the accounts differ: {conflict}"))
+                        })?;
+                }
+            }
             let env = mount.join("boot/armbianEnv.txt");
             let text = fs::read_to_string(&env)?;
             fs::write(&env, patch_armbian_env(&text, uuid))?;
@@ -837,10 +1082,25 @@ impl Tools for SystemTools {
             );
             // Rewrite in place: the file keeps its owner and mode.
             fs::write(&new_shadow, merged)?;
-            self.restore_state(mount, &staging.join(STATE_FILE))
+            let image_nginx = fs::read_to_string(mount.join(NGINX_CONF)).ok();
+            self.restore_state(mount, &staging.join(STATE_FILE))?;
+            // The carried directory brought the board's nginx configuration
+            // back over the image's; the image's comes back, with the
+            // board's redirect. In place: the file keeps the carried owner
+            // and mode.
+            if let Some(image) = image_nginx {
+                let carried = fs::read_to_string(mount.join(NGINX_CONF)).unwrap_or_default();
+                fs::write(mount.join(NGINX_CONF), kept_nginx_conf(&image, &carried))?;
+            }
+            Ok(())
         })();
         run("/bin/sync", &[])?;
-        run("/bin/umount", &[mount_str])?;
+        run("/bin/umount", &[mount_str]).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                format!("the new root is still mounted: {error}"),
+            )
+        })?;
         result
     }
 
@@ -851,26 +1111,43 @@ impl Tools for SystemTools {
             .filter(|path| fs::symlink_metadata(root.join(path)).is_ok())
             .collect();
         let temporary = target.with_extension("tar.new");
-        let mut command = std::process::Command::new("tar");
-        command
-            .args([
-                "--create",
-                "--numeric-owner",
-                "--xattrs",
-                "--acls",
-                "--file",
-            ])
-            .arg(&temporary)
-            .arg("--directory")
-            .arg(root)
-            .arg("--")
-            .args(&present);
-        let status = command.stdin(std::process::Stdio::null()).status()?;
-        if !status.success() {
-            return Err(io::Error::other("the device state could not be archived"));
+        // Not across file systems: the virtual media partition is mounted
+        // inside a carried directory, and its images are not device state
+        // (security review of 2026-10-18, N3). A file that changes while it
+        // is read (tar's status 1, the services run meanwhile) is archived
+        // once more; a second change is reported as such.
+        for attempt in 0..2 {
+            let status = std::process::Command::new("tar")
+                .args([
+                    "--create",
+                    "--one-file-system",
+                    "--numeric-owner",
+                    "--xattrs",
+                    "--acls",
+                    "--file",
+                ])
+                .arg(&temporary)
+                .arg("--directory")
+                .arg(root)
+                .arg("--")
+                .args(&present)
+                .stdin(std::process::Stdio::null())
+                .status()?;
+            match status.code() {
+                Some(0) => {
+                    File::open(&temporary)?.sync_all()?;
+                    return fs::rename(temporary, target);
+                }
+                Some(1) if attempt == 0 => continue,
+                Some(1) => {
+                    return Err(io::Error::other(
+                        "a carried file changed while it was archived, twice",
+                    ));
+                }
+                _ => return Err(io::Error::other("the device state could not be archived")),
+            }
         }
-        File::open(&temporary)?.sync_all()?;
-        fs::rename(temporary, target)
+        Err(io::Error::other("the device state could not be archived"))
     }
 
     fn restore_state(&mut self, root: &Path, archive: &Path) -> io::Result<()> {

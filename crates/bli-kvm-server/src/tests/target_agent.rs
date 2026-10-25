@@ -1,0 +1,427 @@
+//! The target agent's switch and state, against an owner that answers on
+//! the control socket.
+#![cfg(feature = "restricted-control-surface")]
+
+use super::*;
+
+fn request(cookie: &str, csrf: Option<&str>, method: Method, body: Value) -> Request<Body> {
+    let mut request = json_request(method, "/api/target-agent", body);
+    request
+        .headers_mut()
+        .insert(header::COOKIE, cookie.parse().unwrap());
+    if let Some(csrf) = csrf {
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+    }
+    request
+}
+
+async fn call(
+    app: &Router,
+    cookie: &str,
+    csrf: Option<&str>,
+    method: Method,
+    body: Value,
+) -> Value {
+    json_body(
+        app.clone()
+            .oneshot(request(cookie, csrf, method, body))
+            .await
+            .unwrap(),
+    )
+    .await
+}
+
+/// A request refused before it reaches a handler answers with a status.
+async fn refused(app: &Router, cookie: &str, csrf: Option<&str>, body: Value) -> bool {
+    let response = app
+        .clone()
+        .oneshot(request(cookie, csrf, Method::POST, body))
+        .await
+        .unwrap();
+    !response.status().is_success()
+}
+
+#[tokio::test]
+async fn the_switch_is_the_owners_and_its_state_comes_back() {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::PlatformControlRequestV2 as Request;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let mut on = false;
+    let seen = super::quic_transport::owner(&control, move |request| match request {
+        Request::TargetAgent { enabled } => {
+            on = *enabled;
+            ControlResponse::Applied
+        }
+        Request::TargetAgentState {} => ControlResponse::TargetAgentState {
+            enabled: on,
+            wanted: on,
+            open: on,
+            problem: None,
+            agent: on.then(|| {
+                bli_kvm_agent_protocol::Hello::new("hardened-blikvm-agent", "0.1.0", "3c940a7e681c")
+            }),
+            refused: None,
+            messages_in: 2,
+            messages_out: 2,
+            dropped: 0,
+            board_commit: "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890".into(),
+        },
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+
+    let manifest = json_body(
+        app.clone()
+            .oneshot({
+                let mut request = json_request(Method::GET, "/api/capabilities", Value::Null);
+                request
+                    .headers_mut()
+                    .insert(header::COOKIE, cookie.parse().unwrap());
+                request
+            })
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        manifest["data"]["board"]["features"]["target_agent"]["availability"],
+        "read_write"
+    );
+
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["available"], true);
+    assert_eq!(state["data"]["enabled"], false);
+    assert!(state["data"]["agent"].is_null());
+
+    // Without the CSRF token nothing reaches the owner.
+    assert!(refused(&app, &cookie, None, serde_json::json!({"enabled": true})).await);
+
+    let switched = call(
+        &app,
+        &cookie,
+        Some(&csrf),
+        Method::POST,
+        serde_json::json!({"enabled": true}),
+    )
+    .await;
+    assert_eq!(switched["code"], 0, "{switched}");
+    assert_eq!(switched["data"]["enabled"], true);
+    assert_eq!(switched["data"]["open"], true);
+    assert_eq!(
+        switched["data"]["agent"]["program"],
+        "hardened-blikvm-agent"
+    );
+    assert_eq!(switched["data"]["messagesIn"], 2);
+    // The board's commit, beside the agent's, for the page to compare.
+    assert_eq!(
+        switched["data"]["boardCommit"],
+        "8dfb152d0c4b1e2f3a4b5c6d7e8f901234567890"
+    );
+
+    // A body that is not the switch is refused before the owner.
+    assert!(
+        refused(
+            &app,
+            &cookie,
+            Some(&csrf),
+            serde_json::json!({"enabled": false, "call": "ping"})
+        )
+        .await
+    );
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            Request::TargetAgentState {},
+            Request::TargetAgent { enabled: true },
+            Request::TargetAgentState {},
+        ]
+    );
+}
+
+/// The digest of the agent on the board's drive, from the slot's own
+/// checksums, for the page's start line to run that program alone.
+#[tokio::test]
+async fn the_state_names_the_digest_of_the_boards_agent() {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::PlatformControlRequestV2 as Request;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let _seen = super::quic_transport::owner(&control, move |request| match request {
+        Request::TargetAgentState {} => ControlResponse::TargetAgentState {
+            enabled: true,
+            wanted: true,
+            open: true,
+            problem: None,
+            agent: None,
+            refused: None,
+            messages_in: 0,
+            messages_out: 0,
+            dropped: 0,
+            board_commit: String::new(),
+        },
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let web = root.path().join("web");
+    std::fs::create_dir_all(web.join("agent")).unwrap();
+    std::fs::write(web.join("index.html"), "<!doctype html>").unwrap();
+    let digest = "5387551047879ddf4d2d3dac19f65f86ceaa01cb20bdc2fe6d7fe5e4f1eeb929";
+    std::fs::write(
+        web.join("agent/SHA256SUMS"),
+        format!(
+            "{digest}  hardened-blikvm-agent.exe\n{}  agent-drive.img\n",
+            "1".repeat(64)
+        ),
+    )
+    .unwrap();
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        web_root: Some(web.clone()),
+        ..ServerOptions::default()
+    });
+    let (cookie, _) = setup_and_login(&app).await;
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["agentSha256"], digest, "{state}");
+    // Without the slot's checksums the digest is empty and nothing is run.
+    std::fs::remove_file(web.join("agent/SHA256SUMS")).unwrap();
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["agentSha256"], "", "{state}");
+}
+
+#[tokio::test]
+async fn a_ping_goes_to_the_agent_and_a_read_needs_the_sessions_lease() {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::PlatformControlRequestV2 as Request;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let seen = super::quic_transport::owner(&control, |request| match request {
+        Request::TargetAgentCall { .. } => ControlResponse::TargetAgentAnswer {
+            answer: bli_kvm_agent_protocol::Answer::Pong,
+            round_trip_us: 2_500,
+        },
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let call = |body: Value| {
+        let mut request = json_request(Method::POST, "/api/target-agent/call", body);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        request
+    };
+    let answered = json_body(
+        app.clone()
+            .oneshot(call(serde_json::json!({"call": "ping"})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(answered["code"], 0, "{answered}");
+    assert_eq!(answered["data"]["answer"], "pong");
+    assert_eq!(answered["data"]["roundTripUs"], 2500);
+    // Without the keyboard's and mouse's lease the read never reaches the
+    // owner; an unknown call is refused as a body.
+    let refused = json_body(
+        app.clone()
+            .oneshot(call(serde_json::json!({"call": "monitors"})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_ne!(refused["code"], 0);
+    let unknown = app
+        .clone()
+        .oneshot(call(serde_json::json!({"call": "format_disk"})))
+        .await
+        .unwrap();
+    assert!(!unknown.status().is_success());
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Request::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms: 3_000,
+            lease: None,
+        }]
+    );
+}
+
+/// A change of the monitors waits for the agent as long as the owner lets a
+/// call wait, as Windows sets a mode or two before it answers; a read waits
+/// 3 s.
+#[tokio::test]
+async fn a_monitors_change_waits_longer_than_a_read() {
+    use bli_kvm_agent_protocol::{Answer, Call, DisplayMode, Keyboard};
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::{HidLeaseRequest, PlatformControlRequestV2 as Request};
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let seen = super::quic_transport::owner(&control, |request| match request {
+        Request::HidLease {
+            lease: HidLeaseRequest::Acquire { .. },
+        } => ControlResponse::LeaseGranted {
+            lease_id: [0x55; 16],
+        },
+        Request::TargetAgentCall { call, .. } => ControlResponse::TargetAgentAnswer {
+            answer: match call {
+                Call::SetDisplays { .. } => Answer::DisplaysChanged {
+                    revert_in_seconds: 15,
+                },
+                Call::Keyboard => Answer::Keyboard(Keyboard {
+                    current: None,
+                    installed: Vec::new(),
+                }),
+                _ => Answer::Done,
+            },
+            round_trip_us: 4_000_000,
+        },
+        _ => ControlResponse::Applied,
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = super::quic_transport::Page { app, cookie, csrf };
+    page.confirm_focus().await;
+    let (status, acquired) = page
+        .post(
+            "/api/hid/lease",
+            serde_json::json!({
+                "action": "acquire",
+                "operationId": "00112233445566778899aabbccddeeff",
+                "ttlSeconds": 30,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{acquired}");
+    for call in [
+        serde_json::json!({"set_displays": {"mode": "board_only"}}),
+        serde_json::json!("keep_displays"),
+        serde_json::json!("keyboard"),
+    ] {
+        let (_, answered) = page
+            .post(
+                "/api/target-agent/call",
+                serde_json::json!({ "call": call }),
+            )
+            .await;
+        assert_eq!(answered["code"], 0, "{answered}");
+    }
+    let waits: Vec<(Call, u32)> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| match request {
+            Request::TargetAgentCall {
+                call, timeout_ms, ..
+            } => Some((call.clone(), *timeout_ms)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        waits,
+        vec![
+            (
+                Call::SetDisplays {
+                    mode: DisplayMode::BoardOnly
+                },
+                10_000
+            ),
+            (Call::KeepDisplays, 10_000),
+            (Call::Keyboard, 3_000),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_switch_is_reported_and_no_owner_means_unavailable() {
+    use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    super::quic_transport::owner(&control, |_| ControlResponse::Rejected {
+        code: ControlRejectionCode::BackendRejected,
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let refused = call(
+        &app,
+        &cookie,
+        Some(&csrf),
+        Method::POST,
+        serde_json::json!({"enabled": true}),
+    )
+    .await;
+    assert_ne!(refused["code"], 0);
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["available"], false);
+
+    let bare = tempdir().unwrap();
+    let app = app_with_options(ServerOptions {
+        state_dir: bare.path().join("account"),
+        ..ServerOptions::default()
+    });
+    let (cookie, _) = setup_and_login(&app).await;
+    let state = call(&app, &cookie, None, Method::GET, Value::Null).await;
+    assert_eq!(state["data"]["available"], false);
+    assert_eq!(state["data"]["enabled"], false);
+}
+
+#[tokio::test]
+async fn an_agents_refusal_is_said_with_its_reason() {
+    use bli_kvm_control_protocol::ControlResponse;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    super::quic_transport::owner(&control, |_| ControlResponse::TargetAgentRefused {
+        reason: "Windows refused the monitors' configuration (87)".into(),
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let mut request = json_request(
+        Method::POST,
+        "/api/target-agent/call",
+        serde_json::json!({"call": "ping"}),
+    );
+    request
+        .headers_mut()
+        .insert(header::COOKIE, cookie.parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-csrf-token", csrf.parse().unwrap());
+    let refused = json_body(app.clone().oneshot(request).await.unwrap()).await;
+    assert_ne!(refused["code"], 0);
+    assert_eq!(
+        refused["msg"], "the agent did not do it: Windows refused the monitors' configuration (87)",
+        "{refused}"
+    );
+}

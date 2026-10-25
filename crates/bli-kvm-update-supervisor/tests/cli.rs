@@ -380,19 +380,50 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     fs::write(&candidate_binary, candidate_bytes).unwrap();
     fs::set_permissions(&candidate_binary, candidate_mode).unwrap();
 
-    let mut confirm = command(binary, &config, &["confirm-stdin"]);
-    confirm.stdin(Stdio::piped());
-    confirm.stdout(Stdio::piped());
-    confirm.stderr(Stdio::piped());
-    assert!(
-        confirm
-            .get_args()
-            .all(|argument| argument.as_encoded_bytes() != token)
-    );
-    assert!(confirm.get_envs().all(|(_, value)| value.is_none()));
-    let mut child = confirm.spawn().unwrap();
-    child.stdin.take().unwrap().write_all(&token).unwrap();
-    let confirmed = child.wait_with_output().unwrap();
+    // The confirmation admits only the account it names, by the socket's
+    // peer (security review of 2026-10-18, MED-01).
+    let uid = nix::unistd::Uid::effective();
+    let user = nix::unistd::User::from_uid(uid).unwrap().unwrap().name;
+    let confirm_as = |peer_user: &str| {
+        let (mut client, worker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut confirm = command(
+            binary,
+            &config,
+            &["confirm-stdin", "--peer-user", peer_user],
+        );
+        confirm.stdin(Stdio::from(std::os::fd::OwnedFd::from(worker)));
+        confirm.stdout(Stdio::piped());
+        confirm.stderr(Stdio::piped());
+        assert!(
+            confirm
+                .get_args()
+                .all(|argument| argument.as_encoded_bytes() != token)
+        );
+        assert!(confirm.get_envs().all(|(_, value)| value.is_none()));
+        let child = confirm.spawn().unwrap();
+        // A refused peer may be closed before the token is read.
+        let _ = client.write_all(&token);
+        let _ = client.shutdown(std::net::Shutdown::Write);
+        child.wait_with_output().unwrap()
+    };
+    let other = ["nobody", "daemon", "bin"]
+        .into_iter()
+        .find(|name| {
+            nix::unistd::User::from_name(name)
+                .ok()
+                .flatten()
+                .is_some_and(|other| other.uid != uid && !other.uid.is_root())
+        })
+        .expect("an account other than the test's");
+    let refused = confirm_as(other);
+    assert_eq!(refused.status.code(), Some(96), "{:?}", refused.stderr);
+    assert!(token_path.exists());
+    if uid.is_root() {
+        // Production rejects root peers; the rest needs an unprivileged
+        // test identity.
+        return;
+    }
+    let confirmed = confirm_as(&user);
     assert!(confirmed.status.success(), "{:?}", confirmed.stderr);
     assert_eq!(json_output(&confirmed)["result"], "confirmed");
     assert!(!String::from_utf8_lossy(&confirmed.stdout).contains(&hex(&token)));

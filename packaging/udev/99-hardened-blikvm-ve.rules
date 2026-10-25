@@ -1,0 +1,4 @@
+# The encoder driver's device (kernel/hardened-blikvm-ve, ve_enc.c) belongs
+# to the group of the H.264 encoder's unit and to nobody else. The driver
+# asks for mode 0600; this rule is what opens it to that group.
+SUBSYSTEM=="misc", KERNEL=="hardened-blikvm-ve-enc", GROUP="hardened-blikvm-ve", MODE="0660"

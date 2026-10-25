@@ -94,8 +94,14 @@ unsafe state file, corrupt journal, or missing rollback anchor is a hard stop.
 
 Operation history is persisted and bounded to 128 records. Reusing an ID with
 different target or health binding is rejected; exact confirmed, rolled-back,
-pending, and no-op retries are deterministic. History is never silently
-pruned. Exhaustion is explicit and requires a future reviewed rollover format.
+pending, and no-op retries are deterministic. A full history rolls over
+(security review of 2026-10-18, LOW-01): every pending record and the one the
+current rollback receipt names stay, with the 64 newest finished records, and
+the journal's `prunedThroughGeneration` says when older ones went. A retry of
+a pruned operation gets no replayed answer, which it does not need: every
+admission is bound to the journal's exact generation, which has moved on
+since. The field is written only once a rollover happened; a manager from
+before it refuses a journal that has it, as it would refuse a new schema.
 
 ## Current implementation boundary
 

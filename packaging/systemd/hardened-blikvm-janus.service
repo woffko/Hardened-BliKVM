@@ -11,6 +11,13 @@ ConditionPathExists=/etc/hardened-blikvm-janus/janus.jcfg
 Type=simple
 DynamicUser=yes
 UMask=0077
+# Janus's loopback address, 127.0.0.2 (security review of 2026-10-18,
+# MED-03). Janus looks a configured address up among the interfaces' own and
+# binds what the interface it finds gives, which for lo itself is 127.0.0.1:
+# the address is lo's under a label of its own. Without it the mountpoints
+# fail and the WebSockets server falls back to every address (seen on the
+# test board).
+ExecStartPre=+/usr/sbin/ip address replace 127.0.0.2/8 dev lo label lo:janus
 ExecStart=/usr/bin/janus --configs-folder=/etc/hardened-blikvm-janus --disable-colors
 Restart=on-failure
 RestartSec=2s
@@ -32,12 +39,14 @@ ProcSubset=pid
 ProtectSystem=strict
 # libwebsockets opens an IPv6 socket for its loopback listener.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-# Only the loopback signaling port and the WebRTC media range may be bound,
-# even if a configuration regression enabled another transport.
+# Only the loopback signaling port, the mountpoints' RTP ports and the WebRTC
+# media range may be bound, even if a configuration regression enabled another
+# transport. systemd 249 does not enforce these (N6); a later one does.
 SocketBindDeny=any
 SocketBindAllow=tcp:8188
 SocketBindAllow=udp:20000-20099
 SocketBindAllow=udp:5004
+SocketBindAllow=udp:5006
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

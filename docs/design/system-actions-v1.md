@@ -99,6 +99,45 @@ that the reboot really happened and that the device is idle again:
 - The device gate reports `accepted` only from the persisted store, after the
   boot identity changed and the record reached the accepted phase.
 
+### Since 2026-10-07: the next confirmed action accepts the reboot
+
+Found on the test board: nothing closed a reboot's record in the shipped
+product. The store takes an exclusive lock on its directory for as long as it
+is open, and the owner keeps it open, so the acceptance unit cannot open the
+journal while the owner runs (`StoreBusy`, "exact system-action store is
+unavailable"); the owner's own `accept_post_boot` request has no caller in the
+server or the page (only the device gate,
+`tools/stage_device_system_action_gate.py`, sends it over the control socket
+as root). After one reboot from the page (Device > Reboot, or a RAW system
+update's install or rollback, which reboot through the same action), every
+later system action was refused with `pending_unreconciled`, across power
+cycles too.
+
+The owner now accepts that record when the operator confirms the next action:
+before it prepares a confirmed request and when exactly one record is
+pending, it asks the policy to accept it with the guards attested, the
+operator's confirmation of the new action being their word that the board came
+back. The policy accepts only a record from another boot, once the startup
+guard (30 s of uptime) has passed; a record dispatched in the current boot,
+whose outcome is not known, or a younger boot still refuses the new action as
+before. Test: `system_action::the_next_confirmed_action_closes_the_reboot_that_happened`
+(it failed with `pending_unreconciled` without the acceptance). The acceptance
+unit and the gate's request are unchanged.
+
+Not changed, for the record: the owner gives the policy the wall clock (Unix
+milliseconds) for an action and the uptime for an acceptance, so the 60 s
+cooldown after an accepted action compares the two clocks and never holds a
+new action.
+
+Found with it: the journal has room for sixteen records and gave none up, so
+the sixteenth system action was a board's last; and the SD image builder
+copied the source board's journal to new cards (the beta.1 image carried the
+test board's eight records, one of them the unaccepted reboot of 2026-10-03,
+which refused a beta.1 card's first reboot). A full journal now makes room in
+the place of the oldest record that settled in an earlier boot
+(`docs/baselines/system-action-policy.md`), and the image builder leaves the
+journal out, so a new card's owner starts an empty one.
+
 ## Memory and swap
 
 - Reads stay in the server (`/api/vm/memory/limit`, `/api/vm/swap` views from

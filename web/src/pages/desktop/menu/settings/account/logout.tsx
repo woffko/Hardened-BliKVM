@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 
 import * as api from '@/api/auth.ts';
 import { removeToken } from '@/lib/cookie.ts';
+import { clearPicoclawStorage } from '@/lib/picoclaw-storage.ts';
 
 export const Logout = () => {
   const { t } = useTranslation();
@@ -18,6 +19,7 @@ export const Logout = () => {
       }
 
       removeToken();
+      clearPicoclawStorage();
       navigate('/auth/login');
     });
   }

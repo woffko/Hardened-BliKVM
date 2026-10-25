@@ -85,7 +85,12 @@ pub(crate) fn load_config(path: &Path) -> Result<LoadedConfig, SupervisorCliErro
     }
     let document: ConfigDocument =
         serde_json::from_slice(&bytes).map_err(|_| SupervisorCliError::InvalidConfig)?;
-    validate_document(document)
+    validate_document(
+        document,
+        bli_kvm_update_stager::read_system_sequence(Path::new(
+            bli_kvm_update_stager::ROOT_SYSTEM_SEQUENCE,
+        )),
+    )
 }
 
 // Unlike an ordinary root-owned config, systemd's credential copy belongs to
@@ -181,7 +186,10 @@ fn read_only_mount(file: &File) -> Result<bool, SupervisorCliError> {
     Ok(unsafe { result.assume_init() }.f_flag & libc::ST_RDONLY != 0)
 }
 
-fn validate_document(document: ConfigDocument) -> Result<LoadedConfig, SupervisorCliError> {
+fn validate_document(
+    document: ConfigDocument,
+    root_sequence: Option<u64>,
+) -> Result<LoadedConfig, SupervisorCliError> {
     if document.schema_version != CONFIG_SCHEMA_VERSION
         || document.product != APPLICATION_PRODUCT
         || document.target != APPLICATION_TARGET
@@ -212,7 +220,10 @@ fn validate_document(document: ConfigDocument) -> Result<LoadedConfig, Superviso
         slot_root: document.slot_root,
         state_root: document.state_root,
         runtime_root: document.runtime_root,
-        system_sequence: document.system_sequence,
+        // The configuration is carried across RAW updates; the running
+        // root's sequence names the system that runs (code audit of
+        // 2026-10-20, AUD-02).
+        system_sequence: document.system_sequence.max(root_sequence.unwrap_or(0)),
         health_timeout_ms: document.health_timeout_ms,
     })
 }
@@ -330,6 +341,33 @@ mod tests {
         fs::write(&path, serde_json::to_vec(document).unwrap()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         path
+    }
+
+    #[test]
+    fn the_running_roots_system_sequence_counts_when_it_is_newer() {
+        // The configuration is carried across RAW updates, so its sequence
+        // stays the first image's; the root's file names the system that
+        // runs (code audit of 2026-10-20, AUD-02).
+        let directory = tempfile::tempdir().unwrap();
+        let document =
+            || serde_json::from_value::<ConfigDocument>(valid_document(directory.path())).unwrap();
+        assert_eq!(
+            validate_document(document(), Some(8))
+                .unwrap()
+                .system_sequence,
+            8
+        );
+        assert_eq!(
+            validate_document(document(), None).unwrap().system_sequence,
+            1
+        );
+        let mut newer = valid_document(directory.path());
+        newer["systemSequence"] = 9.into();
+        let newer = serde_json::from_value::<ConfigDocument>(newer).unwrap();
+        assert_eq!(
+            validate_document(newer, Some(8)).unwrap().system_sequence,
+            9
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ import { encrypt } from '@/lib/encrypt.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { Head } from '@/components/head.tsx';
 
-import { validatePicocomParameters } from './validater.ts';
+import { picocomCommand, validatePicocomParameters } from './validater.ts';
 
 export const Terminal = () => {
   const { t } = useTranslation();
@@ -95,9 +95,7 @@ export const Terminal = () => {
         return;
       }
 
-      ws.send(
-        `picocom ${port} --baud ${baud} --parity ${parity} --flow ${flowControl} --databits ${dataBits} --stopbits ${stopBits}\r`
-      );
+      ws.send(`${picocomCommand({ port, baud, parity, flowControl, dataBits, stopBits })}\r`);
 
       isPicocomRunning = true;
     };

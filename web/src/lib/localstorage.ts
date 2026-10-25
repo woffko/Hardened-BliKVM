@@ -19,9 +19,13 @@ const MOUSE_SCROLL_INTERVAL_KEY = `${STORAGE_PREFIX}-mouse-scroll-interval`;
 const SKIP_UPDATE_KEY = `${STORAGE_PREFIX}-check-update`;
 const KEYBOARD_SYSTEM_KEY = `${STORAGE_PREFIX}-keyboard-system`;
 const KEYBOARD_LANGUAGE_KEY = `${STORAGE_PREFIX}-keyboard-language`;
+const AGENT_LAYOUT_SYNC_KEY = `${STORAGE_PREFIX}-agent-layout-sync`;
 const SKIP_MODIFY_PASSWORD_KEY = `${STORAGE_PREFIX}-skip-modify-password`;
 const MENU_DISABLED_ITEMS_KEY = `${STORAGE_PREFIX}-menu-disabled-items`;
 const MENU_AUTO_HIDE_KEY = `${STORAGE_PREFIX}-menu-auto-hide`;
+const THEME_MODE_KEY = `${STORAGE_PREFIX}-theme`;
+const ACCENT_KEY = `${STORAGE_PREFIX}-accent`;
+const TRANSPORT_KEY = `${STORAGE_PREFIX}-transport`;
 const LAYOUT_MODE_KEY = `${STORAGE_PREFIX}-layout-mode`;
 const POWER_CONFIRM_KEY = `${STORAGE_PREFIX}-power-confirm`;
 
@@ -251,6 +255,22 @@ export function getKeyboardLanguage() {
   return localStorage.getItem(KEYBOARD_LANGUAGE_KEY);
 }
 
+export function setAgentLayoutSync(sync: boolean) {
+  try {
+    localStorage.setItem(AGENT_LAYOUT_SYNC_KEY, sync ? 'yes' : 'no');
+  } catch {
+    // The choice lasts for this page only.
+  }
+}
+
+export function getAgentLayoutSync(): boolean {
+  try {
+    return localStorage.getItem(AGENT_LAYOUT_SYNC_KEY) === 'yes';
+  } catch {
+    return false;
+  }
+}
+
 export function setSkipModifyPassword(skip: boolean) {
   const expiry = 3 * 24 * 60 * 60 * 1000; // 3 days
   setWithExpiry(SKIP_MODIFY_PASSWORD_KEY, String(skip), expiry);
@@ -309,4 +329,29 @@ export function getPowerConfirm() {
 
 export function setPowerConfirm(enabled: boolean) {
   localStorage.setItem(POWER_CONFIRM_KEY, String(enabled));
+}
+
+export function getThemeMode(): string | null {
+  return localStorage.getItem(THEME_MODE_KEY);
+}
+
+export function setThemeMode(mode: string) {
+  localStorage.setItem(THEME_MODE_KEY, mode);
+}
+
+// The transport this browser uses: today's (`standard`) unless QUIC was chosen.
+export function getTransportChoice(): 'standard' | 'quic' {
+  return localStorage.getItem(TRANSPORT_KEY) === 'quic' ? 'quic' : 'standard';
+}
+
+export function setTransportChoice(choice: 'standard' | 'quic') {
+  localStorage.setItem(TRANSPORT_KEY, choice);
+}
+
+export function getAccent(): string | null {
+  return localStorage.getItem(ACCENT_KEY);
+}
+
+export function setAccent(accent: string) {
+  localStorage.setItem(ACCENT_KEY, accent);
 }

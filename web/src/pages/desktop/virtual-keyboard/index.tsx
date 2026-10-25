@@ -2,8 +2,9 @@ import type { ComponentType } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AppleOutlined, WindowsOutlined } from '@ant-design/icons';
 import clsx from 'clsx';
-import { useAtom } from 'jotai';
+import { useAtom, useSetAtom } from 'jotai';
 import { XIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { KeyboardButtonTheme } from 'react-simple-keyboard';
 import * as SimpleKeyboard from 'react-simple-keyboard';
 import { Drawer } from 'vaul';
@@ -16,8 +17,10 @@ import { ConfigProvider, Segmented, Select, theme } from 'antd';
 import { getKeycode, getModifierBit } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
-import { isKeyboardOpenAtom } from '@/jotai/keyboard.ts';
+import { isKeyboardOpenAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
+import { useAgentLayoutSync } from '@/hooks/useAgentLayoutSync.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
+import { useReportHeight } from '@/hooks/useKeyboardInsets.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
 import {
@@ -51,6 +54,7 @@ const KEYBOARD_LANGUAGES = [
 ];
 
 export const VirtualKeyboard = () => {
+  const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
 
   const [isKeyboardOpen, setIsKeyboardOpen] = useAtom(isKeyboardOpenAtom);
@@ -60,8 +64,28 @@ export const VirtualKeyboard = () => {
   const [keyboardLanguage, setKeyboardLanguage] = useState('en');
   const [activeModifierKeys, setActiveModifierKeys] = useState<string[]>([]);
   const { restricted, reportHid } = useHidLease();
+  // The target's layout follows the keyboard's language when asked to; a
+  // switch that failed is said in the header.
+  const layoutFailure = useAgentLayoutSync(keyboardLanguage, isKeyboardOpen);
+  const layoutNotice = layoutFailure ? (
+    <span
+      role="alert"
+      data-testid="agent-layout-sync-failure"
+      className="min-w-0 truncate text-xs text-red-600"
+      title={layoutFailure}
+    >
+      {t('settings.device.targetAgent.layoutSyncFailed', { reason: layoutFailure })}
+    </span>
+  ) : null;
 
   const keyboardRef = useRef<any>(null);
+  // A key is down: a finger's up, leave and cancel each let it go, once.
+  const keyDownRef = useRef(false);
+  // On the touch layout the keyboard covers the bottom of the page; its
+  // height lets the screen be laid out above it.
+  const touchKeyboardRef = useRef<HTMLDivElement | null>(null);
+  const setTouchKeyboardHeight = useSetAtom(virtualKeyboardHeightAtom);
+  useReportHeight(touchKeyboardRef, !isDesktopLayout && isKeyboardOpen, setTouchKeyboardHeight);
 
   const systems = [
     { value: 'win', icon: <WindowsOutlined /> },
@@ -103,12 +127,15 @@ export const VirtualKeyboard = () => {
     setKeyboardLayout('default');
   }, [keyboardSystem, keyboardLanguage]);
 
-  // Press key
+  // A modifier tapped stays pressed for the next key; tapped again, the
+  // modifiers pressed are pressed and let go alone (the Windows key opens
+  // Start).
   function onKeyPress(key: string) {
     if (modifierKeys.includes(key)) {
       if (activeModifierKeys.includes(key)) {
-        sendModifierKeyDown();
-        sendModifierKeyUp();
+        send(modifierBits(activeModifierKeys), 0);
+        send(0, 0);
+        setActiveModifierKeys([]);
       } else {
         setActiveModifierKeys([...activeModifierKeys, key]);
       }
@@ -127,7 +154,13 @@ export const VirtualKeyboard = () => {
     sendKeyup();
   }
 
-  // Send all keys
+  // The modifiers as the report's first byte: a modifier is never a key in
+  // its key array, which the board refuses.
+  function modifierBits(keys: string[]) {
+    return keys.reduce((bits, key) => bits | getModifierBit(specialKeyMap.get(key) ?? ''), 0);
+  }
+
+  // The modifiers pressed go down before the key, as on a keyboard.
   function sendKeydown(key: string) {
     const code = getKeyboardCode(key);
     if (!code) {
@@ -135,9 +168,10 @@ export const VirtualKeyboard = () => {
       return;
     }
 
-    const modifier = sendModifierKeyDown();
-
+    const modifier = modifierBits(activeModifierKeys);
+    if (modifier) send(modifier, 0);
     send(modifier, code);
+    keyDownRef.current = true;
   }
 
   function getKeyboardCode(key: string) {
@@ -171,6 +205,13 @@ export const VirtualKeyboard = () => {
       return getKeycode(base);
     }
 
+    // Russian keys are the US keys at their places: RusQ is KeyQ, and
+    // RusBracketLeft is BracketLeft.
+    if (key.startsWith('Rus')) {
+      const base = key.slice('Rus'.length);
+      return getKeycode(base.length === 1 ? `Key${base}` : base);
+    }
+
     const specialKey = specialKeyMap.get(key);
     if (specialKey) {
       return getKeycode(specialKey);
@@ -179,37 +220,15 @@ export const VirtualKeyboard = () => {
     return getKeycode(key);
   }
 
-  // Release all keys
+  // The key up, then the modifiers it was pressed with, which are then
+  // let go.
   function sendKeyup() {
-    sendModifierKeyUp();
+    if (!keyDownRef.current) return;
+    keyDownRef.current = false;
+    const modifier = modifierBits(activeModifierKeys);
+    if (modifier) send(modifier, 0);
     send(0, 0);
-  }
-
-  // Send modifier keys
-  function sendModifierKeyDown() {
-    let modifier = 0;
-
-    activeModifierKeys.forEach((modifierKey) => {
-      const key = specialKeyMap.get(modifierKey)!;
-
-      modifier |= getModifierBit(key)!;
-      const code = getKeycode(key)!;
-
-      send(modifier, code);
-    });
-
-    return modifier;
-  }
-
-  // Release modifier keys
-  function sendModifierKeyUp() {
-    if (activeModifierKeys.length === 0) return;
-
-    activeModifierKeys.forEach(() => {
-      send(0, 0);
-    });
-
-    setActiveModifierKeys([]);
+    if (activeModifierKeys.length > 0) setActiveModifierKeys([]);
   }
 
   function send(modifier: number, code: number) {
@@ -280,8 +299,14 @@ export const VirtualKeyboard = () => {
   if (!isDesktopLayout) {
     if (!isKeyboardOpen) return null;
 
+    // The keyboard is always light, and so are its buttons' and list's own
+    // colours: the page's dark scheme would make their text white.
     return (
-      <div className="fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl">
+      <div
+        ref={touchKeyboardRef}
+        data-testid="touch-virtual-keyboard"
+        className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl [color-scheme:light]"
+      >
         <div className="keyboard-header flex items-center justify-between gap-3 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <select
@@ -295,6 +320,8 @@ export const VirtualKeyboard = () => {
                 </option>
               ))}
             </select>
+
+            {layoutNotice}
 
             {keyboardLanguage === 'en' && (
               <div className="flex overflow-hidden rounded border border-neutral-300 text-sm">
@@ -335,9 +362,13 @@ export const VirtualKeyboard = () => {
                     key={`${row}-${key}`}
                     type="button"
                     className={clsx(
-                      'flex h-10 select-none items-center justify-center rounded bg-white px-2 text-center text-sm shadow-sm active:bg-blue-100',
+                      'flex h-10 select-none items-center justify-center rounded px-2 text-center text-sm shadow-sm',
                       getMobileButtonClass(key),
-                      activeModifierKeys.includes(key) && 'bg-blue-600 text-white'
+                      // One background each: a pressed modifier is white on
+                      // blue, not on the white it would also have.
+                      activeModifierKeys.includes(key)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white active:bg-blue-100'
                     )}
                     onPointerDown={(event) => {
                       event.preventDefault();
@@ -362,7 +393,7 @@ export const VirtualKeyboard = () => {
       <Drawer.Portal>
         <Drawer.Content
           className={clsx(
-            'max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none',
+            'theme-fixed max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none [color-scheme:light]',
             isDesktopLayout ? 'w-[820px] rounded' : 'w-screen rounded-t'
           )}
         >
@@ -390,6 +421,8 @@ export const VirtualKeyboard = () => {
                     onChange={selectSystem}
                   />
                 )}
+
+                {layoutNotice}
               </div>
             </ConfigProvider>
 

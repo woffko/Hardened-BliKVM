@@ -1,0 +1,102 @@
+Third-party notices for tools/upscale
+
+The lab tools in this directory port two upstream shaders (candidates.js) and load a third at run time. Each comes
+from a pinned upstream commit, checked by SHA-256 when it was downloaded:
+
+- Qualcomm Snapdragon Game Super Resolution 1 (sgsr/v1/include/glsl/sgsr1_shader_mobile.frag),
+  https://github.com/SnapdragonStudios/snapdragon-gsr commit d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e,
+  SHA-256 93e8db987dc79f62e68805f968d63989e5d50daebe4d040e4c7104047ad49139. Ported to WebGL2 in candidates.js.
+- AMD FidelityFX Super Resolution 1.0 (ffx-fsr/ffx_fsr1.h with ffx_a.h),
+  https://github.com/GPUOpen-Effects/FidelityFX-FSR commit a21ffb8f6c13233ba336352bdff293894c706575,
+  SHA-256 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5 (ffx_fsr1.h) and
+  f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb (ffx_a.h). EASU and RCAS ported to WebGL2 in
+  candidates.js.
+- Anime4K 3.2 upscalers (glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl and _M.glsl),
+  https://github.com/bloc97/Anime4K commit 7684e9586f8dcc738af08a1cdceb024cc184f426,
+  SHA-256 4c53ec2e287908f7ee7bcb266b0170421626d663576468b7d7dafc62962649a4 (S) and
+  716e02098a68f0d648761f2b96b4dd139e1cb09b174bb369fca3aa34328fff7e (M). Not copied here: run_quality.mjs and
+  build_device_page.mjs read the downloaded files, and the built device page carries them with their notice.
+
+--------------------------------------------------------------------------------------------------------------------
+Snapdragon Game Super Resolution
+--------------------------------------------------------------------------------------------------------------------
+
+Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+SPDX-License-Identifier: BSD-3-Clause
+
+--------------------------------------------------------------------------------------------------------------------
+FidelityFX Super Resolution 1.0
+--------------------------------------------------------------------------------------------------------------------
+
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+--------------------------------------------------------------------------------------------------------------------
+Anime4K
+--------------------------------------------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2019 bloc97
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

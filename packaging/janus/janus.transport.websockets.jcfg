@@ -1,9 +1,11 @@
 # Only the loopback BliKVM server connects; browsers never reach Janus signaling.
+# Janus has a loopback address of its own, which the units that neither feed
+# nor ask it cannot reach (security review of 2026-10-18, MED-03).
 general: {
 	json = "compact"
 	ws = true
 	ws_port = 8188
-	ws_ip = "127.0.0.1"
+	ws_ip = "127.0.0.2"
 	wss = false
 	ws_logging = "err,warn"
 }

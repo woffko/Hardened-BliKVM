@@ -37,8 +37,13 @@ update/storage state, ready recovery, and ready health. Terminal results replay
 idempotently, conflicting operation IDs fail closed, accepted actions impose a
 60-second cooldown, and every boot has its independent 60-second startup guard.
 
-The storage-neutral snapshot is bounded to 16 records and never silently prunes
-idempotency history. A full journal rejects new actions. Restore validates the
+The storage-neutral snapshot is bounded to 16 records. Since 2026-10-07 a full
+journal makes room in the place of the oldest record that settled (accepted or
+rejected) in an earlier boot: no request repeated after a boot can be
+dispatched, its confirmation being older than 10 seconds, and the cooldown
+reads only the current boot's records. A pending record and the records that
+settled in the current boot are never given up; a full journal of those still
+rejects new actions. Before, the sixteenth action was the board's last. Restore validates the
 schema, IDs, bindings, timestamps, phase fields, duplicate operation IDs, and
 single-pending invariant. Generation overflow and stale transition tickets fail
 without state mutation. There is intentionally no durable codec, atomic or

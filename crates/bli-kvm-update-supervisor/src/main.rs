@@ -66,7 +66,7 @@ enum CliCommand {
     Initialize(String),
     Activate(String),
     WatchdogOnce,
-    ConfirmStdin,
+    ConfirmStdin(String),
     MigrateNativeIdle,
     BootNative,
 }
@@ -157,6 +157,12 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
     if let CliCommand::ActivationSocket(peer_user, native) = &command {
         return activation_socket::serve_stdin(&config_path, peer_user, *native);
     }
+    // The confirmation admits its one client, the health reporter, by uid
+    // (security review of 2026-10-18, MED-01).
+    let mut confirmation = match &command {
+        CliCommand::ConfirmStdin(peer_user) => Some(status_socket::authorized_stdin(peer_user)?.0),
+        _ => None,
+    };
     let config = load_config(&config_path)?;
     let receipt = match command {
         CliCommand::ValidateConfig => json!({"command": "validate_config", "result": "valid"}),
@@ -232,10 +238,11 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             })
                         }
                         CliCommand::BootNative => boot_native_receipt(&supervisor)?,
-                        CliCommand::ConfirmStdin => {
-                            let stdin = io::stdin();
-                            let mut locked = stdin.lock();
-                            confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
+                        CliCommand::ConfirmStdin(_) => {
+                            let Some(stream) = confirmation.as_mut() else {
+                                unreachable!("the confirmation's peer is checked first")
+                            };
+                            confirmation_receipt(supervisor.confirm_from_reader(stream)?)
                         }
                         CliCommand::AckConfirmedApply => {
                             let stdin = io::stdin();
@@ -333,7 +340,19 @@ fn parse_arguments(
         "watchdog-once" => CliCommand::WatchdogOnce,
         "migrate-native-idle" => CliCommand::MigrateNativeIdle,
         "boot-native" => CliCommand::BootNative,
-        "confirm-stdin" => CliCommand::ConfirmStdin,
+        "confirm-stdin" => {
+            if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
+                return Err(SupervisorCliError::InvalidArguments);
+            }
+            let user = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .ok_or(SupervisorCliError::InvalidArguments)?;
+            if !status_socket::valid_peer_name(&user) {
+                return Err(SupervisorCliError::InvalidArguments);
+            }
+            CliCommand::ConfirmStdin(user)
+        }
         "gc" => {
             let retain = arguments
                 .next()
@@ -662,6 +681,22 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(collected.1, CliCommand::GarbageCollect(2));
+        let confirm = parse_arguments(
+            [
+                "supervisor",
+                "--config",
+                "/tmp/c",
+                "confirm-stdin",
+                "--peer-user",
+                "hardened-blikvm-server",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(
+            confirm.1,
+            CliCommand::ConfirmStdin("hardened-blikvm-server".into())
+        );
 
         for arguments in [
             vec!["supervisor", "status"],
@@ -672,6 +707,16 @@ mod tests {
                 "/tmp/c",
                 "confirm-stdin",
                 "secret",
+            ],
+            // The confirmation names its one client (MED-01).
+            vec!["supervisor", "--config", "/tmp/c", "confirm-stdin"],
+            vec![
+                "supervisor",
+                "--config",
+                "/tmp/c",
+                "confirm-stdin",
+                "--peer-user",
+                "Root",
             ],
             vec!["supervisor", "--config", "/tmp/c", "activate"],
         ] {

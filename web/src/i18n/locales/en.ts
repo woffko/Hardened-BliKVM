@@ -13,6 +13,8 @@ const en = {
       placeholderUsername: 'Username',
       placeholderPassword: 'Password',
       placeholderPassword2: 'Please enter password again',
+      placeholderCurrentPassword: 'Current password',
+      wrongCurrentPassword: 'The current password is wrong',
       noEmptyUsername: 'Username required',
       noEmptyPassword: 'Password required',
       noAccount: 'Failed to get user information, please refresh web page or reset password',
@@ -67,13 +69,111 @@ const en = {
         verifyBtn: 'Verify'
       }
     },
+    qualityMonitor: {
+      title: 'Quality monitor',
+      basic: 'Basic',
+      extended: 'Extended',
+      opaque: 'Opaque',
+      close: 'Close the quality monitor',
+      unsupported: 'The quality monitor needs a browser with workers and OffscreenCanvas.',
+      agent: 'Agent',
+      agentOff: 'off',
+      agentClosed: 'channel closed',
+      agentWaiting: 'waiting for it',
+      agentConnected: 'connected, {{version}} {{locked}}',
+      agentLocked: '(locked)',
+      speed: 'Speed',
+      delay: 'Delay',
+      path: 'Path',
+      fps: 'FPS',
+      bitrate: 'Bitrate',
+      codec: 'Codec',
+      chroma: 'Chroma',
+      jpegQuality: 'JPEG {{value}}',
+      h264: 'H.264',
+      transport: 'Transport',
+      board: 'Board',
+      local: 'Local',
+      roundTrip: 'Round trip',
+      packetsLost: 'Packets lost',
+      framesReceived: 'Frames received',
+      givenUp: 'Given up',
+      keyFrameRequests: 'Key-frame requests',
+      decoderRestarts: 'Decoder restarts',
+      sessionsOpened: 'Sessions opened',
+      gatewayFrames: 'Gateway sent/dropped/key',
+      bitrateShare: 'Bitrate this path carries',
+      busy: 'Picture code: page / worker',
+      candidates: 'Candidates',
+      packets: 'Packets received/lost',
+      jitter: 'Jitter',
+      jitterBuffer: 'Jitter buffer a frame',
+      feedback: 'NACK/PLI/FIR',
+      framesReceivedDecodedDropped: 'Frames received/decoded/dropped',
+      captureRate: 'Capture FPS',
+      queuedRate: 'Queued FPS',
+      version: 'Version',
+      capture: 'Capture, FPS/queued',
+      captureQuality: 'JPEG quality',
+      encoder: 'Encoder',
+      videoEngine: 'video engine',
+      chosen: '{{value}} chosen',
+      encodedFps: 'Encoded FPS',
+      stages: 'Decode/convert/encode',
+      enginePass: 'Engine pass, passes a frame',
+      engineCounts: 'Higher QP/left out/key/failed',
+      gate: 'Gate let/too soon/unchanged',
+      unitCpu: 'Encoder unit CPU',
+      temperature: 'Temperature',
+      decoder: 'Decoder',
+      framesPerSecond: 'Received/decoded/drawn/dropped a s',
+      decodeTime: 'Decode a frame',
+      upscaler: 'Upscaling',
+      upscaleOff: 'off',
+      upscaleNotEnlarged: 'on, not enlarged',
+      upscaleWith: 'SGSR, {{sharpness}}',
+      upscaleGpu: '{{value}} ms GPU',
+      upscaleDraw: '{{value}} ms',
+      upscaleLow: 'low',
+      upscaleMedium: 'medium',
+      upscaleHigh: 'high',
+      upscaleStopped: 'stopped: {{reason}}',
+      upscaleStopUnavailable: 'no WebGL2',
+      upscaleStopLost: 'context lost',
+      upscaleStopSlow: 'frames lost',
+      upscaleFrames: 'Upscaled, drawn/came a s',
+      refresh: 'Display refresh'
+    },
     screen: {
       scale: 'Scale',
+      upscale: 'Upscaling',
+      upscaleOff: 'Off',
+      upscaleAuto: 'Auto',
+      upscaleSharpness: 'Sharpness',
+      upscaleLow: 'Low',
+      upscaleMedium: 'Medium',
+      upscaleHigh: 'High',
+      upscaleSize: 'Size',
+      upscaleFill: 'Fill the window',
+      upscaleTarget: "The target's size",
+      upscaleTargetWidth: "The target's width",
+      upscaleTargetHeight: "The target's height",
+      upscaleApply: 'Apply',
+      upscaleTip:
+        "Auto shows the picture as large as the window (or at the target's size) and enlarges it on this device's graphics processor, sharper than the browser's own stretch.",
+      upscaleNoGpu: 'This browser draws without a graphics processor: the picture is not upscaled.',
+      upscaleStopped: 'Upscaling stopped on this page: {{reason}}.',
+      upscaleUnavailable: 'the browser cannot draw it here',
+      upscaleLost: 'the graphics processor dropped it',
+      upscaleSlow: 'frames were lost to it',
+      upscaleSwitchedOff: 'Upscaling switched off',
       title: 'Screen',
       video: 'Video Mode',
       videoDirectTips: 'Enable HTTPS in "Settings > System > Network" to use this mode',
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoWebrtcBlockedUseQuic:
+        'H.264 WebRTC is disabled in the Restricted Firewall mode. With QUIC chosen in "Settings > System > Network", H.264 comes over QUIC instead.',
       videoVp8BlockedByFirewall: 'VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes',
       videoWebrtcUnavailable:
         'WebRTC is switched off in this browser, often by a VPN or privacy extension. Allow WebRTC for this site to use this mode.',
@@ -91,6 +191,22 @@ const en = {
       qualityHigh: 'High',
       qualityMedium: 'Medium',
       qualityLow: 'Low',
+      qualityVeryHigh: 'Very high',
+      megabitsPerSecond: '{{value}} Mbit/s',
+      h264EncoderHardware: 'H.264 encoder: video engine (hardware)',
+      h264EncoderSoftware: 'H.264 encoder: x264 (software)',
+      h264EngineIsBoards:
+        "HW: the board's video engine, SW: x264. The engine is the board's: every H.264 viewer gets it.",
+      h264EngineByOperator:
+        "The board's operator chooses the H.264 engine: this entry only sets this browser's video mode.",
+      h264HardwareUnavailable: "The board's video engine cannot encode H.264 now.",
+      h264HardwareUnavailableBecause:
+        "The board's video engine cannot encode H.264 now: {{reason}}",
+      h264EngineNotChanged: 'The board did not change the H.264 engine.',
+      h264HardwareRetry:
+        "The board's video engine cannot encode H.264 now: {{reason}}. Choosing it asks the encoder to try again.",
+      h264X264Encodes: 'x264 encodes',
+      h264VideoEngineEncodes: 'the video engine encodes',
       frameDetect: 'Frame Detect',
       frameDetectTip:
         "Calculate the difference between frames. Stop transmitting video stream when no changes are detected on the remote host's screen.",
@@ -114,6 +230,12 @@ const en = {
       submit: 'Submit',
       local: 'Mobile keyboard',
       virtual: 'On-screen keyboard',
+      helper: {
+        title: 'Extra keys',
+        functionKeys: 'Function keys',
+        more: 'More keys',
+        close: 'Hide the keyboard'
+      },
       readClipboard: 'Read from Clipboard',
       clipboardPermissionDenied:
         'Clipboard permission denied. Please allow clipboard access in your browser.',
@@ -161,6 +283,11 @@ const en = {
         }
       }
     },
+    control: {
+      lost: 'Remote control was lost: the board did not answer',
+      otherSession: 'Another session controls the target',
+      refused: 'Remote control was refused: {{reason}}'
+    },
     mouse: {
       title: 'Mouse',
       cursor: 'Cursor style',
@@ -178,6 +305,30 @@ const en = {
       scrollDown: 'Scroll down',
       speed: 'Wheel speed',
       sensitivity: 'Pointer speed',
+      desktop: {
+        title: 'Desktop',
+        whole: 'This screen is the whole desktop',
+        part: 'This screen is part of a desktop',
+        partOf: 'Part of {{width}}×{{height}}, at {{x}},{{y}}',
+        desktop: 'Whole desktop',
+        desktopWidth: 'Desktop width',
+        desktopHeight: 'Desktop height',
+        screen: 'This screen',
+        screenWidth: 'Screen width',
+        screenHeight: 'Screen height',
+        at: 'At',
+        screenX: 'Screen left',
+        screenY: 'Screen top',
+        leftOfTwo: 'Left of two',
+        rightOfTwo: 'Right of two',
+        apply: 'Apply',
+        tip: "A target with more than one monitor spreads the absolute mouse over its whole desktop. Give the desktop's size and where this screen lies in it, in the target's pixels (as its display settings show them).",
+        failed: 'The layout could not be saved',
+        fromAgentWhole: 'From the target agent: this screen is the whole desktop',
+        fromAgentPart: 'From the target agent: part of {{width}}×{{height}}, at {{x}},{{y}}',
+        fromAgentTip:
+          "The agent reads the target's monitors and the board keeps their layout. One monitor, or monitors duplicated, is the whole desktop."
+      },
       sensitivityDesc:
         'Use this for desktop relative mode. Lower values reduce drift from host mouse acceleration.',
       fast: 'Fast',
@@ -195,6 +346,7 @@ const en = {
       },
       requestPointer: 'Using relative mode. Please click desktop to get mouse pointer.',
       resetHid: 'Reset HID',
+      releaseControl: 'Release remote control',
       autostart: {
         title: 'Autostart',
         empty: 'No autostart scripts. Uploads are owner-only.',
@@ -383,6 +535,23 @@ const en = {
         layoutModeDesc: 'Use the mobile/touch layout in this browser',
         layoutAuto: 'Auto',
         layoutMobile: 'Mobile view',
+        theme: 'Theme',
+        themeDesc: 'Colors of the interface in this browser',
+        themeDark: 'Dark',
+        themeLight: 'Light',
+        themeSystem: 'System',
+        accent: 'Accent color',
+        accentDesc: 'Color of buttons, switches and highlights',
+        accents: {
+          blue: 'Blue',
+          green: 'Green',
+          cyan: 'Cyan',
+          violet: 'Violet',
+          pink: 'Pink',
+          red: 'Red',
+          orange: 'Orange',
+          amber: 'Amber'
+        },
         menuBar: {
           title: 'Menu Bar',
           mode: 'Display Mode',
@@ -408,8 +577,8 @@ const en = {
       device: {
         title: 'Device',
         oled: {
-          title: 'OLED',
-          description: 'Turn off OLED screen after',
+          title: 'Display',
+          description: "Turn off the board's display after",
           0: 'Never',
           15: '15 sec',
           30: '30 sec',
@@ -466,6 +635,78 @@ const en = {
         },
         hidOnly: 'HID-Only Mode',
         hidOnlyDesc: 'Stop emulating virtual devices, retaining only basic HID control',
+        targetAgent: {
+          title: 'Target agent',
+          description:
+            'Run the agent on supported systems: the absolute mouse also carries a channel to a program on the target',
+          connected: 'Connected: {{agent}}',
+          waiting: 'No agent connected',
+          problem: 'The channel is not open: {{problem}}',
+          refused: 'The agent was refused: {{reason}}',
+          confirm: 'Switch',
+          confirmOn:
+            "The board's USB device leaves the target and comes back with the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
+          confirmOff:
+            "The board's USB device leaves the target and comes back without the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
+          system: '{{product}} {{release}} (build {{build}})',
+          locked: 'locked',
+          monitor: '{{name}}: {{width}}x{{height}} at {{x}},{{y}}',
+          boards: "the board's",
+          chooseBoard: "This is the board's",
+          chooseBoardHint:
+            "No monitor is known as the board's: choose the one whose picture the board shows, and the mouse is kept on it",
+          monitorsUnderControl: 'The monitors are read while you control the target',
+          monitorsNeedControl:
+            "Click the screen and confirm remote control to read the target's monitors",
+          monitorsReading: "Reading the target's monitors…",
+          targetLayout: "Target's layout: {{name}}",
+          layoutSync:
+            "Switch the target's layout to what I type: the on-screen keyboard's language, the phone keyboard's letters",
+          layoutSyncFailed: "The target's layout was not switched: {{reason}}",
+          start: 'Start the agent on the target',
+          startConfirm: 'Type it',
+          startExplain:
+            "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the agent from the board's drive BLIKVMAGENT. The target must be signed in, with an English (US) keyboard layout in front.",
+          startHint: 'Types Win+R and a line that starts the agent from the board’s drive',
+          startNeedsControl:
+            'Click the screen and confirm remote control to start the agent from here',
+          startNoDigest:
+            "The board does not name its agent's checksum, so it is not started from here",
+          startWaiting: 'Typed; waiting for the agent to connect',
+          startTimeout:
+            'The agent did not connect within 20 s: check that the target is signed in with the English (US) layout in front, and start it again',
+          otherVersion:
+            "This agent is not the board's version: update it, and the board's agent takes its place and the sign-in start",
+          update: 'Update the agent on the target',
+          updateExplain:
+            "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the board's agent from its drive BLIKVMAGENT; the agent running now leaves, and the board's takes its place. The target must be signed in, with an English (US) keyboard layout in front.",
+          clipboard: "Target's clipboard",
+          clipboardRead: "Read the target's",
+          clipboardWrite: 'Put on the target',
+          clipboardCopyHere: 'Copy here',
+          clipboardSent: "The text is on the target's clipboard",
+          clipboardTooLong: 'The text is longer than 6000 bytes',
+          lock: 'Lock the target',
+          lockConfirm: "Lock the target's Windows session?",
+          displays: {
+            title: "Target's monitors",
+            now: 'Now: {{mode}}',
+            unknown: 'not known',
+            extend: 'Extend',
+            duplicate: 'Duplicate',
+            board_only: "Only the board's monitor",
+            others_only: 'Only the others',
+            board_primary: "The board's monitor primary",
+            keepTitle: 'Keep these monitors?',
+            keep: 'Keep',
+            putBack: "Don't keep",
+            keepLeft:
+              'The monitors are put back as they were in {{seconds}} s unless you keep them. Without a picture, wait.',
+            keepFailed: 'The change was not kept: {{reason}}',
+            took: 'The change took {{seconds}} s.'
+          },
+          switchFailed: 'Failed to switch the agent'
+        },
         disk: 'Virtual Disk',
         diskDesc: 'Mount SD card on the remote host',
         network: 'Virtual Network',
@@ -556,6 +797,68 @@ const en = {
             'The protocol change requires a device reboot. The browser will switch to the new address after {{seconds}} seconds:',
           rebootOk: 'Apply and reboot',
           rebootCancel: 'Cancel'
+        },
+        transport: {
+          title: 'Transport',
+          description:
+            'How this page talks to the device. The standard transport always stays available.',
+          device: 'QUIC on this device',
+          deviceDescription: 'Runs the QUIC gateway, which answers on UDP port {{port}}.',
+          enableTitle: 'Switch QUIC on?',
+          enableDescription:
+            'The device starts its QUIC gateway and answers on UDP port {{port}} to the networks the Firewall mode admits. Only a page that is signed in to this device can open a session.',
+          enableOk: 'Switch on',
+          cancel: 'Cancel',
+          switchFailed: 'The QUIC switch could not be changed.',
+          loadFailed: 'The state of the QUIC transport could not be read.',
+          browser: 'This browser uses',
+          standard: 'Standard',
+          quic: 'QUIC',
+          retry: 'Retry',
+          fallbackTitle: 'QUIC is not in use',
+          fallback: '{{reason}} The standard transport is used.',
+          status: {
+            standard: 'The standard transport is in use.',
+            connecting: 'QUIC: connecting...',
+            connected:
+              'The QUIC session is open: round trip {{ms}} ms, lost packets {{lost}}, key-frame requests {{keyFrames}}.'
+          },
+          input: {
+            quic: 'Keyboard and mouse are using this session.',
+            standard:
+              'Keyboard and mouse still use the standard transport; they move to QUIC when remote control is enabled again.',
+            idle: 'Keyboard and mouse use this session once remote control is enabled.'
+          },
+          video: {
+            quic: 'H.264 video is using this session: {{width}}x{{height}}, {{fps}} frames a second, a frame is {{age}} ms old when it is decoded.',
+            starting: 'H.264 video is starting over this session.',
+            decoder:
+              'This browser cannot decode H.264 with WebCodecs: H.264 video stays on WebRTC.',
+            kept: 'H.264 video stays on WebRTC: {{reason}}',
+            other:
+              'MJPEG and VP8 keep their own paths. Choose H.264 in the Screen menu to have the picture over this session.',
+            reasons: {
+              unavailable: 'this device serves no H.264 over QUIC.',
+              encoder: 'the H.264 encoder did not answer.',
+              stalled: 'no frame came for ten seconds.',
+              other: 'the picture could not be had over this session.'
+            }
+          },
+          reasons: {
+            off: 'QUIC is switched off on this device.',
+            unsupported: 'This browser has no WebTransport.',
+            blocked: 'The Firewall mode keeps the QUIC port closed.',
+            origin: 'This page is not served from the port the QUIC gateway answers on.',
+            unavailable: 'The QUIC gateway is not running.',
+            clock: "The device's clock and this browser's are too far apart.",
+            timeout: 'The device did not answer over QUIC in time.',
+            lost: 'The QUIC session was lost and did not come back.',
+            handshake: 'The QUIC connection was not accepted (certificate or limit).',
+            token: 'The session token was refused.',
+            protocol: 'The device speaks another version of the QUIC transport.',
+            sessions: 'This login already has its QUIC sessions open.',
+            hello: 'The device did not accept the greeting.'
+          }
         },
         dns: {
           title: 'DNS',
@@ -679,7 +982,7 @@ const en = {
               'Default profile. Keeps baseline services, but accepts new inbound connections only from private, ULA, link-local, or loopback ranges.',
             restricted: 'Restricted',
             restrictedDesc:
-              'Local-only HTTPS/SSH admin ports plus outbound services for updates, DNS, NTP, and syslog. WebRTC is disabled.',
+              'Local-only HTTPS/SSH admin ports and the QUIC transport, plus outbound services for updates, DNS, NTP, and syslog. WebRTC is disabled.',
             paranoid: 'Paranoid',
             paranoidDesc:
               'Local-only HTTPS access. Blocks SSH, HTTP, online updates, and other outbound network features.',
@@ -702,10 +1005,10 @@ const en = {
             enable: 'Enable Restricted',
             active: 'Restricted Firewall mode is active',
             allows:
-              'Allowed traffic: HTTPS and SSH only from private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges; outbound DNS, NTP, remote syslog, and online updates; DHCP, established connections, and essential IPv6 control traffic. WebRTC/ICE UDP is blocked.',
+              'Allowed traffic: HTTPS, SSH and the QUIC transport (the HTTPS port over UDP) only from private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges; outbound DNS, NTP, remote syslog, and online updates; DHCP, established connections, and essential IPv6 control traffic. WebRTC/ICE UDP is blocked.',
             confirmTitle: 'Enable Restricted Firewall mode?',
             confirmDesc:
-              'Inbound admin access will be limited to private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges for HTTPS and SSH. Public source ranges are not allowed. Outbound DNS, NTP, remote syslog, online updates, DHCP, established connections, and essential IPv6 control traffic remain available. WebRTC/ICE UDP and other inbound/outbound traffic will be blocked.'
+              'Inbound admin access will be limited to private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges for HTTPS, SSH and the QUIC transport (the HTTPS port over UDP). Public source ranges are not allowed. Outbound DNS, NTP, remote syslog, online updates, DHCP, established connections, and essential IPv6 control traffic remain available. WebRTC/ICE UDP and other inbound/outbound traffic will be blocked.'
           },
           paranoid: {
             enable: 'Enable Paranoid',
@@ -1168,7 +1471,8 @@ const en = {
     },
     menu: {
       collapse: 'Collapse Menu',
-      expand: 'Expand Menu'
+      expand: 'Expand Menu',
+      show: 'Show Menu'
     }
   }
 };

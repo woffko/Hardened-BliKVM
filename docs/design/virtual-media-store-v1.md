@@ -9,9 +9,14 @@ the operator is told when an attach fails. Found and fixed in the audit of
 - Images live in `/var/lib/hardened-blikvm-gadget/images`, the MSD partition
   (p3) of the SD image layout, mounted `nosuid,nodev,noexec`.
 - The server (`hardened-blikvm-server`, group `hardened-blikvm`) writes
-  uploads there, and so does the remote-download helper (same user); the
-  board owner (root) attaches them to the USB gadget. The directory is
-  `0770 root:hardened-blikvm`.
+  uploads there and publishes remote downloads, which the download helper
+  (`hardened-blikvm-download`, an account of its own) leaves in the file the
+  server prepares in `.downloads`, the one place of the store the helper can
+  write (`docs/design/admin-features-v1.md`); the board owner (root)
+  attaches them to the USB gadget. The directory is
+  `1770 root:hardened-blikvm`: sticky since the security review of
+  2026-10-18 (MED-12), so the other accounts of the group may add files but
+  not remove or replace the server's.
 - The image builder gives the partition's root that mode and group when it
   creates p3 (checked after writing), and mounts it after
   `systemd-tmpfiles-setup.service` rather than before, so the tmpfiles rule for
@@ -46,8 +51,19 @@ the operator is told when an attach fails. Found and fixed in the audit of
 
 ## Catalog
 
-- `/etc/hardened-blikvm-gadget/catalog.json` lists the images the dialog
-  offers, with an opaque ID each; the owner attaches only catalog entries.
+- `/var/lib/hardened-blikvm-gadget/catalog/catalog.json` lists the images
+  the dialog offers, with an opaque ID each; the owner attaches only catalog
+  entries. The directory is the web server's (0750, group
+  `hardened-blikvm`, which the board owner reads it through). Until the
+  security review of 2026-10-18 (CRIT-01) the catalog lived in
+  `/etc/hardened-blikvm-gadget`, a directory of the web server's from which
+  the root board owner and boardd also read their configuration; that
+  directory is now root's, its files root's and 0640. The system release's
+  tmpfiles copy the catalog from its former place once, when the new place
+  has none: a board updated by RAW keeps its images listed (the former
+  directory is carried state), and a new card's image keeps its empty
+  catalog in the former place for that copy. The units name the new place,
+  so an older application slot on the newer system follows them.
 - An image arrives in the catalog only through the Download menu (an upload,
   or a URL when the remote download is switched on). A file copied into the
   store by other means is not offered.

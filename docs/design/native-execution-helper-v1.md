@@ -129,6 +129,14 @@ accept a floor from IPC and does not confirm health.
 - A native boot unit runs the coordinator's `boot-native` command after the
   helper socket. It is not ordered before the managed units, which removes the
   current recover/server cycle.
+- A failed attempt is tried again after 15 s, at most four attempts in ten
+  minutes (update package 0.1.0~dev41). At gate Y of the code audit of
+  2026-10-20 the first attempt of a boot failed while the board was still busy
+  starting, with the coordinator's coarse `Controller` error, and nothing tried
+  again: the application stayed down until the unit was started by hand, when
+  the same attempt succeeded. The coordinator reconciles queued jobs and stops
+  the managed units before it starts any, so a later attempt starts from a
+  known state.
 - The activation worker keeps AF_UNIX-only networking and no capabilities,
   because privileged operations and probes are delegated. Its start timeout must
   cover the 45-second composition budget plus admission.

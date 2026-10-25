@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AppState,
-    auth::middleware::CurrentSession,
+    auth::{middleware::CurrentSession, session::Session},
     error::{ApiResponse, AppError, AppResult},
 };
 
@@ -250,8 +250,13 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -282,8 +287,13 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -432,6 +442,27 @@ pub(crate) async fn release_session_hid(state: &AppState, session_token: &str) {
     }
 }
 
+/// Gives back the session's lease if it still is the one named. A transport
+/// that ends returns what it took over itself, and nothing that a later
+/// acquire, over whatever transport, has put in its place.
+pub(crate) async fn release_lease_if_current(
+    state: &AppState,
+    session_token: &str,
+    lease_id: &str,
+) {
+    let Some(wanted) = parse_hex::<16>(lease_id) else {
+        return;
+    };
+    let live = state
+        .hid_ws_leases
+        .lock()
+        .await
+        .live(session_token, Instant::now());
+    if live.is_some_and(|(current, _)| current == wanted) {
+        release_session_hid(state, session_token).await;
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HidLeaseResponse {
@@ -444,11 +475,24 @@ pub(crate) struct HidLeaseResponse {
     pub rejection: Option<&'static str>,
 }
 
+/// `POST /api/hid/lease`.
 pub(crate) async fn hid_lease(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(request): Json<HidLeaseBody>,
 ) -> AppResult<Json<ApiResponse<HidLeaseResponse>>> {
+    Ok(Json(ApiResponse::ok(
+        serve_lease(&state, &session, request).await?,
+    )))
+}
+
+/// One request of the lease API for `session`, whichever transport brought
+/// it: the HTTPS route above, or a QUIC session's input stream.
+pub(crate) async fn serve_lease(
+    state: &AppState,
+    session: &Session,
+    request: HidLeaseBody,
+) -> AppResult<HidLeaseResponse> {
     let Some(control) = state.control.as_ref() else {
         return Err(AppError::ServiceUnavailable(
             "HID control channel is not configured".into(),
@@ -466,12 +510,12 @@ pub(crate) async fn hid_lease(
             .as_deref()
             .is_some_and(crate::picoclaw::Picoclaw::blocks_manual_input)
     {
-        return Ok(Json(ApiResponse::ok(HidLeaseResponse {
+        return Ok(HidLeaseResponse {
             applied: false,
             lease_id: None,
             ttl_seconds: None,
             rejection: Some("assistant_active"),
-        })));
+        });
     }
     let now = Instant::now();
     let confirmed = { state.focus.lock().await.bindings(&session.token, now) };
@@ -564,8 +608,13 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -576,7 +625,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => {}
     }
-    Ok(Json(ApiResponse::ok(match response {
+    Ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
             applied: true,
             lease_id: None,
@@ -601,8 +650,13 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -623,7 +677,7 @@ pub(crate) async fn hid_lease(
             ttl_seconds: None,
             rejection: Some("invalid_state"),
         },
-    })))
+    })
 }
 
 fn lease_ttl(request: &HidLeaseBody) -> Option<u16> {

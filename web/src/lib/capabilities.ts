@@ -9,6 +9,7 @@ export type CapabilityMenuItem =
   | 'wol'
   | 'picoclaw'
   | 'power'
+  | 'qualityMonitor'
   | 'fullscreen'
   | 'collapse';
 export type CapabilitySettingsTab =
@@ -125,6 +126,7 @@ export function supportsMenuItem(
       );
     case 'picoclaw':
       return boardFeatureWritable(manifest, 'picoclaw');
+    case 'qualityMonitor':
     case 'fullscreen':
     case 'collapse':
       return true;

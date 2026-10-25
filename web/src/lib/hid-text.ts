@@ -13,8 +13,14 @@ import { getModifierBit } from './keymap.ts';
  */
 export type KeyStep = { modifier: number; usage: number };
 
-/** Script of the last letter typed; it selects the punctuation positions. */
-export type TextLayoutState = { script: 'latin' | 'cyrillic' };
+/**
+ * The layout the text is typed for, from the last letter that tells:
+ * Latin letters at US positions, Cyrillic ones at the Russian layout's,
+ * and õ ä ö ü š ž at the Estonian layout's, whose Latin letters are where
+ * the US layout has them, so that Latin letters keep it. It selects the
+ * punctuation's positions.
+ */
+export type TextLayoutState = { script: 'latin' | 'cyrillic' | 'estonian' };
 
 const SHIFT = getModifierBit('ShiftLeft') ?? 0x02;
 const LETTER_BASE = 0x04;
@@ -160,6 +166,76 @@ function russianLetterStep(character: string): KeyStep | null {
   return { modifier: character === lower ? 0 : SHIFT, usage: base.usage };
 }
 
+// The Windows Estonian layout (KBDEST), as Windows itself maps each
+// character to a key and its shift state: the keys by their US positions,
+// AltGr as the right Alt. Latin letters and digits are where the US layout
+// has them. A dead key is followed by a space, which types its own character.
+const ESTONIAN: Record<string, KeyStep & { dead?: true }> = {
+  '!': { modifier: 0x02, usage: 0x1e },
+  '"': { modifier: 0x02, usage: 0x1f },
+  '#': { modifier: 0x02, usage: 0x20 },
+  $: { modifier: 0x40, usage: 0x21 },
+  '%': { modifier: 0x02, usage: 0x22 },
+  '&': { modifier: 0x02, usage: 0x23 },
+  "'": { modifier: 0x00, usage: 0x31 },
+  '(': { modifier: 0x02, usage: 0x25 },
+  ')': { modifier: 0x02, usage: 0x26 },
+  '*': { modifier: 0x02, usage: 0x31 },
+  '+': { modifier: 0x00, usage: 0x2d },
+  ',': { modifier: 0x00, usage: 0x36 },
+  '-': { modifier: 0x00, usage: 0x38 },
+  '.': { modifier: 0x00, usage: 0x37 },
+  '/': { modifier: 0x02, usage: 0x24 },
+  ':': { modifier: 0x02, usage: 0x37 },
+  ';': { modifier: 0x02, usage: 0x36 },
+  '<': { modifier: 0x00, usage: 0x64 },
+  '=': { modifier: 0x02, usage: 0x27 },
+  '>': { modifier: 0x02, usage: 0x64 },
+  '?': { modifier: 0x02, usage: 0x2d },
+  '@': { modifier: 0x40, usage: 0x1f },
+  '[': { modifier: 0x40, usage: 0x25 },
+  '\\': { modifier: 0x40, usage: 0x2d },
+  ']': { modifier: 0x40, usage: 0x26 },
+  '^': { modifier: 0x42, usage: 0x34 },
+  _: { modifier: 0x02, usage: 0x38 },
+  '`': { modifier: 0x02, usage: 0x2e, dead: true },
+  '{': { modifier: 0x40, usage: 0x24 },
+  '|': { modifier: 0x40, usage: 0x64 },
+  '}': { modifier: 0x40, usage: 0x27 },
+  '~': { modifier: 0x02, usage: 0x35, dead: true },
+  õ: { modifier: 0x00, usage: 0x30 },
+  ä: { modifier: 0x00, usage: 0x34 },
+  ö: { modifier: 0x00, usage: 0x33 },
+  ü: { modifier: 0x00, usage: 0x2f },
+  š: { modifier: 0x40, usage: 0x16 },
+  ž: { modifier: 0x40, usage: 0x1d },
+  Õ: { modifier: 0x02, usage: 0x30 },
+  Ä: { modifier: 0x02, usage: 0x34 },
+  Ö: { modifier: 0x02, usage: 0x33 },
+  Ü: { modifier: 0x02, usage: 0x2f },
+  Š: { modifier: 0x42, usage: 0x16 },
+  Ž: { modifier: 0x42, usage: 0x1d },
+  '€': { modifier: 0x40, usage: 0x22 },
+  '§': { modifier: 0x40, usage: 0x30 },
+  '½': { modifier: 0x40, usage: 0x31 },
+  '¤': { modifier: 0x02, usage: 0x21 }
+};
+
+// Letters only the Estonian layout has among these: õ ä ö ü š ž.
+const ESTONIAN_LETTERS = new Set(['õ', 'ä', 'ö', 'ü', 'š', 'ž']);
+
+function isEstonianLetter(character: string): boolean {
+  return ESTONIAN_LETTERS.has(character.toLowerCase());
+}
+
+/** The keys an Estonian-layout character takes: a dead key then a space. */
+function estonianSteps(character: string): KeyStep[] {
+  const step = ESTONIAN[character];
+  if (!step) return [];
+  const key = { modifier: step.modifier, usage: step.usage };
+  return step.dead ? [key, { modifier: 0, usage: PLAIN[' '] }] : [key];
+}
+
 function isLatinLetter(character: string): boolean {
   const lower = character.toLowerCase();
   return lower >= 'a' && lower <= 'z' && lower.length === 1;
@@ -178,11 +254,18 @@ export function textToKeyReports(
     if (russian) {
       state.script = 'cyrillic';
       step = russian;
+    } else if (isEstonianLetter(character)) {
+      state.script = 'estonian';
+      steps.push(...estonianSteps(character));
+      continue;
     } else if (isLatinLetter(character)) {
-      state.script = 'latin';
+      if (state.script !== 'estonian') state.script = 'latin';
       step = baseStep(character);
     } else if (state.script === 'cyrillic' && character in RUSSIAN_PUNCTUATION) {
       step = baseStep(RUSSIAN_PUNCTUATION[character]);
+    } else if (state.script === 'estonian' && character in ESTONIAN) {
+      steps.push(...estonianSteps(character));
+      continue;
     } else {
       step = baseStep(character);
     }

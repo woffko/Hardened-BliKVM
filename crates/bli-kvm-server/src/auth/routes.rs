@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
-
 use axum::{
     Extension, Json,
-    extract::{ConnectInfo, State},
+    extract::State,
     http::{HeaderMap, header},
     response::IntoResponse,
 };
@@ -25,9 +23,14 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountChangeRequest {
     pub username: String,
     pub password: String,
+    /// The password in use: a live session alone does not change it, as the
+    /// terminal's own password check would mean nothing then.
+    #[serde(default)]
+    pub current_password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,7 +112,7 @@ pub async fn setup_first_account(
 
 pub async fn login(
     State(state): State<AppState>,
-    ConnectInfo(address): ConnectInfo<SocketAddr>,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> AppResult<impl IntoResponse> {
@@ -123,7 +126,6 @@ pub async fn login(
     if request.username.len() > 64 || request.password.len() > 256 {
         return Err(AppError::BadRequest("invalid username or password".into()));
     }
-    let source = crate::auth::rate_limit::client_address(address, &headers);
     let locked = || AppError::RateLimited("account locked after repeated failures".into());
     if state
         .login_limiter
@@ -223,6 +225,7 @@ pub async fn password_state(
 
 pub async fn change_password(
     State(state): State<AppState>,
+    crate::auth::rate_limit::ClientSource(source): crate::auth::rate_limit::ClientSource,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(request): Json<AccountChangeRequest>,
 ) -> AppResult<impl IntoResponse> {
@@ -231,11 +234,69 @@ pub async fn change_password(
             "cannot change another account password".into(),
         ));
     }
+    let current = request
+        .current_password
+        .as_deref()
+        .filter(|current| !current.is_empty() && current.len() <= 256)
+        .ok_or_else(|| AppError::Forbidden("the current password is required".into()))?;
     validate_credentials(&request.username, &request.password)?;
-    set_root_password(&state, &request.password).await?;
-    state
+    // One change at a time, from the check of the current password to
+    // root's: two at once could each check the old password and then leave
+    // the account and root with different ones (code audit of 2026-10-20,
+    // AUD-19.3).
+    let _change = state.setup_lock.lock().await;
+    // Checked like a login, under the same limiter.
+    let limiter_key = format!("password:{}", request.username);
+    let locked = || AppError::RateLimited("account locked after repeated failures".into());
+    if state
+        .login_limiter
+        .lock()
+        .await
+        .is_locked(&source, &limiter_key)
+    {
+        return Err(locked());
+    }
+    let permit = state.accounts.verification_permit().await;
+    if state
+        .login_limiter
+        .lock()
+        .await
+        .is_locked(&source, &limiter_key)
+    {
+        return Err(locked());
+    }
+    let verified = crate::auth::password::verify_blocking(
+        state.accounts.clone(),
+        request.username.clone(),
+        current.to_string(),
+    )
+    .await?;
+    drop(permit);
+    let mut limiter = state.login_limiter.lock().await;
+    if !verified {
+        let _locked = limiter.record_failure(&source, &limiter_key);
+        return Err(AppError::Forbidden("the current password is wrong".into()));
+    }
+    limiter.record_success(&source, &limiter_key);
+    drop(limiter);
+    // The web account first, then root's; root refusing puts the account
+    // back, so the two never part.
+    let previous = state
         .accounts
-        .replace(&request.username, &request.password)?;
+        .load()?
+        .ok_or_else(|| AppError::NotFound("account not initialized".into()))?;
+    {
+        // The new hash runs on the blocking pool, as a verification does.
+        let accounts = state.accounts.clone();
+        let (username, password) = (request.username.clone(), request.password.clone());
+        tokio::task::spawn_blocking(move || accounts.replace(&username, &password))
+            .await
+            .map_err(|_| AppError::Internal("the password could not be hashed".into()))??;
+    }
+    if let Err(error) = set_root_password(&state, &request.password).await {
+        state.accounts.put_back(&previous)?;
+        return Err(error);
+    }
     let revoked = state.sessions.revoke_user(&request.username).await;
     for token in revoked {
         crate::hid::release_session_hid(&state, &token).await;

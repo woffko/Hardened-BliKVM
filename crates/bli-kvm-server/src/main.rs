@@ -4,7 +4,10 @@ use std::{
 };
 
 use axum::serve::ListenerExt;
-use bli_kvm_server::{ServerOptions, app_with_options};
+use bli_kvm_server::{
+    ServerOptions, app_with_options,
+    proxy_socket::{ProxyListener, ProxyPeer},
+};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
 
 const DEFAULT_BIND: &str = "127.0.0.1:18080";
@@ -47,6 +50,44 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    // The QUIC gateway's link exists only when its socket and its user are
+    // both named and the user exists; anything less leaves QUIC unavailable
+    // and the server as it is.
+    let (quic_link_socket, quic_link_uid) = match (
+        env::var_os("BLI_KVM_QUIC_LINK_SOCKET").map(PathBuf::from),
+        env::var("BLI_KVM_QUIC_LINK_USER").ok(),
+    ) {
+        (Some(socket), Some(user)) => match nix::unistd::User::from_name(&user) {
+            Ok(Some(found)) => (Some(socket), Some(found.uid.as_raw())),
+            _ => {
+                eprintln!(
+                    "quic link: user {user} does not exist; the QUIC transport stays unavailable"
+                );
+                (None, None)
+            }
+        },
+        _ => (None, None),
+    };
+    // nginx's own socket, named with nginx's user: the server serves that
+    // user alone there and believes the forwarded client there only. Without
+    // it (an older system's nginx) the TCP port's rule stays as it was.
+    let proxy = match (
+        env::var_os("BLI_KVM_PROXY_SOCKET").map(PathBuf::from),
+        env::var("BLI_KVM_PROXY_USER").ok(),
+    ) {
+        (Some(path), Some(user)) => {
+            if !path.is_absolute() {
+                return Err("BLI_KVM_PROXY_SOCKET must be absolute".into());
+            }
+            match nix::unistd::User::from_name(&user) {
+                Ok(Some(found)) => Some((path, found.uid.as_raw())),
+                _ => return Err(format!("BLI_KVM_PROXY_USER {user} does not exist").into()),
+            }
+        }
+        (None, None) => None,
+        _ => return Err("BLI_KVM_PROXY_SOCKET and BLI_KVM_PROXY_USER go together".into()),
+    };
+
     let options = ServerOptions {
         web_root: Some(web_root),
         state_dir: PathBuf::from(env::var("BLI_KVM_STATE_DIR").unwrap_or_else(|_| "state".into())),
@@ -81,12 +122,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         firewall_modes_enabled: env::var("BLI_KVM_FIREWALL_MODES").as_deref() == Ok("1"),
         video_controls_enabled: env::var("BLI_KVM_VIDEO_CONTROLS").as_deref() == Ok("1"),
         engine_socket: env::var_os("BLI_KVM_USTREAMER_SOCKET").map(PathBuf::from),
+        h264_encoder_status: env::var_os("BLI_KVM_H264_ENCODER_STATUS").map(PathBuf::from),
+        h264_encoder_report: env::var_os("BLI_KVM_H264_ENCODER_REPORT").map(PathBuf::from),
+        vp8_encoder_report: env::var_os("BLI_KVM_VP8_ENCODER_REPORT").map(PathBuf::from),
         admin_socket: env::var_os("BLI_KVM_ADMIN_SOCKET").map(PathBuf::from),
         download_socket: env::var_os("BLI_KVM_DOWNLOAD_SOCKET").map(PathBuf::from),
+        picoclaw_installer_socket: env::var_os("BLI_KVM_PICOCLAW_INSTALLER_SOCKET")
+            .map(PathBuf::from),
         picoclaw_socket: env::var_os("BLI_KVM_PICOCLAW_SOCKET").map(PathBuf::from),
         picoclaw_mcp_url: Some(format!("http://{address}/internal/picoclaw/mcp")),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
         media_store_must_be_mounted: true,
+        quic_link_socket,
+        quic_link_uid,
+        proxy_socket: proxy.as_ref().map(|(path, _)| path.clone()),
         ..ServerOptions::default()
     };
 
@@ -114,11 +163,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => None,
     };
 
+    let proxy_listener = match &proxy {
+        Some((path, uid)) => Some(ProxyListener::bind(path, *uid)?),
+        None => None,
+    };
+
     let listener = TcpListener::bind(address).await?;
     eprintln!("BLi-KVM development server listening on {address}");
     let shutdown = options.shutdown.clone();
     let graceful = shutdown.clone();
     let app = app_with_options(options);
+    let proxy_app = app.clone();
     let server = axum::serve(
         listener,
         app.clone()
@@ -140,11 +195,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
+    let proxy_graceful = shutdown.clone();
+    let proxy_server = async move {
+        match proxy_listener {
+            Some(listener) => {
+                axum::serve(
+                    listener,
+                    proxy_app.into_make_service_with_connect_info::<ProxyPeer>(),
+                )
+                .with_graceful_shutdown(async move { proxy_graceful.cancelled().await })
+                .await
+            }
+            None => {
+                proxy_graceful.cancelled().await;
+                Ok(())
+            }
+        }
+    };
     tokio::pin!(server);
     tokio::pin!(stream_server);
+    tokio::pin!(proxy_server);
     tokio::select! {
         result = &mut server => { result?; return Ok(()); },
         result = &mut stream_server => { result?; return Ok(()); },
+        result = &mut proxy_server => { result?; return Ok(()); },
         _ = terminate.recv() => {},
         _ = interrupt.recv() => {},
     }
@@ -152,6 +226,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::time::timeout(Duration::from_secs(20), async {
         server.await?;
         stream_server.await?;
+        proxy_server.await?;
         shutdown.drained().await;
         Ok::<(), std::io::Error>(())
     })

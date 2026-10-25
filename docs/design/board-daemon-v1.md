@@ -44,6 +44,12 @@ capabilities.
   (explicit asserted level, period, pulse, idle floor),
   `bli-kvm-display-button-policy` (debounce, activation hold, wake event) and
   `bli-kvm-serial-switch-codec` (host-side only until a transport exists).
+  These policies refuse a time earlier than their last one, so the daemon
+  gives them a monotonic clock that starts with the process, never the wall
+  clock, which a network time step or a manual correction can move back. A
+  fan policy that cannot decide (that refusal included) leaves the fan at
+  its failsafe duty, full speed, until the policy answers again (code audit
+  of 2026-10-20, AUD-06).
 - **Control surface**: the daemon exposes its state and accepts reviewed
   commands over its own Unix socket, mirroring the owner's protocol style
   (versioned request/response, fixed rejection codes, no free-form payloads).
@@ -86,6 +92,15 @@ that fails to come up never stops the fan, it is reported on stderr and shown as
 absent. Still open before the panel gate: the panel lines handoff (unexport the
 vendor sysfs lines 259/262/260 and provision the operator configuration).
 
+Every frame is sent from its last pixel to its first (2026-10-25: the operator
+saw the panel upside down). The configuration's MADCTL 0x70 comes from
+Waveshare's `LCD_1IN3_SetAttributes`, which the vendor's `kvmd-main` carries
+but never calls: it initializes the panel through `spilcdInit` with MADCTL 0x00
+and turns its picture with `Paint_SetRotate(270)`, a quarter turn the other way
+from what 0x70 does. Half a turn of the frame puts the picture the vendor's way
+up without the address offset that a MADCTL mirroring the controller's 320-line
+side would need.
+
 ## Implemented slice 3 (2026-09-16): activity LED
 
 `led` module and its reviewed configuration section: the activity LED runtime
@@ -112,6 +127,41 @@ the observation is unavailable), read through the platform RTC reader.
 
 Still open in the daemon: the boot-config view, then the device gates for fan,
 panel, LED and button.
+
+## The display's sleep (2026-10-10)
+
+At the operator's word, the display goes dark after a time without
+activity, with the choices of Hardened NanoKVM: never (the default, as
+before), 15 or 30 seconds, 1, 3, 5, 10 or 30 minutes, or an hour (Settings >
+Device > Display, `GET`/`POST /api/vm/oled` with the reference's `exist` and
+`sleep`).
+
+- The board owner keeps the choice (`DisplaySleep` and `DisplaySleepState`
+  on its control socket) in `/var/lib/hardened-blikvm-gadget/display-sleep.env`
+  (`sleep_seconds=N`, root, 0600). The RAW system update carries that
+  directory; the card image starts without the file, that is never.
+- The daemon reads the file on every sample, as Hardened NanoKVM reads its
+  own: a missing, oversized or malformed file, or a time that is not one of
+  the choices, is never. Its unit grants no write outside its runtime
+  directory and needs none here; as root it reads the owner's file, which
+  is root's.
+- Once the display has had no activity for the time, the daemon turns its
+  backlight off and draws nothing until it is lit again. Activity is the
+  daemon's start, the button's wake cycle, a new choice, and a request on
+  the socket to light the backlight; each lights the display, draws the
+  status at once and starts the time over. A backlight that could not be
+  turned off is tried again on the next sample. A request to turn the
+  backlight off keeps the display dark until the button or a new choice.
+  Nothing else wakes it: the status screen changes every few seconds
+  (temperature, load), which would light it as often. The daemon samples
+  the button once a sample (a second on the board), and the policy wants a
+  debounced press held for its hold time: the button is held for two to
+  three seconds before the display lights (the operator's check on slot 84,
+  2026-10-11).
+- The status the daemon answers keeps its fields: the update runtime's
+  health check reads it strictly (`board_readiness.rs`), so the display's
+  state is not in it; a dark display reports `displayBacklightOn: false`,
+  which the check allows.
 
 ## Ownership handoff and rollback
 

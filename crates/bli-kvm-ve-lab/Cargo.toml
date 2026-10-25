@@ -1,0 +1,19 @@
+[package]
+name = "bli-kvm-ve-lab"
+description = "Lab tool for the H616 video engine's H.264 encoder; never part of a package, a slot or an image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# The headers, the rate control and the driver's requests are the product's;
+# the stand-in for the engine comes with them.
+bli-kvm-ve-encoder = { path = "../bli-kvm-ve-encoder", features = ["standin"] }
+serde_json.workspace = true
+
+[[bin]]
+name = "bli-kvm-ve-lab"
+path = "src/main.rs"

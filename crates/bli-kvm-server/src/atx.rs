@@ -105,8 +105,13 @@ pub(crate) async fn application_power(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }

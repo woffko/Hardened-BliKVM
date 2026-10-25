@@ -198,3 +198,159 @@ Reproduce the raw Rust inventory with:
 ```sh
 cargo metadata --locked --offline --format-version 1
 ```
+
+The QUIC gateway (plan of 2026-10-01, `docs/design/quic-transport-v1.md`)
+adds `wtransport` 0.7.2 with the features `quinn`, `ring` and `self-signed`
+as its one direct addition; `quinn` 0.11.12, `rustls` 0.23.45, `ring`
+0.17.14 and `rcgen` 0.14.10 come with it. The lock gained 94 external
+packages and two workspace crates (`bli-kvm-quic-protocol`,
+`bli-kvm-quic-gateway`). 68 of the external ones are built for the board,
+40 of those (URL parsing with the Unicode tables, an X.509 parser, the
+native certificate store) only because the library's features cannot leave
+them out; the rest belong to other targets or to tests. The stack is a
+normal dependency of `bli-kvm-quic-gateway` alone and a development
+dependency of the web server, whose tests open sessions as a page does. At
+the end of that plan the locked graph has 313 packages, 80 of the workspace
+and 233 external, each with a declared licence expression (`ISC`,
+`BSD-2-Clause`, `Zlib` as one option and `Apache-2.0 AND ISC` for `ring`
+beside the ones above).
+
+## RustSec scan for 0.1.0-alpha.10 (2026-10-02)
+
+`cargo audit --deny warnings` on the lock of the release (313 packages)
+reports one advisory: RUSTSEC-2026-0009 in `time` 0.3.45, a stack exhaustion
+when input from outside is parsed with the RFC 2822 format; 0.3.47 fixes it.
+`time` comes with the QUIC stack (`wtransport`, `rcgen`, `x509-parser`,
+`asn1-rs`, `yasna`) and is linked only into `bli-kvm-quic-gateway`. Neither
+the gateway nor these crates parse that format: the gateway makes its own
+certificate and `x509-parser` only writes dates with it. The release ships
+the locked version; the lock moves to the fixed one with the next build of
+the update-runtime package, which carries the gateway.
+
+## RustSec scan for 0.1.0-beta.1 (2026-10-04)
+
+The lock of the release has 315 packages, 82 of the workspace and 233
+external. Since alpha.10 it gained two workspace packages, the video engine's
+encoder crate (`bli-kvm-ve-encoder`) and its lab tool (`bli-kvm-ve-lab`, which
+no package carries), and no external one; every external package declares a
+licence expression. `cargo audit --deny warnings`, run without fetching (the
+advisory database as fetched on 2026-10-02, 1,288 advisories), reports the one
+advisory of alpha.10: RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
+`bli-kvm-quic-gateway`, where its fault is not reachable (above). The section
+above expected the fixed version with the next build of the update-runtime
+package. That build, `0.1.0~dev36` (it added the encoder driver), and this
+release's runtime, whose programs are the same bytes, still lock 0.3.45:
+moving the lock needs the crate registry, which neither used. The release
+notes say so.
+
+## RustSec scan for 0.1.0-beta.2 (2026-10-06)
+
+The lock is beta.1's (315 packages). `cargo audit --deny warnings`, run without
+fetching (the database as fetched on 2026-10-02, now 1,290 advisories), reports
+the same one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, as above.
+
+## RustSec scan for 0.1.0-beta.3 (2026-10-07)
+
+The lock is beta.2's (315 packages; no dependency changed). `cargo audit
+--deny warnings`, run without fetching (the database as fetched on 2026-10-07,
+its last advisory commit of that morning, 1,293 advisories), reports the same
+one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
+`bli-kvm-quic-gateway`, where its fault is not reachable (above). The card
+image and the RAW system bundle of this release carry the board's update
+runtime `0.1.0~dev36`, whose gateway was built from that lock.
+
+## RustSec scan for 0.1.0-beta.4 (2026-10-11)
+
+The lock has beta.3's 315 packages; since then only the board daemon gained
+a dependency on the workspace's own `bli-kvm-core`. `cargo audit --deny
+warnings`, run without fetching (the database as fetched on 2026-10-09, its
+last advisory commit of that morning, 1,296 advisories), reports the same
+one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
+`bli-kvm-quic-gateway`, where its fault is not reachable (above). The card
+image and the RAW system bundle of this release carry the board's update
+runtime `0.1.0~dev38`, whose gateway (QUIC protocol 2) was built from that
+lock.
+
+## RustSec scan for 0.1.0-beta.5 (2026-10-11)
+
+An application release; the lock is beta.4's (315 packages, unchanged).
+`cargo audit --deny warnings`, run without fetching (the same database,
+1,296 advisories), reports the same one advisory, RUSTSEC-2026-0009 in
+`time` 0.3.45, linked only into `bli-kvm-quic-gateway`, which is part of
+the system (beta.4's update runtime `0.1.0~dev38`), not of this bundle.
+
+## RustSec scan for 0.1.0-beta.7 (2026-10-16)
+
+An application release, with the target agent's Windows program beside it;
+0.1.0-beta.6 was a development slot of the test board and was not
+published. The lock has 317 packages: since beta.5 the workspace gained the
+agent's protocol (`bli-kvm-agent-protocol`) and the agent
+(`bli-kvm-target-agent`); no external package was added (the agent's
+`windows-sys` was already locked). `cargo audit --deny warnings`, run
+without fetching (the database as fetched on 2026-10-09, 1,296 advisories),
+reports the same one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked
+only into `bli-kvm-quic-gateway`, which is part of the system (beta.4's
+update runtime `0.1.0~dev38`), not of this bundle nor of the agent.
+
+## RustSec scan for 0.1.0-beta.8 (2026-10-17)
+
+An application release with the target agent's Windows program beside it,
+made of the fixes of the review of beta.7. The lock is beta.7's (317
+packages, unchanged). `cargo audit --deny warnings`, run without fetching
+(the database as fetched on 2026-10-17, its last advisory commit of that
+night, 1,334 advisories), reports RUSTSEC-2026-0009 in `time` 0.3.45 as
+before and four advisories of 2026-10-14 in `rustls` 0.23.45, fixed in
+0.23.46: RUSTSEC-2026-0346 (a client's session values in `Debug` output),
+RUSTSEC-2026-0347 (a client's buffered data sent after an ECH rejection),
+RUSTSEC-2026-0348 (Brotli certificate decompression) and RUSTSEC-2026-0349
+(a client's key share predicted from an unauthenticated ServerHello). Both
+crates are linked only into `bli-kvm-quic-gateway` (`rustls` through
+`wtransport` and `quinn`), which is part of the system (beta.4's update
+runtime `0.1.0~dev38`), not of this bundle nor of the agent. None of the
+four is reachable there: the gateway is only a QUIC server (its links to
+the server are Unix sockets), so the three about clients do not apply, and
+the fourth needs `rustls`'s `brotli` feature, which the lock does not have
+(no `brotli` package). A system release would take `rustls` 0.23.46 and
+`time` 0.3.47.
+
+## RustSec scan for 0.1.0-beta.9 (2026-10-22)
+
+An application, a card image and a RAW system update, made of the fixes of
+the security review of 2026-10-18 and the code audit of 2026-10-20, with the
+target agent's Windows program beside them. The lock has 317 packages and
+takes `rustls` 0.23.46 and `time` 0.3.47 for the QUIC gateway (E15), so
+RUSTSEC-2026-0009 and the four `rustls` advisories of beta.8 are gone.
+`cargo audit --deny warnings`, run without fetching (the database as
+fetched on 2026-10-22, 1,349 advisories), reports one: RUSTSEC-2026-0382 of
+2026-10-20 in `rustls-webpki` 0.103.15 (a certificate chain may be accepted
+through a distrusted intermediate), fixed in 0.103.16. It is linked only
+into `bli-kvm-quic-gateway` (through `rustls`, `quinn` and `wtransport`),
+part of the system (update runtime `0.1.0~dev42`), not of the application
+bundle nor of the agent. It is not reachable there: the gateway is only a
+QUIC server and its TLS configuration has no client authentication
+(`wtransport`'s `with_no_client_auth`), so it verifies no certificate
+chain; its links to the server are Unix sockets. The next system build
+takes 0.103.16.
+
+## RustSec scan for 0.1.0-beta.10 (2026-10-25)
+
+An application, a card image and a RAW system update, with the work of
+2026-10-24 and 25 on remote control from a phone. The lock has 317 packages.
+`rustls-webpki` 0.103.16 replaces 0.103.15, so RUSTSEC-2026-0382 of beta.9
+is gone, and `tokio` 1.53.3 replaces 1.53.1 for RUSTSEC-2026-0386 of
+2026-10-13 (`AsyncFd::new` and its siblings take any raw descriptor, which
+can free a registration that a reused descriptor number still has). The
+board owner's one `AsyncFd`, the target agent's device, now uses
+`AsyncFd::register`: it owns the `File`, so the descriptor stays open and
+names the same device for the `AsyncFd`'s life. Both were taken from the
+local registry without fetching.
+
+`cargo audit --deny warnings`, run without fetching (the database as
+fetched on 2026-10-24, 1,352 advisories), reports one: RUSTSEC-2026-0385 of
+2026-10-23 in `ctutils` 0.4.2 (non-constant-time mask generation and `u128`
+comparisons), fixed in 0.4.4, which the local registry does not have. It is
+reached only through `universal-hash`, `poly1305` and `chacha20poly1305`
+from `bli-kvm-diagnostic-journal` and the diagnostic crates that use it;
+none of them is in a program the board runs (the application bundle, the
+update runtime, the image's units or the agent), so it is not reachable on
+a board. The next dependency update takes 0.4.4.

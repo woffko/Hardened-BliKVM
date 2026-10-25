@@ -133,6 +133,7 @@ pub async fn run_with_gadget_hid_profile(
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: None,
                 },
             ),
         ),
@@ -202,6 +203,7 @@ pub async fn run_with_gadget_profile(
     let catalog_path = catalog_path.into();
     let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let configfs_root = gadget.configfs_root.clone();
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
         catalog,
@@ -222,6 +224,7 @@ pub async fn run_with_gadget_profile(
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: Some(configfs_root),
                 },
             ),
         ),
@@ -269,6 +272,7 @@ async fn board_state(
     let catalog_path = catalog_path.into();
     let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let configfs_root = gadget.configfs_root.clone();
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
         catalog,
@@ -278,17 +282,45 @@ async fn board_state(
     )
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
+    // The agent's switch decides the absolute mouse's interface of every
+    // gadget the owner builds, and of the one present when it starts.
+    let agent_switch =
+        crate::target_agent::AgentSwitch::open(crate::target_agent::TARGET_AGENT_STATE);
+    media.want_agent(agent_switch.enabled());
+    let agent_drive = crate::target_agent::drive_at_start(agent_switch.enabled());
+    media.want_agent_drive(agent_drive.clone());
     ensure_gadget_hid(&media);
+    let agent_ready = match media.set_agent(agent_switch.enabled()) {
+        Ok(changed) => {
+            if changed {
+                eprintln!("target agent: the gadget now follows the switch");
+            }
+            true
+        }
+        Err(error) => {
+            eprintln!("target agent: the gadget could not follow the switch: {error:?}");
+            false
+        }
+    };
+    if let Err(error) = media.set_agent_drive(agent_drive) {
+        eprintln!("target agent: the drive could not follow the switch: {error:?}");
+    }
+    let hidg_dir: std::path::PathBuf = hidg_dir.into();
+    let agent_device = hidg_dir.join(
+        bli_kvm_usb_gadget::hid_device_name(bli_kvm_usb_gadget::HID_ABSOLUTE_MOUSE_NAME)
+            .ok_or(ControlBrokerError::TransitionUnavailable)?,
+    );
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
         bli_kvm_hid_transition::HidExecutor::Gadget(
             bli_kvm_hid_transition::GadgetHidExecutor::new(
                 bli_kvm_hid_transition::GadgetHidConfig {
-                    hidg_dir: hidg_dir.into(),
+                    hidg_dir,
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: Some(configfs_root),
                 },
             ),
         ),
@@ -315,6 +347,12 @@ async fn board_state(
         bli_kvm_hid_policy::HidControlPolicy::new(hid),
         atx,
     );
+    // The target agent's channel opens its device only while the agent's
+    // switch is on and the gadget carries the agent's collection.
+    let channel =
+        crate::target_agent::AgentChannel::start(agent_device, crate::target_agent::board_hello());
+    channel.want(agent_switch.enabled() && agent_ready).await;
+    state.with_target_agent(channel, agent_switch);
     // Every board-profile entry point serves the read-only board status when
     // the operator configured the daemon socket.
     if let Some(client) = crate::board_status::board_status_client_from_environment() {
@@ -439,6 +477,10 @@ async fn board_state(
     state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
         crate::tailscale::SystemTailscaleRunner,
     )));
+    // The QUIC transport's switch: enable/disable the gateway's unit.
+    state.with_quic(crate::quic_settings::QuicSettings::open(Box::new(
+        crate::tailscale::SystemTailscaleRunner,
+    )));
     // Administration features stay off until the operator switches them on.
     state.with_admin_features(crate::admin_features::AdminFeaturesState::open(
         bli_kvm_core::ADMIN_FEATURES_PATH,
@@ -448,6 +490,10 @@ async fn board_state(
         crate::device_settings::HID_ONLY_STATE,
         true,
     ));
+    // The display's sleep time, which the board daemon reads from the file.
+    state.with_display_sleep(crate::device_settings::DisplaySleepState::open(
+        bli_kvm_core::DISPLAY_SLEEP_PATH,
+    ));
     // The reviewed device toggles use the same bounded restart runner.
     state.with_device_settings(crate::device_settings::MdnsState::open(
         crate::device_settings::MDNS_CONF,
@@ -455,6 +501,21 @@ async fn board_state(
         Box::new(crate::video_settings::ExecVideoRestartRunner),
         true,
     ));
+    // The switches kept in system files outlive a RAW system update: after a
+    // new image they are set as the board had them.
+    match state.with_system_switches(crate::system_switches::SystemSwitches::open(
+        crate::system_switches::SWITCHES_RECORD,
+        crate::system_switches::IMAGE_IDENTITY,
+        Box::new(crate::tailscale::SystemTailscaleRunner),
+    )) {
+        crate::system_switches::Reconciled::Restored { failed } if !failed.is_empty() => {
+            eprintln!("board profile: switches not set as before the new image: {failed:?}");
+        }
+        crate::system_switches::Reconciled::Restored { .. } => {
+            eprintln!("board profile: switches set as before the new image");
+        }
+        _ => {}
+    }
     // The bounded network writes stay refused until the operator enables them
     // for the owner as well as for the server.
     #[cfg(feature = "network-write-profile")]
@@ -1051,6 +1112,19 @@ where
             Ok(value) => value,
             Err(error) => break Err(ControlBrokerError::Io(error)),
         };
+        // The socket's group holds every service account; only root and the
+        // web server are served.
+        match stream.peer_cred() {
+            Ok(peer) if config.admitted_uids.contains(&peer.uid()) => {}
+            Ok(peer) => {
+                eprintln!("control: refused a peer with uid {}", peer.uid());
+                continue;
+            }
+            Err(error) => {
+                eprintln!("control: refused a peer whose credentials are unknown: {error}");
+                continue;
+            }
+        }
         let request_timeout = config.request_timeout;
         let diagnostics = diagnostics.clone();
         let v2 = v2.clone();
@@ -1151,8 +1225,13 @@ where
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -1258,6 +1337,35 @@ async fn respond(
             } else {
                 None
             };
+            // Hostname, SSH, QUIC and video settings wait on systemd: the
+            // same treatment.
+            let system_settings = if crate::v2::SystemSettings::serves(&request.request) {
+                v2.lock().await.system_settings_shared()
+            } else {
+                None
+            };
+            // A call to the target agent waits for its answer up to seconds:
+            // it runs with the channel's handle, not the shared state's lock.
+            let agent_response = match &request.request {
+                bli_kvm_core::PlatformControlRequestV2::TargetAgentCall {
+                    call,
+                    timeout_ms,
+                    lease,
+                } => {
+                    let channel = v2
+                        .lock()
+                        .await
+                        .target_agent_for(call, *lease, Instant::now());
+                    Some(match channel {
+                        Ok(channel) => {
+                            crate::v2::run_target_agent_call(channel, call.clone(), *timeout_ms)
+                                .await
+                        }
+                        Err(code) => ControlResponse::Rejected { code },
+                    })
+                }
+                _ => None,
+            };
             // An ATX pulse holds the line for seconds: it runs under the ATX
             // engine's own lock, not the shared state's.
             #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
@@ -1284,7 +1392,7 @@ async fn respond(
             };
             #[cfg(not(any(feature = "atx-transition-profile", feature = "gpio-atx-profile")))]
             let atx_response: Option<ControlResponse> = None;
-            let response = if let Some(response) = atx_response {
+            let response = if let Some(response) = agent_response.or(atx_response) {
                 response
             } else if let Some(network) = network {
                 let payload = request.request.clone();
@@ -1309,6 +1417,22 @@ async fn respond(
                 })
                 .await
                 .map_err(|_| io::Error::other("wifi worker failed"))?
+            } else if let Some(settings) = system_settings {
+                let payload = request.request.clone();
+                let response = tokio::task::spawn_blocking(move || {
+                    settings
+                        .lock()
+                        .map(|mut state| state.dispatch(&payload))
+                        .unwrap_or(ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                        })
+                })
+                .await
+                .map_err(|_| io::Error::other("settings worker failed"))?;
+                v2.lock()
+                    .await
+                    .note_system_setting(&request.request, &response);
+                response
             } else if let Some(firewall) = firewall_state {
                 let payload = request.request.clone();
                 tokio::task::spawn_blocking(move || {
@@ -1613,6 +1737,108 @@ mod tests {
             .unwrap()
             .unwrap();
         response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_system_setting_leaves_hid_leases_answered() {
+        // hostnamed taking two seconds to answer.
+        struct Slow;
+        impl crate::tailscale::TailscaleRunner for Slow {
+            fn run(&mut self, _program: &str, _args: &[&str]) -> Result<String, String> {
+                std::thread::sleep(Duration::from_secs(2));
+                Ok(String::new())
+            }
+
+            fn path_exists(&mut self, _path: &str) -> bool {
+                true
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let hosts = directory.path().join("hosts");
+        let hostname = directory.path().join("hostname");
+        std::fs::write(&hosts, "127.0.1.1 kvm\n").unwrap();
+        std::fs::write(&hostname, "kvm\n").unwrap();
+        let mut state = ControlV2State::serving();
+        state.with_hostname(crate::hostname_settings::HostnameSettings::with_paths(
+            Box::new(Slow),
+            &hosts,
+            &hostname,
+        ));
+        let v2 = Arc::new(TokioMutex::new(state));
+        let envelope = |id: u64, request: PlatformControlRequestV2| {
+            encode_request_v2(&ControlRequestEnvelopeV2 {
+                schema_version: CONTROL_SCHEMA_VERSION_V2,
+                request_id: id,
+                operation_id: format!("{id:032x}"),
+                request,
+            })
+            .unwrap()
+        };
+        let rename = envelope(
+            1,
+            PlatformControlRequestV2::Hostname {
+                name: "desk".into(),
+            },
+        );
+        let slow = tokio::spawn({
+            let v2 = Arc::clone(&v2);
+            async move { respond(&rename, &v2).await }
+        });
+        sleep(Duration::from_millis(100)).await;
+        let lease = envelope(
+            2,
+            PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Acquire {
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    ttl_seconds: 30,
+                },
+            },
+        );
+        let started = std::time::Instant::now();
+        let answer = timeout(TEST_START_WAIT * 2, respond(&lease, &v2))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "the lease waited {:?} behind the hostname",
+            started.elapsed()
+        );
+        assert!(matches!(answer.response, ControlResponse::Rejected { .. }));
+        assert_eq!(
+            slow.await.unwrap().unwrap().response,
+            ControlResponse::Applied
+        );
+    }
+
+    #[tokio::test]
+    async fn a_peer_the_owner_does_not_admit_is_closed_unanswered() {
+        // SAFETY: geteuid has no preconditions.
+        let own = unsafe { libc::geteuid() };
+        if own == 0 {
+            return; // root is always admitted
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let mut config = ControlBrokerConfig::new(&socket).unwrap();
+        config.admitted_uids = std::collections::BTreeSet::from([0, own + 1]);
+        let mut broker = tokio::spawn(run(config));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let answer = client
+            .execute(
+                format!("{value:032x}", value = 1),
+                PlatformControlRequest::Atx {
+                    action: AtxControlAction::PowerShort,
+                },
+            )
+            .await;
+        assert!(
+            answer.is_err(),
+            "a peer not admitted was served: {answer:?}"
+        );
+        stop_broker(broker).await;
     }
 
     #[tokio::test]
@@ -2008,6 +2234,7 @@ mod tests {
                         keyboard_function: "hid.usb0".into(),
                         absolute_mouse_function: "hid.usb1".into(),
                         relative_mouse_function: "hid.usb2".into(),
+                        configfs_root: None,
                     },
                 ),
             ),

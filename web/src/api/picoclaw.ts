@@ -48,7 +48,7 @@ export function setPicoclawAgentProfile(data: AgentProfileRequest) {
 }
 
 export function listPicoclawSessions(params?: { offset?: number; limit?: number }) {
-  return http.get('/api/picoclaw/sessions', { params });
+  return http.get('/api/picoclaw/sessions', params);
 }
 
 export function getPicoclawSession(id: string) {

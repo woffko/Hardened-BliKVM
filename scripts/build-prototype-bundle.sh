@@ -23,6 +23,12 @@ for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
 done
 
 cd "$project_root"
+# The encoder driver of the video engine is built beforehand, by its own
+# recipe and for one kernel release (scripts/build-ve-module.sh); the
+# bundle takes the module from where that left it.
+ve_module=${BLI_KVM_VE_MODULE:?set BLI_KVM_VE_MODULE to the built hardened-blikvm-ve-enc.ko (scripts/build-ve-module.sh)}
+ve_release=$(python3 tools/ve_module.py release "$ve_module")
+python3 tools/ve_module.py check "$ve_module" "$ve_release"
 BLI_KVM_CARGO_FEATURES="$cargo_features" scripts/build-aarch64.sh "$target_dir"
 PNPM_CONFIG_STORE_DIR="$pnpm_store" corepack pnpm --dir web build
 
@@ -44,6 +50,8 @@ admin_helper_binary="$release_dir/bli-kvm-admin-helper"
 scripts/verify-aarch64-elf.sh "$admin_helper_binary"
 system_update_binary="$release_dir/bli-kvm-system-update"
 scripts/verify-aarch64-elf.sh "$system_update_binary"
+quic_gateway_binary="$release_dir/bli-kvm-quic-gateway"
+scripts/verify-aarch64-elf.sh "$quic_gateway_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 mkdir -p -- "$output_dir"
@@ -69,6 +77,9 @@ install -d -m 0755 \
   "$stage/share/picoclaw" \
   "$stage/share/tailscale" \
   "$stage/share/system-update" \
+  "$stage/share/modprobe.d" \
+  "$stage/share/ve/$ve_release" \
+  "$stage/share/ve/source" \
   "$stage/share/docs"
 install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
@@ -84,8 +95,19 @@ install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-
 install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec-helper"
 install -m 0755 "$admin_helper_binary" "$stage/libexec/bli-kvm-admin-helper"
 install -m 0755 "$system_update_binary" "$stage/libexec/bli-kvm-system-update"
+install -m 0755 "$quic_gateway_binary" "$stage/libexec/bli-kvm-quic-gateway"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
+# The target agent for Windows and its drive: a signed slot carries its
+# programs and its web tree only, so they live there
+# (docs/design/target-agent-v1.md).
+sh scripts/build-agent-drive.sh "$temp_root/agent" >/dev/null
+install -d -m 0755 "$stage/share/web/agent"
+install -m 0644 \
+  "$temp_root/agent/hardened-blikvm-agent.exe" \
+  "$temp_root/agent/SHA256SUMS" \
+  "$temp_root/agent/agent-drive.img" \
+  "$stage/share/web/agent/"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
 find "$stage/share/web" -type f -exec chmod 0644 {} +
 install -m 0644 \
@@ -123,12 +145,16 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-hid-gadget.service \
   packaging/systemd/hardened-blikvm-admin.socket \
   packaging/systemd/hardened-blikvm-admin@.service \
+  packaging/systemd/hardened-blikvm-quic.service \
   packaging/systemd/hardened-blikvm-image-download.socket \
   packaging/systemd/hardened-blikvm-image-download@.service \
+  packaging/systemd/hardened-blikvm-picoclaw-install.socket \
+  packaging/systemd/hardened-blikvm-picoclaw-install@.service \
   packaging/systemd/hardened-blikvm-picoclaw.service \
   packaging/systemd/hardened-blikvm-picoclaw-api.socket \
   packaging/systemd/hardened-blikvm-picoclaw-api@.service \
   packaging/systemd/hardened-blikvm-system-update-booted.service \
+  packaging/systemd/hardened-blikvm-ve.service \
   "$stage/share/systemd/"
 install -d -m 0755 "$stage/share/systemd/native"
 install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
@@ -140,9 +166,17 @@ install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
   "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
+install -d -m 0755 "$stage/share/systemd/hardened-blikvm-nginx.service.d"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf \
+  "$stage/share/systemd/hardened-blikvm-nginx.service.d/"
 bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
+  packaging/sysusers.d/hardened-blikvm-quic.conf \
+  packaging/sysusers.d/hardened-blikvm-ve.conf \
+  packaging/sysusers.d/hardened-blikvm-download.conf \
+  packaging/sysusers.d/hardened-blikvm-picoclaw-install.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \
@@ -151,7 +185,24 @@ install -m 0644 \
   "$stage/share/tmpfiles.d/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \
+  packaging/udev/99-hardened-blikvm-ve.rules \
   "$stage/share/udev/"
+# The encoder driver: the module for its kernel release, the script that
+# loads it, the line that keeps the decoder driver away, and the module's
+# source, which goes wherever the module goes (GPL-2.0-only). The lab
+# module, built from the same directory, is never staged.
+install -m 0644 "$ve_module" "$stage/share/ve/$ve_release/hardened-blikvm-ve-enc.ko"
+install -m 0755 packaging/ve/bli-kvm-ve-load "$stage/libexec/bli-kvm-ve-load"
+install -m 0644 packaging/modprobe.d/hardened-blikvm-ve.conf "$stage/share/modprobe.d/"
+install -m 0644 packaging/ve/SOURCE.md "$stage/share/ve/source/README.md"
+install -m 0644 \
+  kernel/hardened-blikvm-ve/ve_enc.c \
+  kernel/hardened-blikvm-ve/ve_enc_abi.h \
+  kernel/hardened-blikvm-ve/ve_enc_plan.c \
+  kernel/hardened-blikvm-ve/ve_enc_plan.h \
+  kernel/hardened-blikvm-ve/ve_hw.c \
+  kernel/hardened-blikvm-ve/ve_hw.h \
+  "$stage/share/ve/source/"
 install -m 0644 \
   packaging/picoclaw/AGENT.md \
   packaging/picoclaw/AGENT_KVM.md \
@@ -212,6 +263,10 @@ update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-rep
 update_exec_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-update-exec-helper" | cut -d ' ' -f 1)
 admin_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-admin-helper" | cut -d ' ' -f 1)
 system_update_sha=$(sha256sum "$stage/libexec/bli-kvm-system-update" | cut -d ' ' -f 1)
+quic_gateway_sha=$(sha256sum "$stage/libexec/bli-kvm-quic-gateway" | cut -d ' ' -f 1)
+ve_module_path="share/ve/$ve_release/hardened-blikvm-ve-enc.ko"
+ve_module_sha=$(sha256sum "$stage/$ve_module_path" | cut -d ' ' -f 1)
+ve_module_size=$(wc -c < "$stage/$ve_module_path" | tr -d ' ')
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -231,6 +286,7 @@ update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-repo
 update_exec_helper_size=$(wc -c < "$stage/libexec/bli-kvm-update-exec-helper" | tr -d ' ')
 admin_helper_size=$(wc -c < "$stage/libexec/bli-kvm-admin-helper" | tr -d ' ')
 system_update_size=$(wc -c < "$stage/libexec/bli-kvm-system-update" | tr -d ' ')
+quic_gateway_size=$(wc -c < "$stage/libexec/bli-kvm-quic-gateway" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -255,6 +311,11 @@ jq -n \
   --arg update_exec_helper_sha "$update_exec_helper_sha" \
   --arg admin_helper_sha "$admin_helper_sha" \
   --arg system_update_sha "$system_update_sha" \
+  --arg quic_gateway_sha "$quic_gateway_sha" \
+  --arg ve_module_path "$ve_module_path" \
+  --arg ve_module_sha "$ve_module_sha" \
+  --arg ve_release "$ve_release" \
+  --argjson ve_module_size "$ve_module_size" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -273,6 +334,7 @@ jq -n \
   --argjson update_exec_helper_size "$update_exec_helper_size" \
   --argjson admin_helper_size "$admin_helper_size" \
   --argjson system_update_size "$system_update_size" \
+  --argjson quic_gateway_size "$quic_gateway_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -296,6 +358,8 @@ jq -n \
       updateExecHelper: {path: "libexec/bli-kvm-update-exec-helper", sha256: $update_exec_helper_sha, size: $update_exec_helper_size},
       adminHelper: {path: "libexec/bli-kvm-admin-helper", sha256: $admin_helper_sha, size: $admin_helper_size},
       systemUpdate: {path: "libexec/bli-kvm-system-update", sha256: $system_update_sha, size: $system_update_size},
+      quicGateway: {path: "libexec/bli-kvm-quic-gateway", sha256: $quic_gateway_sha, size: $quic_gateway_size},
+      veEncoderModule: {path: $ve_module_path, sha256: $ve_module_sha, size: $ve_module_size, kernelRelease: $ve_release},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -323,6 +387,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-admin-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-system-update")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-quic-gateway")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755

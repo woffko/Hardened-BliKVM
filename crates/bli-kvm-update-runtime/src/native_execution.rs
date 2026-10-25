@@ -158,12 +158,21 @@ impl NativeExecutionStore {
         ledger: &SelectionLedgerStore,
         keep: &str,
     ) -> Result<Vec<String>, ApplicationStageError> {
+        // A preparation cut short (power, a timeout) may have left the
+        // stager's own temporary or staging files: removed first, so that the
+        // listing below, which refuses anything unknown, goes on.
+        self.stager.cleanup_abandoned_staging()?;
         let selection = ledger.load()?;
         let protected = [Some(keep), selection.current(), selection.previous()]
             .into_iter()
             .flatten()
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
+        // So may a deletion of an earlier collection: it is finished before
+        // the listing, which refuses its marker and tombstone (code audit of
+        // 2026-10-20, AUD-04).
+        self.stager
+            .recover_slot_deletions(&protected, &self.trust)?;
         let mut removed = Vec::new();
         for slot in self.stager.list_slots(&self.trust)? {
             if !protected.contains(&slot.slot_id) {
@@ -539,6 +548,70 @@ mod tests {
         store.select(&ledger, &slots[2]).unwrap();
         assert_eq!(current().as_deref(), Some(slots[2].as_str()));
         assert_eq!(ledger.load().unwrap().previous(), Some(slots[1].as_str()));
+    }
+
+    #[test]
+    fn a_leftover_in_the_exec_store_does_not_stop_a_preparation() {
+        use std::os::unix::fs::PermissionsExt;
+        let (updater, trust, slots) = updater_with(&[14, 15]);
+        let protected = tempfile::tempdir().unwrap();
+        let ledger_root = tempfile::tempdir().unwrap();
+        let ledger = SelectionLedgerStore::fixture(ledger_root.path());
+        let mut store = execution_store(protected.path(), trust);
+        store.prepare_from_slot(updater.path(), &slots[0]).unwrap();
+        store.select(&ledger, &slots[0]).unwrap();
+        // What an older stager left when a preparation was cut short: every
+        // boot prepares the confirmed slot through this collection, so a
+        // refusal here kept the board's application from starting.
+        let leftover = protected.path().join(".tmpAbC123");
+        std::fs::write(&leftover, b"half a snapshot").unwrap();
+        std::fs::set_permissions(&leftover, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(store.collect_garbage(&ledger, &slots[1]).is_ok());
+        assert!(!leftover.exists());
+        store.prepare_from_slot(updater.path(), &slots[1]).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_deletion_in_the_exec_store_does_not_stop_a_preparation() {
+        use std::os::unix::fs::PermissionsExt;
+        let (updater, trust, slots) = updater_with(&[14, 15, 16]);
+        let protected = tempfile::tempdir().unwrap();
+        let ledger_root = tempfile::tempdir().unwrap();
+        let ledger = SelectionLedgerStore::fixture(ledger_root.path());
+        let mut store = execution_store(protected.path(), trust);
+        store.prepare_from_slot(updater.path(), &slots[0]).unwrap();
+        store.prepare_from_slot(updater.path(), &slots[1]).unwrap();
+        store.select(&ledger, &slots[1]).unwrap();
+        // A collection's deletion of the first slot cut short (code audit of
+        // 2026-10-20, AUD-04): its marker written and the slot renamed to its
+        // tombstone. Every boot prepares the confirmed slot through this
+        // collection.
+        let manifest_sha256 = store
+            .stager
+            .inspect_slot(&slots[0], &store.trust)
+            .unwrap()
+            .manifest_sha256;
+        let marker = protected.path().join(format!(".delete-{}.json", slots[0]));
+        std::fs::write(
+            &marker,
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "purpose": "hardened-blikvm-slot-deletion",
+                "slotId": slots[0],
+                "manifestSha256": manifest_sha256,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let tombstone = protected.path().join(format!(".deleting-{}", slots[0]));
+        std::fs::rename(protected.path().join(&slots[0]), &tombstone).unwrap();
+        assert_eq!(
+            store.collect_garbage(&ledger, &slots[2]).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(!marker.exists() && !tombstone.exists());
+        store.prepare_from_slot(updater.path(), &slots[2]).unwrap();
     }
 
     #[test]

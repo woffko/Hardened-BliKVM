@@ -22,10 +22,10 @@ use std::{
     error::Error,
     path::Path,
     sync::{
-        Mutex,
+        Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
 use bli_kvm_fan_supervisor::FanSupervisor;
@@ -39,11 +39,13 @@ use server::{BoarddState, FanModeName};
 /// Consumer label the daemon requests its lines with.
 pub const BOARD_DAEMON_CONSUMER: &str = "hardened-blikvm-boardd";
 
-fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
+/// Milliseconds on a monotonic clock since the daemon started. The fan,
+/// button, LED and display policies refuse a time earlier than their last
+/// one, so they never take the wall clock, which a network time step or a
+/// manual correction moves back (code audit of 2026-10-20, AUD-06).
+pub(crate) fn board_millis() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// Build the reviewed fan line request. The offset and polarity come from the
@@ -72,7 +74,7 @@ pub fn build_state(
         pwm_enabled,
     );
     fan.start()?;
-    let mut supervisor = FanSupervisor::new(config.fan.policy_config(), unix_millis(), fan)?;
+    let mut supervisor = FanSupervisor::new(config.fan.policy_config(), board_millis(), fan)?;
     supervisor.initialize()?;
     let display = build_display(config, pwm_enabled);
     let led = build_led(config, pwm_enabled);
@@ -93,6 +95,7 @@ pub fn build_state(
         atx_leds,
     );
     state.configure_display_status(config.display.status_interval_ms);
+    state.configure_display_sleep(bli_kvm_core::DISPLAY_SLEEP_PATH);
     Ok(state)
 }
 
@@ -148,7 +151,7 @@ fn build_button(
         driver,
         button::button_line(&config.button),
         &config.button,
-        unix_millis(),
+        board_millis(),
         initial,
     ) {
         Ok(runtime) => Some(Box::new(runtime)),
@@ -175,7 +178,7 @@ fn build_led(
         }
     };
     let line = led::activity_led_line(&config.led);
-    match led::LedRuntime::new(driver, line, &config.led, unix_millis()) {
+    match led::LedRuntime::new(driver, line, &config.led, board_millis()) {
         Ok(runtime) => Some(Box::new(runtime)),
         Err(error) => {
             eprintln!("boardd: activity LED unavailable: {error}");
@@ -233,7 +236,7 @@ pub fn run_once(config_path: &Path) -> Result<(), Box<dyn Error>> {
         rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
             .map_err(|error| error.class()),
     );
-    state.sample(unix_millis())?;
+    state.sample(board_millis())?;
     let view = state.status();
     println!("{}", serde_json::to_string(&view)?);
     Ok(())
@@ -279,16 +282,16 @@ pub fn run_serve_until(
                     rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
                         .map_err(|error| error.class()),
                 );
-                let _ = state.sample(unix_millis());
+                let _ = state.sample(board_millis());
                 // A failed background actuator is fatal in either fan mode.
                 // Stop admission rather than serving stale supervisor health.
                 state
                     .ensure_fan_runtime()
                     .map_err(|_| std::io::Error::other("boardd fan runtime failed"))?;
                 state.tick_led();
-                state.tick_button();
+                state.tick_button(board_millis());
                 state.tick_atx_leds();
-                state.tick_display(unix_millis());
+                state.tick_display(board_millis());
             }
             Ok(())
         })?;

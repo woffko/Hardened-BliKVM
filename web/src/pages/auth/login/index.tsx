@@ -190,7 +190,7 @@ export const Login = (): ReactElement => {
         >
           <div className="flex flex-col items-center justify-center pb-5">
             <div
-              className={`hardened-login-logo flex h-[96px] w-[260px] cursor-pointer items-center justify-center overflow-hidden rounded bg-white shadow-lg ${
+              className={`hardened-login-logo flex h-[96px] w-[260px] cursor-pointer items-center justify-center overflow-hidden rounded bg-[#fff] shadow-lg ${
                 logoPressed ? 'hardened-login-logo--active' : ''
               }`}
               onClick={pressLogo}

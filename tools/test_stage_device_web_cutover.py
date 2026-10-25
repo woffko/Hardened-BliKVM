@@ -52,9 +52,13 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         for rendered in (config, validation):
             self.assertEqual(
                 sorted(re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE)),
-                ["http://127.0.0.1:18080"] * 4
+                ["http://hardened_blikvm_server"] * 4
                 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
             )
+            # The server's proxy socket first, loopback TCP as its backup
+            # (code audit of 2026-10-20, AUD-16.2).
+            self.assertIn("server unix:/run/hardened-blikvm-proxy/http.sock;", rendered)
+            self.assertIn("server 127.0.0.1:18080 backup;", rendered)
             self.assertIn("location = /api/stream/mjpeg {", rendered)
             self.assertIn("location = /api/application-update/upload {", rendered)
             self.assertIn("location = /api/download/file {", rendered)
@@ -213,13 +217,14 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         )
 
     def test_root_master_has_a_separate_bounded_security_threshold(self) -> None:
-        verifier = Path("scripts/verify-systemd-units.sh").read_text(encoding="utf-8")
-        self.assertIn("--threshold=20", verifier)
-        self.assertIn("--threshold=22", verifier)
-        self.assertIn(
-            '"$project_root/packaging/systemd/hardened-blikvm-nginx.service"',
-            verifier,
-        )
+        listed = subprocess.run(
+            ["sh", "scripts/verify-systemd-units.sh", "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertIn("exposure hardened-blikvm-nginx.service 22", listed)
+        self.assertIn("exposure hardened-blikvm-server.service 20", listed)
 
 
 if __name__ == "__main__":

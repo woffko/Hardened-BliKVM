@@ -94,8 +94,11 @@ the repository.
    carried state. It marks the record `written` and reboots so the boot
    loader reads the new kernel and configuration. Any failure before the
    write leaves the old root untouched (`failed`); a failure during or after
-   the write, or power lost while `writing`, restores the backup the same
-   verified way (`rolled_back`). Once the backup is the root again, or
+   the write restores the backup the same verified way (`rolled_back`);
+   power lost while `writing` is restored so only in the last part of the
+   step (see "Power lost while the root is written"). A new root that cannot
+   be unmounted keeps the record at `writing` and reboots, and the next boot
+   restores the backup with nothing mounted. Once the backup is the root again, or
    nothing was written, the step removes the payload, the backup, the carried
    state and the copies of `fstab` and `shadow`; "Discard"
    (`POST /api/system-update/cancel`, allowed while the switch is off) also
@@ -112,6 +115,55 @@ the repository.
 
 Writing, reading back and backing up a 12 GiB root on the card takes up to
 about 30 minutes; the web page says so and asks to keep power connected.
+
+### Power lost while the root is written
+
+The board boots from the root partition itself: U-Boot loads the kernel and
+the initramfs from it, and the initramfs finds the root by the UUID that
+`armbianEnv.txt` names. Once the first MiB of the new image is written, the
+partition carries the image's UUID and a file system half written, so a
+board that loses power then does not reach the boot step that would restore
+the backup; only after the new root's `fstab` is merged does that step run
+again. The backup stays on the data partition, so the root is written back
+on another Linux computer, with the card in a reader:
+
+```sh
+sudo tools/image/restore_raw_backup.py /dev/sdX
+```
+
+The tool reads the update's record and `root.backup.zst` from the second
+partition, checks the backup against the record, writes it over the first
+partition and reads it back; it refuses a record with no backup to write
+(code audit of 2026-10-20, AUD-01). At the next boot the board restores the
+same backup once more and records the update as rolled back. A recovery boot
+from the data partition, which would make this automatic, is a design of its
+own.
+
+### Code audit of 2026-10-20
+
+- The new root keeps the image's `etc/hardened-blikvm/nginx.conf`, with the
+  HTTPS redirect the board's had: the carried directory brought the
+  board's file back, so no system release could change nginx on a board
+  updated by RAW (V1).
+- That rule acts only where the board's own boot step has it. A board's
+  older boot step (every published release up to 0.1.0-beta.8) still
+  carries its `nginx.conf` over the new system's, so the system also puts
+  its file back before every start of nginx: update runtime 0.1.0~dev42
+  keeps the file at `/usr/share/hardened-blikvm/nginx/hardened-blikvm.conf`,
+  outside the carried directory, and a drop-in of nginx's unit has the
+  administration helper write it over `/etc/hardened-blikvm/nginx.conf`
+  with the same rule (the redirect the board's file has) before nginx's own
+  check. A board's file that already is the system's is left alone, and a
+  failed step leaves the board's file and does not stop nginx. Changes made
+  to the file by hand do not outlive a restart of nginx (gate Y).
+- The update supervisor and the exec helper take the larger of their
+  carried `systemSequence` and the root's `system-sequence` file (AUD-02).
+- The carried owners are checked both ways: a project account the image
+  dropped, or a board account whose id an image's project account takes,
+  stops the step when that id owns a carried file (AUD-12).
+- The administration helper takes a lock on the staging directory for an
+  upload, a stage, a confirmation, a rollback or a cancel, and removes an
+  upload a stopped helper left before the next one (AUD-12).
 
 ## Carried state
 
@@ -135,6 +187,76 @@ the device had are dropped with their `passwd` entries. The image's
 first-boot provisioning keeps existing keys, so it is harmless afterwards.
 
 Nothing else is carried: the new image defines the system.
+
+Since 2026-10-07: switches that live in system files. Four of the board's
+settings are not state files but system configuration: whether the OpenSSH
+server, the QUIC gateway and the Tailscale daemon are enabled (their units'
+enablement) and mDNS (`MulticastDNS` in `/etc/systemd/resolved.conf`). The list
+above does not carry them, so a RAW update left them as the new image had them
+(the OpenSSH server and the Tailscale daemon on, the gateway and mDNS off). The
+board owner, which comes with the application slot, records the four in its
+state directory (`/var/lib/hardened-blikvm-gadget/system-switches.json`, with
+the image they were recorded under, `/etc/hardened-blikvm-image`); that
+directory is carried. At its start, when the image is another one than the
+record names, the owner sets them as recorded; under the same image the record
+only follows the board, so the owner never undoes a change made otherwise. It
+records its own changes at once and the Tailscale daemon's enablement whenever
+it reads it. The SD image builder leaves the record out: a new card records its
+own at its first start. The update runtime is not involved, so this works for
+a board whose runtime is older, as long as its application has the owner of
+this change. The owner knows a new root by the image name, the release and
+the day of its build: a root of the release the board already runs (the same
+bundle again, or another build of that day) is taken for the board's own, and
+the switches stay as that image has them (seen on the test board with two
+builds of 0.1.0-beta.3).
+
+Carried since the security review of 2026-10-18 (HIGH-04): the application
+stores of the update runtime 0.1.0~dev36 and later,
+`/var/lib/hardened-blikvm-slots-v2`, `/var/lib/hardened-blikvm-update-v2` and
+`/var/lib/hardened-blikvm-exec-ledger`, and the v1 `hardened-blikvm-update`,
+beside `hardened-blikvm-exec`. A board keeps its own application, journal and
+anti-rollback floor across a RAW update, whichever application the image
+carries. This takes effect from the RAW update that a board stages with this
+runtime: an older runtime's staging leaves them out, and the board then has
+the image's application state, as before.
+
+Also since that review, in the runtime that carries it:
+
+- The state is archived within its file system (`tar --one-file-system`):
+  the virtual media partition, mounted inside a carried directory, is not
+  device state and once made an update fail or fill the root (N3). A file
+  that changes while it is read (tar's status 1, the services run
+  meanwhile) is archived once more; a second change is reported.
+- A stage that fails removes what it left (the payload, `.new` files) and
+  marks an earlier staged record failed (N4).
+- The device's `/etc/passwd` and `/etc/group` are kept at the stage, and the
+  write is refused before anything is written when the new root does not
+  give every carried owner the account and group of the same name (owners
+  are carried by number; N5).
+- The root's UUID must be canonical, at the stage and in the boot step
+  (MED-08).
+- The floor is the larger of the confirmed sequence plus one and the running
+  system's own sequence, which the image keeps in
+  `/usr/share/hardened-blikvm/system-update/system-sequence`
+  (`BLI_KVM_IMAGE_SYSTEM_SEQUENCE` at its build; the bundle builder refuses a
+  root that does not name the bundle's sequence). So a card written from an
+  image refuses older system bundles; a floor that cannot be read refuses
+  (MED-07).
+- The record keeps the digests of `state.tar`, `fstab`, `shadow`, `passwd`
+  and `group`, which the boot step checks before it makes the backup
+  (HIGH-02, against a damaged card). A boot step of an older runtime
+  (`0.1.0~dev38` and before) refuses such a record for its unknown field,
+  so the stage and the boot step must be the same system's, as they are on
+  a board whose system came with an image or a RAW update; this runtime
+  reads an older record. A runtime put on by hand needs the initramfs that
+  carries its boot step (seen on the test board on 2026-10-19: the first
+  install wrote nothing and left the update staged).
+- The boot step stops when `e2fsck -p` leaves errors uncorrected (status 4
+  or more; LOW-02).
+- The media catalog lives in `/var/lib/hardened-blikvm-gadget/catalog`, and
+  tmpfiles copy it from its former place in `/etc/hardened-blikvm-gadget`
+  (also carried) when the new place has none, so a board updated from a
+  root that had it there keeps its images listed (CRIT-01).
 
 ## Components
 

@@ -10,6 +10,7 @@
 //! Text frames are rejected with a bounded error message. Nothing is buffered:
 //! a report without a live lease is dropped with an error and no backend call.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -32,6 +33,65 @@ use crate::{
 
 /// Bounded frame size: tag plus the largest HID report (8 bytes).
 pub(crate) const MAX_FRAME_BYTES: usize = 16;
+
+/// The largest WebSocket message the socket takes: a frame with room to say
+/// it is malformed; anything larger ends the socket unread.
+const MAX_SOCKET_MESSAGE_BYTES: usize = 64;
+
+/// How long a web session's HID lease outlives the last of its sockets. A
+/// page that opens its socket again (another mouse mode, a mounted image, a
+/// short loss of the network) keeps remote control; one that is gone gives
+/// it back after this (2026-10-24: control turned off at every reconnect).
+const RECONNECT_GRACE: Duration = Duration::from_secs(10);
+
+/// The open sockets of each web session.
+#[derive(Debug, Default)]
+pub(crate) struct OpenSockets(std::sync::Mutex<HashMap<String, usize>>);
+
+impl OpenSockets {
+    fn opened(&self, token: &str) {
+        *self.0.lock().unwrap().entry(token.to_owned()).or_default() += 1;
+    }
+
+    /// One of the session's sockets closed; the answer is how many are left.
+    fn closed(&self, token: &str) -> usize {
+        let mut open = self.0.lock().unwrap();
+        let Some(count) = open.get_mut(token) else {
+            return 0;
+        };
+        *count = count.saturating_sub(1);
+        let left = *count;
+        if left == 0 {
+            open.remove(token);
+        }
+        left
+    }
+
+    fn count(&self, token: &str) -> usize {
+        self.0.lock().unwrap().get(token).copied().unwrap_or(0)
+    }
+}
+
+/// When a socket that closed gives its web session's lease back.
+#[derive(Debug, PartialEq, Eq)]
+enum Release {
+    /// The server stops or the session ended.
+    Now,
+    /// Unless a socket of the session opens again meanwhile.
+    AfterGrace,
+    /// Another socket of the session is open and goes on with it.
+    No,
+}
+
+fn release_after_close(stopping: bool, active: bool, others_open: usize) -> Release {
+    if stopping || !active {
+        Release::Now
+    } else if others_open > 0 {
+        Release::No
+    } else {
+        Release::AfterGrace
+    }
+}
 
 const HEARTBEAT_TAG: u8 = 0;
 const KEYBOARD_TAG: u8 = 1;
@@ -127,13 +187,45 @@ pub(crate) async fn hid_socket(
     let Some(guard) = state.options.shutdown.register_upgrade() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is stopping").into_response();
     };
-    ws.on_upgrade(move |socket| async move {
-        let _guard = guard;
-        handle_socket(state, session, socket).await;
-    })
+    // A frame is at most 16 bytes; nothing larger is buffered.
+    ws.max_message_size(MAX_SOCKET_MESSAGE_BYTES)
+        .max_frame_size(MAX_SOCKET_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            let _guard = guard;
+            handle_socket(state, session, socket).await;
+        })
 }
 
 async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket) {
+    state.ws_sockets.opened(&session.token);
+    serve_socket(&state, &session, &mut socket).await;
+    // The socket ends now; only the lease's release may wait.
+    drop(socket);
+    let others = state.ws_sockets.closed(&session.token);
+    match release_after_close(
+        state.options.shutdown.is_stopping(),
+        session.is_active(),
+        others,
+    ) {
+        Release::No => return,
+        Release::AfterGrace => {
+            tokio::select! {
+                () = state.options.shutdown.cancelled() => {}
+                () = tokio::time::sleep(RECONNECT_GRACE) => {}
+            }
+            if !state.options.shutdown.is_stopping()
+                && session.is_active()
+                && state.ws_sockets.count(&session.token) > 0
+            {
+                return;
+            }
+        }
+        Release::Now => {}
+    }
+    crate::hid::release_session_hid(&state, &session.token).await;
+}
+
+async fn serve_socket(state: &AppState, session: &Session, socket: &mut WebSocket) {
     loop {
         let message = tokio::select! {
             biased;
@@ -213,12 +305,32 @@ async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket)
             _ => {}
         }
     }
-    crate::hid::release_session_hid(&state, &session.token).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_socket_that_closes_gives_the_lease_back_only_when_none_opens_again() {
+        // A page that opens its socket again keeps remote control; one that
+        // is gone gives it back after the grace, and at once when the
+        // session ends or the server stops (2026-10-24).
+        assert_eq!(release_after_close(true, true, 0), Release::Now);
+        assert_eq!(release_after_close(false, false, 1), Release::Now);
+        assert_eq!(release_after_close(false, true, 1), Release::No);
+        assert_eq!(release_after_close(false, true, 0), Release::AfterGrace);
+        let open = OpenSockets::default();
+        open.opened("page");
+        open.opened("page");
+        open.opened("other");
+        assert_eq!(open.closed("page"), 1);
+        assert_eq!(open.count("page"), 1);
+        assert_eq!(open.closed("page"), 0);
+        assert_eq!(open.count("page"), 0);
+        assert_eq!(open.closed("page"), 0, "no count below zero");
+        assert_eq!(open.count("other"), 1);
+    }
 
     fn headers(origin: Option<&str>, host: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();

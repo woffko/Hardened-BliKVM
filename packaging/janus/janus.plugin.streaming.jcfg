@@ -1,5 +1,5 @@
 # VP8 and H.264 mountpoints, each fed over loopback RTP by its own
-# bli-kvm-video-encoder instance.
+# bli-kvm-video-encoder instance, on Janus's own loopback address.
 general: {
 	events = false
 	string_ids = false
@@ -12,7 +12,7 @@ bli-kvm-vp8: {
 	audio = false
 	video = true
 	videoport = 5004
-	videoiface = "127.0.0.1"
+	videoiface = "127.0.0.2"
 	videopt = 96
 	videortpmap = "VP8/90000"
 	# New viewers start from the last key frame.
@@ -26,7 +26,7 @@ bli-kvm-h264: {
 	audio = false
 	video = true
 	videoport = 5006
-	videoiface = "127.0.0.1"
+	videoiface = "127.0.0.2"
 	videopt = 97
 	videortpmap = "H264/90000"
 	# Constrained baseline, as x264 encodes it, up to level 4.0 (1080p at

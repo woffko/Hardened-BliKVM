@@ -7,6 +7,10 @@ development archive. It contains only:
 - the non-enabled local update supervisor without a production trust config;
 - the production frontend without MSW or legacy branding assets;
 - reviewed systemd/sysusers templates;
+- the encoder driver of the video engine for one kernel release, built
+  beforehand by `scripts/build-ve-module.sh` and named by
+  `BLI_KVM_VE_MODULE`, with its loader, its unit and its source
+  (GPL-2.0-only);
 - license, architecture, security, and protocol documentation;
 - a machine-readable manifest and per-file checksums.
 

@@ -14,8 +14,6 @@ use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 
 pub const NGINX_CONF: &str = "/etc/hardened-blikvm/nginx.conf";
 pub const NGINX_UNIT: &str = "hardened-blikvm-nginx.service";
-const MARKER_START: &str = "# hardened-blikvm: https redirect";
-const MARKER_END: &str = "# hardened-blikvm: end https redirect";
 const NGINX: &str = "/usr/sbin/nginx";
 const OPENSSL: &str = "/usr/bin/openssl";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
@@ -173,92 +171,14 @@ impl TlsState {
 /// module writes, or the `return 30x https://` the shipped configuration has.
 /// The text is returned unchanged for the caller's rewrite.
 fn parse_conf(text: &str) -> (bool, String) {
-    (redirects_port_80(text), text.to_string())
+    (
+        bli_kvm_core::nginx_redirect::redirects_port_80(text),
+        text.to_string(),
+    )
 }
 
-fn redirects_port_80(text: &str) -> bool {
-    let mut depth = 0_usize;
-    let mut block_start = None;
-    let mut on_port_80 = false;
-    let mut redirect = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') && !trimmed.starts_with(MARKER_START) {
-            continue;
-        }
-        if depth == 1 && trimmed.starts_with("server") && trimmed.ends_with('{') {
-            block_start = Some(depth);
-            on_port_80 = false;
-            redirect = false;
-        }
-        if block_start.is_some() {
-            if trimmed.starts_with("listen")
-                && trimmed
-                    .split_whitespace()
-                    .nth(1)
-                    .is_some_and(|address| address == "80" || address.ends_with(":80"))
-            {
-                on_port_80 = true;
-            }
-            if trimmed.starts_with(MARKER_START)
-                || (trimmed.starts_with("return 30") && trimmed.contains("https://"))
-            {
-                redirect = true;
-            }
-        }
-        depth += line.matches('{').count();
-        depth = depth.saturating_sub(line.matches('}').count());
-        if block_start.is_some() && depth <= 1 {
-            if on_port_80 && redirect {
-                return true;
-            }
-            block_start = None;
-        }
-    }
-    false
-}
-
-/// Inserts or removes the reviewed redirect inside the first `server` block
-/// that listens on port 80.
 fn render_conf(text: &str, enabled: bool) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    let mut inserted = false;
-    let mut removing = false;
-    for line in text.lines() {
-        if removing {
-            if line.trim().starts_with(MARKER_END) {
-                removing = false;
-                continue;
-            }
-            continue;
-        }
-        if line.contains(MARKER_START) {
-            if enabled {
-                lines.push(line.to_string());
-                continue;
-            }
-            // Drop the marker block entirely when disabling.
-            if !line.contains(MARKER_END) {
-                removing = true;
-            }
-            continue;
-        }
-        lines.push(line.to_string());
-        if enabled
-            && !inserted
-            && line.trim_start().starts_with("listen")
-            && line.contains(":80")
-            && line.trim_end().ends_with(';')
-        {
-            lines.push(format!("        {MARKER_START}"));
-            lines.push("        return 301 https://$host$request_uri;".to_string());
-            lines.push(format!("        {MARKER_END}"));
-            inserted = true;
-        }
-    }
-    let mut rendered = lines.join("\n");
-    rendered.push('\n');
-    rendered
+    bli_kvm_core::nginx_redirect::render_redirect(text, enabled)
 }
 
 fn certificate_path(text: &str) -> Option<String> {

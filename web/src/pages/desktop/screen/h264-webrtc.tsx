@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Spin } from 'antd';
-import clsx from 'clsx';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
+import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
+import { UpscaledVideo } from './upscaled-video.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
 
 type SignalingMessage = {
@@ -33,11 +35,18 @@ export const H264Webrtc = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const videoOfferSent = useRef(false);
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
-  const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const { upscale, fit } = useUpscaleView();
+  const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
 
   useEffect(() => {
     const url = `${getBaseUrl('ws')}/api/stream/h264`;
@@ -45,6 +54,7 @@ export const H264Webrtc = () => {
     const videoElement = videoRef.current;
 
     let video: RTCPeerConnection | null = null;
+    let forgetPeer = () => {};
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let disposed = false;
 
@@ -67,6 +77,8 @@ export const H264Webrtc = () => {
 
       const peer = new RTCPeerConnection({ iceServers });
       video = peer;
+      // The quality monitor reads this connection's statistics while it is open.
+      forgetPeer = watchPeer(peer);
       videoOfferSent.current = false;
       videoIceCandidates.current = [];
 
@@ -204,6 +216,7 @@ export const H264Webrtc = () => {
 
     return () => {
       disposed = true;
+      forgetPeer();
 
       if (ws.readyState !== WebSocket.CLOSING && ws.readyState !== WebSocket.CLOSED) {
         ws.close();
@@ -238,19 +251,17 @@ export const H264Webrtc = () => {
         data-kvm-screen-scroll
         className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
       >
-        <video
-          id="screen"
-          ref={videoRef}
-          className={clsx('m-auto block select-none', mouseStyle)}
-          style={mediaStyle}
-          muted
-          autoPlay
-          playsInline
-          controls={false}
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-          }}
+        <UpscaledVideo
+          videoRef={videoRef}
+          upscale={upscale}
+          vp8Range={false}
+          videoStyle={mediaStyle}
+          mediaStyle={mediaStyle}
+          drawn={settled}
+          pixelRatio={pixelRatio}
+          resolution={resolution}
+          mouseStyle={mouseStyle}
+          onStopped={setUpscaleStopped}
           onPlaying={() => {
             setIsLoading(false);
           }}

@@ -4,19 +4,23 @@ import { useAtom, useAtomValue } from 'jotai';
 import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
+import { directCounters } from '@/lib/page-video.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 import DirectWorker from './direct.worker.ts?worker';
-import { useScreenFit } from './use-screen-fit.ts';
+import { SCREEN_CLASS, useScreenFit } from './use-screen-fit.ts';
 
 export const H264Direct = () => {
   const resolution = useAtomValue(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const screenRef = useScreenRef(canvasRef);
   const workerRef = useRef<Worker | null>(null);
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
@@ -49,8 +53,15 @@ export const H264Direct = () => {
     const url = `${getBaseUrl('ws')}/api/stream/h264/direct`;
     const ws = new W3cWebSocket(url);
     ws.binaryType = 'arraybuffer';
+    // What the quality monitor reads: the bytes this picture was sent.
+    directCounters.bytes = 0;
+    directCounters.messages = 0;
 
     ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        directCounters.bytes += event.data.byteLength;
+        directCounters.messages += 1;
+      }
       try {
         worker.postMessage({ type: 'ws_message', data: event.data }, [event.data]);
       } catch (error) {
@@ -82,8 +93,9 @@ export const H264Direct = () => {
     >
       <canvas
         id="screen"
-        ref={canvasRef}
-        className={clsx('m-auto block select-none', mouseStyle)}
+        ref={screenRef}
+        {...pictureAttributes(resolution)}
+        className={clsx(SCREEN_CLASS, mouseStyle)}
         style={mediaStyle}
       ></canvas>
     </div>

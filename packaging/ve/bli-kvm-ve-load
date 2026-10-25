@@ -1,0 +1,64 @@
+#!/bin/sh
+# Loads the encoder driver of the H616's video engine, built for exactly
+# the kernel release in its directory's name, and waits until its device
+# belongs to the encoder's group
+# (docs/design/h616-ve-encoder-driver-v1.md, "How it reaches a board").
+#
+# The picture does not depend on it: without the driver the encoder uses
+# x264. A board this driver is not for is a line in the journal and a clean
+# end; a driver that should load and does not is an error.
+set -eu
+
+module=hardened_blikvm_ve_enc
+node=/dev/hardened-blikvm-ve-enc
+group=hardened-blikvm-ve
+release=$(uname -r)
+file=/usr/lib/hardened-blikvm/modules/$release/hardened-blikvm-ve-enc.ko
+
+if [ ! -f "$file" ]; then
+  echo "no encoder driver for kernel $release"
+  exit 0
+fi
+
+# The engine's device, by what the device tree calls it.
+engine=
+for device in /sys/bus/platform/devices/*; do
+  if grep -qs 'allwinner,sun50i-h616-video-engine' "$device/of_node/compatible"; then
+    engine=$device
+  fi
+done
+if [ -z "$engine" ]; then
+  echo "this board has no H616 video engine"
+  exit 0
+fi
+
+getent group "$group" > /dev/null || { echo "the group $group does not exist" >&2; exit 1; }
+
+if [ ! -d "/sys/module/$module" ]; then
+  # The decoder driver takes the engine when it is loaded. Nothing of this
+  # product uses it, and the modprobe fragment beside this script keeps it
+  # from being loaded; a board that loaded it before the fragment was there
+  # gives the engine up here.
+  if [ -e "$engine/driver" ]; then
+    holder=$(basename "$(readlink "$engine/driver")")
+    if [ "$holder" != cedrus ]; then
+      echo "the video engine is held by $holder" >&2
+      exit 1
+    fi
+    echo "$(basename "$engine")" > /sys/bus/platform/drivers/cedrus/unbind
+  fi
+  insmod "$file"
+fi
+
+# The rule of this package gives the device to the group; until udev has
+# applied it the encoder could not open it.
+udevadm settle --timeout=10 || true
+if [ ! -c "$node" ]; then
+  echo "the driver made no device" >&2
+  exit 1
+fi
+if [ "$(stat -c '%G %a' "$node")" != "$group 660" ]; then
+  echo "$node is not the group's: $(stat -c '%U:%G %a' "$node")" >&2
+  exit 1
+fi
+echo "encoder driver loaded for kernel $release"

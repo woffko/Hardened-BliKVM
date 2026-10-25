@@ -72,6 +72,7 @@ serde.workspace = true
 serde_json.workspace = true
 bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy", optional = true }
 bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store", optional = true }
+bli-kvm-agent-protocol = { path = "../bli-kvm-agent-protocol" }
 bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", optional = true }
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
 bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", optional = true, default-features = false }

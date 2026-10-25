@@ -11,6 +11,8 @@ export type FirewallStatus = {
   restrictedActive: boolean;
   paranoidActive: boolean;
   webrtcBlocked: boolean;
+  /** The mode keeps the QUIC gateway's port closed. */
+  quicBlocked?: boolean;
   paranoidAvailable: boolean;
   confirmationRequired: boolean;
   httpsEnabled: boolean;

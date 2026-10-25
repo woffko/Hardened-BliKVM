@@ -75,7 +75,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("the HID gadget configuration is incomplete")?;
         let serial = bli_kvm_control_broker::gadget_serial_from_file(&media.serial_file)?;
         let gadget = bli_kvm_control_broker::gadget_media_config(&media, serial);
-        let bound = bli_kvm_media_transition::GadgetMediaExecutor::new(gadget)
+        let executor = bli_kvm_media_transition::GadgetMediaExecutor::new(gadget);
+        // With the agent's switch on, the absolute mouse comes up with the
+        // agent's collection, so a boot does not change the gadget twice.
+        let agent = bli_kvm_control_broker::target_agent::switch_enabled(std::path::Path::new(
+            bli_kvm_control_broker::target_agent::TARGET_AGENT_STATE,
+        ));
+        executor.want_agent(agent);
+        executor.want_agent_drive(bli_kvm_control_broker::target_agent::drive_at_start(agent));
+        let bound = executor
             .ensure_hid_gadget()
             .map_err(|error| format!("HID gadget bind failed: {error:?}"))?;
         eprintln!(

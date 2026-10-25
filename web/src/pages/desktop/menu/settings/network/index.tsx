@@ -16,6 +16,7 @@ import type { SystemActionHandle, SystemActionState } from '../system/action.ts'
 import { DNS } from './dns.tsx';
 import { IPv6 } from './ipv6.tsx';
 import { Tls } from './tls.tsx';
+import { Transport } from './transport.tsx';
 import type { NetworkSectionHandle, NetworkSectionStatus } from './types.ts';
 import { idleNetworkSectionStatus } from './types.ts';
 import { Wifi } from './wifi.tsx';
@@ -31,6 +32,7 @@ export const Network = forwardRef<SystemActionHandle, NetworkProps>(
     const capabilities = useAtomValue(capabilitiesAtom);
     const hasTls = supportsBoardFeature(capabilities, 'network_tls');
     const hasWifi = supportsBoardFeature(capabilities, 'network_wifi');
+    const hasQuic = supportsBoardFeature(capabilities, 'network_quic');
     const hasDNS = Boolean(capabilities && isAvailable(capabilities.network.dns));
     const hasIPv6 = Boolean(capabilities && isAvailable(capabilities.network.ipv6));
     const dnsWritable = Boolean(capabilities && isWritable(capabilities.network.dns));
@@ -120,10 +122,13 @@ export const Network = forwardRef<SystemActionHandle, NetworkProps>(
           </>
         )}
 
-        {(hasTls || hasWifi) && (
+        {(hasTls || hasWifi || hasQuic) && (
           <>
             <div className="flex flex-col space-y-8">
               {hasTls && <Tls readOnly={!boardFeatureIsWritable(capabilities, 'network_tls')} />}
+              {hasQuic && (
+                <Transport readOnly={!boardFeatureIsWritable(capabilities, 'network_quic')} />
+              )}
               {hasWifi && <Wifi readOnly={!boardFeatureIsWritable(capabilities, 'network_wifi')} />}
             </div>
             <Divider className="opacity-50" style={{ margin: '32px 0' }} />

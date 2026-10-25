@@ -28,16 +28,21 @@ pub mod network_write;
     feature = "chardev-atx-profile"
 ))]
 mod profile;
+mod quic_settings;
 pub mod revert_journal;
 mod server;
 mod ssh_settings;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
 pub mod system_log_settings;
+mod system_switches;
 pub mod tailscale;
+pub mod target_agent;
 pub mod tls_settings;
 mod video_settings;
-pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};
+pub use device_settings::{
+    DisplaySleepState, HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState,
+};
 pub use firewall_settings::{
     FIREWALL_STATE_DIR, FirewallRunner, FirewallState, FirewallView, SystemFirewallRunner,
 };

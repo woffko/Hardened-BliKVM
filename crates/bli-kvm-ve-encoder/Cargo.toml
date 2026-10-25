@@ -1,0 +1,12 @@
+[package]
+name = "bli-kvm-ve-encoder"
+description = "The H616 video engine's H.264 encoder from user space: the driver's requests, the stream's headers, the rate control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# A stand-in for the engine in software, for tests where there is none.
+standin = []

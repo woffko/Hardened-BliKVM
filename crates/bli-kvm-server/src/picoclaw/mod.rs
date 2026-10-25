@@ -360,15 +360,33 @@ pub(crate) fn rfc3339_now() -> String {
     )
 }
 
-/// The download helper's install progress while its lock is held.
-fn install_progress() -> Option<PicoclawInstallStatus> {
-    let bytes = std::fs::read(PICOCLAW_INSTALL_STATUS).ok()?;
+/// Where PicoClaw's install and removal are asked for, and where their
+/// progress is read: the system's own installer when it has one, so no
+/// image download writes a PicoClaw file (code audit of 2026-10-20,
+/// AUD-05.2), the download helper otherwise.
+fn install_route(options: &crate::ServerOptions) -> (&Option<PathBuf>, &'static Path) {
+    match &options.picoclaw_installer_socket {
+        Some(_) => (
+            &options.picoclaw_installer_socket,
+            Path::new(bli_kvm_admin_helper::PICOCLAW_INSTALLER_STATUS),
+        ),
+        None => (&options.download_socket, Path::new(PICOCLAW_INSTALL_STATUS)),
+    }
+}
+
+/// The installer's progress while its lock is held.
+fn install_progress(options: &crate::ServerOptions) -> Option<PicoclawInstallStatus> {
+    install_progress_at(install_route(options).1)
+}
+
+fn install_progress_at(path: &Path) -> Option<PicoclawInstallStatus> {
+    let (bytes, _) = crate::remote_download::read_worker_file(path, 4096)?;
     let status: PicoclawInstallStatus = serde_json::from_slice(&bytes).ok()?;
     let running = matches!(
         status.stage.as_str(),
         "downloading" | "verifying" | "extracting" | "installing"
     );
-    if running && !crate::remote_download::download_running() {
+    if running && !crate::remote_download::lock_held(path) {
         return None;
     }
     Some(status)
@@ -393,7 +411,7 @@ pub(crate) async fn runtime_status(state: &AppState, picoclaw: &Picoclaw) -> Run
         current_session: picoclaw.owner().unwrap_or_default(),
         ..RuntimeStatus::default()
     };
-    if let Some(install) = install_progress() {
+    if let Some(install) = install_progress(&state.options) {
         match install.stage.as_str() {
             "installed" => {}
             "install_failed" if !Path::new(PICOCLAW_BINARY).is_file() => {
@@ -571,7 +589,7 @@ pub(crate) async fn install(State(state): State<AppState>) -> Response {
         "picoclaw is already installed"
     } else {
         match helper(
-            &state.options.download_socket,
+            install_route(&state.options).0,
             AdminRequest::PicoclawInstall {},
         )
         .await
@@ -597,7 +615,7 @@ pub(crate) async fn uninstall(State(state): State<AppState>) -> Response {
         Ok(picoclaw) => picoclaw,
         Err(response) => return *response,
     };
-    if install_progress()
+    if install_progress(&state.options)
         .is_some_and(|install| !matches!(install.stage.as_str(), "installed" | "install_failed"))
     {
         return PicoclawError::new(
@@ -619,7 +637,7 @@ pub(crate) async fn uninstall(State(state): State<AppState>) -> Response {
             AdminRequest::PicoclawReset {},
         ),
         (
-            &state.options.download_socket,
+            install_route(&state.options).0,
             AdminRequest::PicoclawRemove {},
         ),
     ] {
@@ -848,6 +866,69 @@ pub(crate) async fn switched_off(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picoclaw_is_installed_through_its_own_installer_when_there_is_one() {
+        let older = crate::ServerOptions {
+            download_socket: Some("/run/download.sock".into()),
+            ..crate::ServerOptions::default()
+        };
+        assert_eq!(
+            install_route(&older),
+            (
+                &Some(PathBuf::from("/run/download.sock")),
+                Path::new(PICOCLAW_INSTALL_STATUS)
+            )
+        );
+        let current = crate::ServerOptions {
+            picoclaw_installer_socket: Some("/run/install.sock".into()),
+            ..older
+        };
+        assert_eq!(
+            install_route(&current),
+            (
+                &Some(PathBuf::from("/run/install.sock")),
+                Path::new(bli_kvm_admin_helper::PICOCLAW_INSTALLER_STATUS)
+            )
+        );
+    }
+
+    #[test]
+    fn the_install_status_is_read_only_as_a_small_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = serde_json::to_vec(&PicoclawInstallStatus {
+            stage: "installed".into(),
+            progress: 100,
+            error: String::new(),
+        })
+        .unwrap();
+        let path = dir.path().join("picoclaw-install.json");
+        std::fs::write(&path, &installed).unwrap();
+        assert!(install_progress_at(&path).is_some());
+        // A link to a status elsewhere is not followed.
+        let linked = dir.path().join("linked.json");
+        std::os::unix::fs::symlink(&path, &linked).unwrap();
+        assert!(install_progress_at(&linked).is_none());
+        // Nor is one larger than a status.
+        let mut large = installed.clone();
+        large.resize(8192, b' ');
+        std::fs::write(&path, large).unwrap();
+        assert!(install_progress_at(&path).is_none());
+        // A FIFO does not hold the reader.
+        let fifo = dir.path().join("fifo.json");
+        crate::remote_download::mkfifo(&fifo);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(install_progress_at(&fifo).is_none());
+        });
+        assert_eq!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .ok(),
+            Some(true),
+            "a FIFO held the install status read"
+        );
+    }
 
     #[test]
     fn the_lock_serves_one_session_and_expires() {

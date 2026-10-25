@@ -12,6 +12,13 @@ pub(crate) const JOURNAL_SCHEMA_VERSION: u32 = 1;
 pub(crate) const NATIVE_JOURNAL_SCHEMA_VERSION: u32 = 2;
 pub(crate) const NATIVE_LIFECYCLE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const MAX_HISTORY_RECORDS: usize = 128;
+/// Finished records a rollover keeps, the newest (security review of
+/// 2026-10-18, LOW-01).
+pub(crate) const KEPT_FINISHED_RECORDS: usize = 64;
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -97,6 +104,12 @@ pub(crate) struct JournalDocument {
     pub(crate) native_rollback: Option<NativeRollbackIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) native_completion: Option<NativeRecoveryCompletion>,
+    /// The generation at which older finished records were last dropped
+    /// from a full history; 0 while none was. Written only once a rollover
+    /// happened, so a journal that never filled keeps its bytes; a manager
+    /// from before it refuses the field, as it would a new schema.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) pruned_through_generation: u64,
 }
 
 impl JournalDocument {
@@ -113,6 +126,7 @@ impl JournalDocument {
             last_rollback: None,
             native_rollback: None,
             native_completion: None,
+            pruned_through_generation: 0,
         }
     }
 
@@ -134,6 +148,7 @@ impl JournalDocument {
             || self.floor_sequence != self.confirmed.sequence
             || self.previous.as_ref().is_some_and(|slot| !slot.validate())
             || self.history.len() > MAX_HISTORY_RECORDS
+            || self.pruned_through_generation > self.generation
         {
             return Err(UpdateManagerError::InvalidJournal);
         }
@@ -384,6 +399,9 @@ impl JournalDocument {
         health_binding: String,
     ) -> Result<(), UpdateManagerError> {
         if self.history.len() >= MAX_HISTORY_RECORDS {
+            self.roll_over_history();
+        }
+        if self.history.len() >= MAX_HISTORY_RECORDS {
             return Err(UpdateManagerError::HistoryFull);
         }
         self.history.push(OperationRecord {
@@ -394,6 +412,70 @@ impl JournalDocument {
             native_completion: None,
         });
         Ok(())
+    }
+
+    /// Makes room in a full history: every pending record and the one the
+    /// current rollback receipt names stay, with the newest finished
+    /// records; older finished ones go. Their retries need no answer from
+    /// here: an admission is bound to the journal's exact generation, which
+    /// has moved on since.
+    fn roll_over_history(&mut self) {
+        let receipt = self
+            .native_completion
+            .as_ref()
+            .map(|completion| completion.intent.operation_id.clone());
+        let mut finished_kept = 0_usize;
+        let mut kept = vec![false; self.history.len()];
+        for (index, record) in self.history.iter().enumerate().rev() {
+            let needed = record.outcome == OperationOutcome::Pending
+                || receipt.as_deref() == Some(record.operation_id.as_str());
+            if needed {
+                kept[index] = true;
+            } else if finished_kept < KEPT_FINISHED_RECORDS {
+                finished_kept += 1;
+                kept[index] = true;
+            }
+        }
+        let mut flags = kept.into_iter();
+        self.history.retain(|_| flags.next().unwrap_or(true));
+        self.pruned_through_generation = self.generation;
+    }
+
+    /// Removes the oldest finished record that neither a pending operation
+    /// nor the current rollback receipt names; `false` when there is none.
+    fn prune_oldest_finished(&mut self) -> bool {
+        let receipt = self
+            .native_completion
+            .as_ref()
+            .map(|completion| completion.intent.operation_id.clone());
+        let Some(oldest) = self.history.iter().position(|record| {
+            record.outcome != OperationOutcome::Pending
+                && receipt.as_deref() != Some(record.operation_id.as_str())
+        }) else {
+            return false;
+        };
+        self.history.remove(oldest);
+        self.pruned_through_generation = self.generation;
+        true
+    }
+
+    /// Makes the document fit the journal's size, as the history's count
+    /// rollover makes it fit the count: a native rollback's record keeps its
+    /// completion (about 800 bytes), so 64 KiB filled at the 81st, long
+    /// before the 128th record (code audit of 2026-10-20, AUD-03). With
+    /// `native_admission`, room is kept for the whole attempt as well.
+    pub(crate) fn fit_journal(&mut self, native_admission: bool) -> Result<(), UpdateManagerError> {
+        loop {
+            let fits = if native_admission {
+                self.validate_native_activation_capacity()
+            } else {
+                crate::journal::encode_document(self).map(|_| ())
+            };
+            match fits {
+                Err(UpdateManagerError::JournalTooLarge) if self.prune_oldest_finished() => {}
+                result => return result,
+            }
+        }
     }
 
     pub(crate) fn complete_operation(

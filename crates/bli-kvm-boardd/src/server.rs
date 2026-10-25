@@ -6,7 +6,7 @@ use std::{
         fs::{FileTypeExt, MetadataExt},
         net::{UnixListener, UnixStream},
     },
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -193,6 +193,15 @@ pub struct BoarddState<A: FanActuator> {
     display: Option<Box<dyn DisplayControl>>,
     display_status_interval_ms: u64,
     last_display_status_ms: u64,
+    /// The owner's file with the display's sleep time, read on every tick.
+    display_sleep_path: Option<PathBuf>,
+    display_sleep_seconds: u32,
+    /// When the display last had activity: the first tick, the button, a
+    /// new sleep time, a request to light it.
+    display_activity_ms: Option<u64>,
+    /// The display went dark: its backlight is off and nothing is drawn
+    /// until it is lit again.
+    display_dark: bool,
     led: Option<Box<dyn LedControl>>,
     button: Option<Box<dyn ButtonControl>>,
     atx_leds: Option<Box<dyn AtxLedControl>>,
@@ -222,6 +231,10 @@ where
             display,
             display_status_interval_ms: 5_000,
             last_display_status_ms: 0,
+            display_sleep_path: None,
+            display_sleep_seconds: 0,
+            display_activity_ms: None,
+            display_dark: false,
             led,
             button,
             atx_leds,
@@ -252,9 +265,42 @@ where
         }
     }
 
-    /// Redraw the status screen when the refresh interval has elapsed.
+    /// Follow the display's sleep time in the board owner's file
+    /// (`bli_kvm_core::DISPLAY_SLEEP_PATH`): read on every tick, as Hardened
+    /// NanoKVM does, so that a new choice takes effect within a sample.
+    pub fn configure_display_sleep(&mut self, path: impl Into<PathBuf>) {
+        self.display_sleep_path = Some(path.into());
+    }
+
+    /// Whether the display went dark after its sleep time.
+    pub fn display_dark(&self) -> bool {
+        self.display_dark
+    }
+
+    /// Redraw the status screen when the refresh interval has elapsed, and
+    /// darken the display once it has had no activity for its sleep time.
     pub fn tick_display(&mut self, now_ms: u64) {
         if self.display.is_none() {
+            return;
+        }
+        let activity = *self.display_activity_ms.get_or_insert(now_ms);
+        if let Some(path) = self.display_sleep_path.as_deref() {
+            let seconds = bli_kvm_core::load_display_sleep(path);
+            if seconds != self.display_sleep_seconds {
+                // A new choice starts the time over and lights a dark display.
+                self.display_sleep_seconds = seconds;
+                self.light_display(now_ms);
+                return;
+            }
+        }
+        if !self.display_dark
+            && self.display_sleep_seconds > 0
+            && now_ms.saturating_sub(activity) >= u64::from(self.display_sleep_seconds) * 1_000
+        {
+            self.darken_display();
+            return;
+        }
+        if self.display_dark {
             return;
         }
         if now_ms.saturating_sub(self.last_display_status_ms) < self.display_status_interval_ms {
@@ -262,6 +308,30 @@ where
         }
         self.last_display_status_ms = now_ms;
         let _ = self.draw_display_status();
+    }
+
+    /// Light the display, start its time over and draw the status at once:
+    /// a dark panel keeps the frame it had.
+    fn light_display(&mut self, now_ms: u64) {
+        self.display_activity_ms = Some(now_ms);
+        if let Some(display) = self.display.as_mut()
+            && !display.backlight_on()
+            && display.set_backlight(true).is_err()
+        {
+            return;
+        }
+        self.display_dark = false;
+        self.last_display_status_ms = now_ms;
+        let _ = self.draw_display_status();
+    }
+
+    /// Turn the backlight off; a failed write is tried again on the next tick.
+    fn darken_display(&mut self) {
+        if let Some(display) = self.display.as_mut()
+            && display.set_backlight(false).is_ok()
+        {
+            self.display_dark = true;
+        }
     }
 
     pub fn draw_display_status(&mut self) -> Result<(), BoarddError> {
@@ -376,7 +446,7 @@ where
         let Some(led) = self.led.as_mut() else {
             return Err(BoarddError::InvalidState);
         };
-        led.set_enabled(enabled, unix_millis_now())
+        led.set_enabled(enabled, crate::board_millis())
             .map_err(|kind| match kind {
                 "invalid_state" => BoarddError::InvalidState,
                 _ => BoarddError::BackendUnavailable,
@@ -384,21 +454,20 @@ where
     }
 
     /// Sample the display button; a wake cycle lights the panel again.
-    pub fn tick_button(&mut self) {
+    pub fn tick_button(&mut self, now_ms: u64) {
         let Some(button) = self.button.as_mut() else {
             return;
         };
-        if !matches!(button.poll(unix_millis_now()), Ok(true)) {
+        if !matches!(button.poll(now_ms), Ok(true)) {
             return;
         }
-        if let Some(display) = self.display.as_mut()
-            && !display.backlight_on()
-        {
-            let _ = display.set_backlight(true);
+        if self.display.is_none() {
+            return;
         }
-        // A wake cycle redraws the status so a stale or undefined frame is
-        // replaced the moment the panel is lit again.
-        let _ = self.draw_display_status();
+        // A wake cycle lights the panel, starts its sleep time over and
+        // redraws the status, so a stale or undefined frame is replaced the
+        // moment the panel is lit again.
+        self.light_display(now_ms);
     }
 
     /// Sample the ATX host LED inputs; called by the sampling thread.
@@ -415,7 +484,7 @@ where
             return;
         };
         let enabled = led.enabled();
-        let _ = led.set_enabled(enabled, unix_millis_now());
+        let _ = led.set_enabled(enabled, crate::board_millis());
     }
 
     pub fn draw_display_test(&mut self) -> Result<(), BoarddError> {
@@ -426,12 +495,19 @@ where
         })
     }
 
+    /// Light or darken the display on request: lit, its sleep time starts
+    /// over; darkened, it stays dark until the button or a new choice.
     pub fn set_display_backlight(&mut self, on: bool) -> Result<(), BoarddError> {
         let display = self.display()?;
         display.set_backlight(on).map_err(|kind| match kind {
             "invalid_state" => BoarddError::InvalidState,
             _ => BoarddError::BackendUnavailable,
-        })
+        })?;
+        self.display_dark = !on;
+        if on {
+            self.display_activity_ms = Some(crate::board_millis());
+        }
+        Ok(())
     }
 
     pub fn set_mode(&mut self, mode: FanModeName) -> Result<(), BoarddError> {
@@ -551,13 +627,6 @@ where
             Err(error) => Response::error(-error_code(&error), error.to_string_static()),
         },
     }
-}
-
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn error_code(error: &BoarddError) -> i32 {
@@ -971,6 +1040,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_clock_that_goes_back_runs_the_fan_at_its_failsafe_duty() {
+        let mut state = state();
+        state.note_thermal(Ok(40_000));
+        state.sample(600_000).unwrap();
+        assert_eq!(
+            state.supervisor.state().applied_command,
+            Some(FanCommand::Off)
+        );
+        // Ten minutes back, and the board above its critical temperature.
+        state.note_thermal(Ok(95_000));
+        for step in 0..600 {
+            let _ = state.sample(step * 1_000);
+            assert_eq!(
+                state.supervisor.state().applied_command,
+                Some(FanCommand::DutyPercent(FanDutyPercent::MAXIMUM)),
+                "sample {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_board_clock_never_goes_back() {
+        let mut last = crate::board_millis();
+        for _ in 0..1_000 {
+            let now = crate::board_millis();
+            assert!(now >= last);
+            last = now;
+        }
+    }
+
     #[derive(Default)]
     struct MockDisplay {
         initialized: bool,
@@ -1211,7 +1311,7 @@ mod tests {
         );
         assert!(state.status().button_present);
         assert!(!state.status().display_backlight_on);
-        state.tick_button();
+        state.tick_button(crate::board_millis());
         let data = state.status();
         assert_eq!(data.button_wakeups, 1);
         assert!(data.display_backlight_on, "wake must light the panel");
@@ -1224,9 +1324,174 @@ mod tests {
             },
             None,
         );
-        bare.tick_button();
+        bare.tick_button(crate::board_millis());
         assert_eq!(bare.status().button_wakeups, 1);
         assert!(!bare.status().display_present);
+    }
+
+    struct CountingDisplay {
+        backlight: bool,
+        draws: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl DisplayControl for CountingDisplay {
+        fn status(&mut self) -> Result<(), &'static str> {
+            self.draws.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn test_pattern(&mut self) -> Result<(), &'static str> {
+            Ok(())
+        }
+
+        fn set_backlight(&mut self, on: bool) -> Result<(), &'static str> {
+            self.backlight = on;
+            Ok(())
+        }
+
+        fn is_initialized(&self) -> bool {
+            true
+        }
+
+        fn backlight_on(&self) -> bool {
+            self.backlight
+        }
+    }
+
+    struct SharedButton {
+        wake: Arc<std::sync::atomic::AtomicBool>,
+        wakeups: u64,
+    }
+
+    impl ButtonControl for SharedButton {
+        fn poll(&mut self, _now_ms: u64) -> Result<bool, &'static str> {
+            let wake = self.wake.swap(false, std::sync::atomic::Ordering::SeqCst);
+            self.wakeups += u64::from(wake);
+            Ok(wake)
+        }
+
+        fn wakeups(&self) -> u64 {
+            self.wakeups
+        }
+    }
+
+    /// A lit panel, its button, and the owner's sleep file in `directory`.
+    fn sleeping_state(
+        directory: &Path,
+    ) -> (
+        BoarddState<MockActuator>,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicBool>,
+        PathBuf,
+    ) {
+        let draws = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut supervisor = FanSupervisor::new(policy(), 0, MockActuator::default()).unwrap();
+        let _ = supervisor.initialize();
+        let mut state = BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            0,
+            20,
+            100,
+            true,
+            40,
+            269,
+            Some(Box::new(CountingDisplay {
+                backlight: true,
+                draws: Arc::clone(&draws),
+            })),
+            None,
+            Some(Box::new(SharedButton {
+                wake: Arc::clone(&wake),
+                wakeups: 0,
+            })),
+            None,
+        );
+        let path = directory.join("display-sleep.env");
+        state.configure_display_sleep(&path);
+        (state, draws, wake, path)
+    }
+
+    #[test]
+    fn the_display_goes_dark_after_its_sleep_time_and_the_button_lights_it() {
+        use std::sync::atomic::Ordering;
+        let directory = tempfile::tempdir().unwrap();
+        let (mut state, draws, wake, path) = sleeping_state(directory.path());
+        std::fs::write(&path, bli_kvm_core::render_display_sleep(15)).unwrap();
+        let start = 1_000_000;
+        // The first tick reads the choice and draws the status.
+        state.tick_display(start);
+        assert!(!state.display_dark());
+        assert!(state.status().display_backlight_on);
+        state.tick_display(start + 14_999);
+        assert!(!state.display_dark());
+        state.tick_display(start + 15_000);
+        assert!(state.display_dark());
+        assert!(!state.status().display_backlight_on);
+        // Dark, nothing is drawn.
+        let drawn = draws.load(Ordering::SeqCst);
+        for second in 1..=30 {
+            state.tick_display(start + 15_000 + second * 1_000);
+        }
+        assert_eq!(draws.load(Ordering::SeqCst), drawn);
+        assert!(state.display_dark());
+
+        // The button lights it and draws at once; the time starts over.
+        wake.store(true, Ordering::SeqCst);
+        state.tick_button(start + 50_000);
+        assert!(!state.display_dark());
+        assert!(state.status().display_backlight_on);
+        assert_eq!(draws.load(Ordering::SeqCst), drawn + 1);
+        assert_eq!(state.status().button_wakeups, 1);
+        state.tick_display(start + 64_999);
+        assert!(!state.display_dark());
+        state.tick_display(start + 65_000);
+        assert!(state.display_dark());
+
+        // A new choice lights it; never keeps it lit.
+        std::fs::write(&path, bli_kvm_core::render_display_sleep(0)).unwrap();
+        state.tick_display(start + 66_000);
+        assert!(!state.display_dark());
+        assert!(state.status().display_backlight_on);
+        state.tick_display(start + 10_000_000);
+        assert!(!state.display_dark());
+    }
+
+    #[test]
+    fn without_the_owners_file_the_display_stays_lit() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut state, _draws, _wake, path) = sleeping_state(directory.path());
+        state.tick_display(1_000_000);
+        state.tick_display(1_000_000 + 7_200_000);
+        assert!(!state.display_dark());
+        // A time that is not one of the choices is never, too.
+        std::fs::write(&path, "sleep_seconds=20\n").unwrap();
+        state.tick_display(1_000_000 + 7_201_000);
+        state.tick_display(1_000_000 + 7_300_000);
+        assert!(!state.display_dark());
+        assert!(state.status().display_backlight_on);
+    }
+
+    #[test]
+    fn a_display_darkened_on_request_stays_dark_until_the_button() {
+        use std::sync::atomic::Ordering;
+        let directory = tempfile::tempdir().unwrap();
+        let (mut state, draws, wake, _path) = sleeping_state(directory.path());
+        state.tick_display(1_000_000);
+        assert_eq!(
+            handle(&mut state, Request::DisplayBacklightSet { on: false }).code,
+            0
+        );
+        assert!(state.display_dark());
+        let drawn = draws.load(Ordering::SeqCst);
+        state.tick_display(1_000_000 + 60_000);
+        assert!(state.display_dark());
+        assert_eq!(draws.load(Ordering::SeqCst), drawn);
+        wake.store(true, Ordering::SeqCst);
+        state.tick_button(1_000_000 + 61_000);
+        assert!(!state.display_dark());
+        assert!(state.status().display_backlight_on);
     }
 
     #[test]

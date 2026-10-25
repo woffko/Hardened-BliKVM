@@ -61,7 +61,7 @@ export function validatePicocomParameters(params: PicocomParameters) {
   if (PROHIBITED_PORT_CHARS_REGEX.test(port)) {
     return false;
   }
-  if (!/^\/dev\/[a-zA-Z0-9.-_]+$/.test(port)) {
+  if (!/^\/dev\/[A-Za-z0-9._-]+$/.test(port)) {
     return false;
   }
 
@@ -117,4 +117,18 @@ export function validatePicocomParameters(params: PicocomParameters) {
   }
 
   return true;
+}
+
+/** The picocom line for valid parameters, with only the options given. */
+export function picocomCommand(params: PicocomParameters) {
+  const options: [string, string | null][] = [
+    ['--parity', params.parity],
+    ['--flow', params.flowControl],
+    ['--databits', params.dataBits],
+    ['--stopbits', params.stopBits]
+  ];
+  const given = options
+    .filter(([, value]) => value !== null && value.trim() !== '')
+    .map(([flag, value]) => `${flag} ${value!.trim()}`);
+  return [`picocom ${params.port!.trim()} --baud ${params.baud!.trim()}`, ...given].join(' ');
 }

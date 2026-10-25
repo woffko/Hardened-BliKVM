@@ -1,5 +1,8 @@
 import { atom } from 'jotai';
 
+import type { ScreenArea } from '@/lib/screen-area.ts';
+import { agentScreenAreaAtom } from '@/jotai/target-agent.ts';
+
 export type MobilePointerMode = 'touchsync';
 
 // mouse cursor style
@@ -19,3 +22,16 @@ export const scrollDirectionAtom = atom(-1);
 
 // mouse scroll interval (unit: ms)
 export const scrollIntervalAtom = atom(0);
+
+// Where the captured screen lies in the target's desktop, as the board
+// keeps it; null while the screen is the whole desktop
+// (docs/design/screen-area-v1.md).
+export const screenAreaAtom = atom<ScreenArea | null>(null);
+
+// The layout the absolute mouse uses: the target agent's while it is
+// connected and its monitors make one, the board's kept one otherwise.
+export const effectiveScreenAreaAtom = atom((get) => {
+  const agent = get(agentScreenAreaAtom);
+  if (agent === 'whole') return null;
+  return agent ?? get(screenAreaAtom);
+});

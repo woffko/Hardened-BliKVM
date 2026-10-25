@@ -1,5 +1,9 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -838,7 +842,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("[Install]", unit)
         self.assertNotIn("bli-kvm-diagnostic-persistence-gate", builder)
         self.assertNotIn("hardened-blikvm-diagnostic-persistence-gate.service", builder)
-        self.assertIn("hardened-blikvm-diagnostic-persistence-gate.service", verifier)
+        # The verifier takes every unit of the directory.
+        self.assertIn("ls -1 -- *.service *.socket *.timer", verifier)
+        self.assertTrue((ROOT / "packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service").exists())
         for required in (
             "Starting from a freshly initialized encrypted generation one",
             "seven reads and three acknowledgement requests",
@@ -1946,6 +1952,486 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, commands)
         self.assertNotIn(0x01, commands)
 
+    def test_the_boot_step_trusts_no_data_partition_left_with_errors(self) -> None:
+        # e2fsck's status was ignored, and the update on a partition with
+        # errors it could not correct was then used (security review of
+        # 2026-10-18, LOW-02).
+        script = (ROOT / "packaging/system-update/initramfs-local-premount").read_text()
+        check = 'e2fsck -p "$data" >/dev/null 2>&1\nfsck_status=$?\n'
+        self.assertIn(check, script)
+        self.assertIn('if [ "$fsck_status" -ge 4 ]; then', script)
+        self.assertLess(script.index(check), script.index("mount -t ext4 -o rw,noatime"))
+
+    def test_every_program_names_one_media_catalog(self) -> None:
+        # The web server and the board owner take the catalog's path from
+        # their units; the image download helper no longer writes it (E4). A
+        # move of the catalog (security review of 2026-10-18, E5) changes the
+        # units at once, and every slot then follows its units.
+        named: set[str] = set()
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            for line in unit.read_text().splitlines():
+                for variable in (
+                    "Environment=BLI_KVM_MEDIA_CATALOG=",
+                    "Environment=BLI_KVM_GADGET_MEDIA_CATALOG=",
+                ):
+                    if line.startswith(variable) and "hardened-blikvm-gadget" in line:
+                        named.add(line.removeprefix(variable))
+        self.assertEqual(named, {"/var/lib/hardened-blikvm-gadget/catalog/catalog.json"})
+        for source in sorted((ROOT / "crates/bli-kvm-admin-helper/src").glob("*.rs")):
+            self.assertNotIn("catalog.json", source.read_text(), source.name)
+
+    def test_only_the_units_that_feed_or_ask_janus_reach_its_address(self) -> None:
+        # Janus listens, signaling and RTP, on a loopback address of its own,
+        # which the units that neither feed nor ask it cannot reach (security
+        # review of 2026-10-18, MED-03, decision 7). An allowed address wins
+        # over a denied one in systemd, so "localhost" opens it again.
+        clients = {
+            "hardened-blikvm-server.service",
+            "hardened-blikvm-board-server.service",
+            "hardened-blikvm-server-current.service",
+            "hardened-blikvm-server-candidate.service",
+            "hardened-blikvm-video-encoder.service",
+            "hardened-blikvm-video-encoder-h264.service",
+        }
+        # Janus itself, and the operator's root session (the web terminal),
+        # which may reach anything on the board.
+        exempt = {"hardened-blikvm-janus.service", "hardened-blikvm-admin@.service"}
+        covering = {"any", "localhost", "127.0.0.0/8", "127.0.0.2"}
+        checked = 0
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            lines = unit.read_text().splitlines()
+
+            def words(directive: str) -> set[str]:
+                return {
+                    word
+                    for line in lines
+                    if line.startswith(directive)
+                    for word in line.removeprefix(directive).split()
+                }
+
+            families = words("RestrictAddressFamilies=")
+            if families and not families & {"AF_INET", "AF_INET6"}:
+                continue
+            if unit.name in exempt:
+                continue
+            checked += 1
+            reaches = bool(words("IPAddressAllow=") & covering) or not (
+                words("IPAddressDeny=") & covering
+            )
+            self.assertEqual(reaches, unit.name in clients, unit.relative_to(ROOT))
+        self.assertGreaterEqual(checked, 14)
+
+    def test_the_quic_gateway_starts_after_the_time_is_synchronised(self) -> None:
+        # Its certificate was made by the clock the board started with (N11).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-quic.service").read_text()
+        after = [
+            word
+            for line in unit.splitlines()
+            if line.startswith("After=")
+            for word in line.removeprefix("After=").split()
+        ]
+        self.assertIn("time-sync.target", after)
+        gateway = (ROOT / "crates/bli-kvm-quic-gateway/src/lib.rs").read_text()
+        self.assertIn("certificate::outside(&self.link.certificate(), certificate::now())", gateway)
+
+    def test_the_owners_files_are_not_writable_by_its_group(self) -> None:
+        # The owner's drop-in gave its files group write (UMask=0007), so any
+        # account of the shared group could change the owner's state
+        # (security review of 2026-10-18, MED-12 item 1). Its control socket
+        # takes its mode explicitly.
+        dropin = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf"
+        ).read_text()
+        umasks = [line for line in dropin.splitlines() if line.startswith("UMask=")]
+        self.assertEqual(umasks, ["UMask=0027"])
+        server = (ROOT / "crates/bli-kvm-control-broker/src/server.rs").read_text()
+        self.assertIn(
+            "fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;", server
+        )
+        # And the files an older umask left so.
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "z /var/lib/hardened-blikvm-gadget/*.env 0640 root hardened-blikvm - -",
+            tmpfiles.splitlines(),
+        )
+
+    def test_only_the_web_server_signals_the_encoders_demand(self) -> None:
+        # The demand socket is its group's; of that group only the web server
+        # may keep an encoder working (security review of 2026-10-18, MED-13).
+        for name in ("video-encoder", "video-encoder-h264"):
+            unit = (ROOT / f"packaging/systemd/hardened-blikvm-{name}.service").read_text()
+            lines = unit.splitlines()
+            self.assertIn("Environment=BLI_KVM_VP8_DEMAND_USER=hardened-blikvm-server", lines)
+            self.assertTrue(
+                any(line.startswith("Environment=BLI_KVM_VP8_DEMAND_SOCKET=") for line in lines)
+            )
+
+    def test_every_janus_port_is_in_its_bind_list(self) -> None:
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-janus.service").read_text()
+        allowed = {
+            line.removeprefix("SocketBindAllow=")
+            for line in unit.splitlines()
+            if line.startswith("SocketBindAllow=")
+        }
+        configuration = "\n".join(
+            path.read_text() for path in sorted((ROOT / "packaging/janus").glob("*.jcfg"))
+        )
+        ports = [f"tcp:{port}" for port in re.findall(r"^\s*ws_port = (\d+)$", configuration, re.M)]
+        ports += [f"udp:{port}" for port in re.findall(r"^\s*videoport = (\d+)$", configuration, re.M)]
+        ports += [
+            f"udp:{ports}"
+            for ports in re.findall(r'^\s*rtp_port_range = "(\d+-\d+)"$', configuration, re.M)
+        ]
+        self.assertGreaterEqual(len(ports), 4)
+        for port in ports:
+            self.assertIn(port, allowed)
+        # On its own loopback address, where the server and the encoders
+        # find it.
+        addresses = re.findall(r'^\s*(?:ws_ip|videoiface) = "([^"]+)"$', configuration, re.M)
+        self.assertEqual(set(addresses), {"127.0.0.2"})
+        self.assertEqual(len(addresses), 3)
+        # Janus finds it only as an interface's own address, under a label
+        # (on lo alone it would bind 127.0.0.1; without it, every address).
+        self.assertIn(
+            "ExecStartPre=+/usr/sbin/ip address replace 127.0.0.2/8 dev lo label lo:janus",
+            unit.splitlines(),
+        )
+        self.assertLess(unit.index("ExecStartPre=+/usr/sbin/ip"), unit.index("ExecStart=/usr/bin/janus"))
+        deploy = (ROOT / "tools/device/deploy_vp8.sh").read_text()
+        self.assertIn("'Environment=BLI_KVM_JANUS_WS=127.0.0.2:8188'", deploy)
+        encoder = (ROOT / "crates/bli-kvm-video-encoder/src/main.rs").read_text()
+        self.assertIn("const JANUS_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);", encoder)
+
+    def test_the_image_store_is_sticky(self) -> None:
+        # Every account of the hardened-blikvm group may write the image
+        # store; only an image's owner, or root, may remove or replace it
+        # (security review of 2026-10-18, MED-12 item 3).
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "d /var/lib/hardened-blikvm-gadget/images 1770 root hardened-blikvm - -",
+            tmpfiles.splitlines(),
+        )
+        builder = (ROOT / "tools/image/build_sd_image.sh").read_text()
+        self.assertIn('set_inode_field / mode 041770" "$work/msd.ext4"', builder)
+        self.assertIn('grep -q "Mode:  01770"', builder)
+
+    def test_no_root_unit_reads_a_configuration_another_account_may_write(self) -> None:
+        # The root board owner read atx.env and system-action.env (the
+        # commands it runs as root after a confirmed action), and root boardd
+        # its configuration, from a directory of the web server's (security
+        # review of 2026-10-18, CRIT-01).
+        directories: dict[str, tuple[int, str]] = {}
+        for fragment in sorted((ROOT / "packaging/tmpfiles.d").glob("*.conf")):
+            for line in fragment.read_text().splitlines():
+                fields = line.split()
+                if len(fields) >= 4 and fields[0] in ("d", "D"):
+                    directories[fields[1]] = (int(fields[2], 8), fields[3])
+
+        def writable_by_others(path: str) -> list[str]:
+            found: list[str] = []
+            parent = PurePosixPath(path).parent
+            while str(parent) != "/":
+                entry = directories.get(str(parent))
+                if entry is not None and (entry[1] != "root" or entry[0] & 0o022):
+                    found.append(str(parent))
+                parent = parent.parent
+            return found
+
+        checked = 0
+        for unit in sorted((ROOT / "packaging/systemd").rglob("*.service")):
+            lines = unit.read_text().splitlines()
+            users = [line.removeprefix("User=") for line in lines if line.startswith("User=")]
+            if users and users[-1] != "root":
+                continue
+            configurations = [
+                line.removeprefix("EnvironmentFile=").removeprefix("-")
+                for line in lines
+                if line.startswith("EnvironmentFile=")
+            ]
+            for line in lines:
+                if line.startswith("ExecStart"):
+                    configurations += re.findall(r"--config (\S+)", line)
+            for path in configurations:
+                checked += 1
+                self.assertEqual(
+                    writable_by_others(path), [], f"{unit.relative_to(ROOT)} reads {path}"
+                )
+        self.assertGreaterEqual(checked, 6)
+
+    def test_the_catalog_is_copied_once_into_the_servers_directory(self) -> None:
+        # The board's catalog stays where it was until the system release's
+        # tmpfiles copy it into the server's directory; the copy is made
+        # once, and the former directory becomes root's (CRIT-01).
+        if shutil.which("fakeroot") is None or shutil.which("systemd-tmpfiles") is None:
+            self.skipTest("fakeroot and systemd-tmpfiles are needed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "usr/lib/sysusers.d").mkdir(parents=True)
+            for fragment in ("hardened-blikvm.conf", "hardened-blikvm-download.conf"):
+                shutil.copy(ROOT / "packaging/sysusers.d" / fragment, root / "usr/lib/sysusers.d")
+            subprocess.run(
+                ["systemd-sysusers", f"--root={root}"], check=True, capture_output=True
+            )
+            former = root / "etc/hardened-blikvm-gadget"
+            former.mkdir(parents=True)
+            catalog = '{"schemaVersion":1,"entries":[{"imageName":"kubuntu.iso"}]}\n'
+            (former / "catalog.json").write_text(catalog)
+            (former / "atx.env").write_text("BLI_KVM_ATX=1\n")
+            moved = root / "var/lib/hardened-blikvm-gadget/catalog"
+            fragment = ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf"
+            script = (
+                'systemd-tmpfiles --create --root="$1" "$2" && '
+                'stat -c "%n %u %g %a" "$1/etc/hardened-blikvm-gadget" '
+                '"$1/etc/hardened-blikvm-gadget/atx.env" "$1/var/lib/hardened-blikvm-gadget/catalog"'
+            )
+
+            def create() -> list[list[str]]:
+                done = subprocess.run(
+                    ["fakeroot", "sh", "-c", script, "sh", str(root), str(fragment)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return [line.split()[1:] for line in done.stdout.splitlines()]
+
+            def number(database: str, name: str) -> str:
+                for line in (root / "etc" / database).read_text().splitlines():
+                    if line.startswith(f"{name}:"):
+                        return line.split(":")[2]
+                raise AssertionError(name)
+
+            server = number("passwd", "hardened-blikvm-server")
+            group = number("group", "hardened-blikvm")
+            self.assertEqual(
+                create(),
+                [["0", group, "755"], ["0", group, "640"], [server, group, "750"]],
+            )
+            self.assertEqual((moved / "catalog.json").read_text(), catalog)
+            (former / "catalog.json").write_text('{"schemaVersion":1,"entries":[]}\n')
+            create()
+            self.assertEqual((moved / "catalog.json").read_text(), catalog)
+
+    def test_no_image_download_writes_a_picoclaw_file(self) -> None:
+        # The download template kept PicoClaw's runtime directory for every
+        # instance, so an ISO download's worker could replace the executable
+        # PicoClaw's user then ran (code audit of 2026-10-20, AUD-05.2).
+        download = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        self.assertFalse(
+            [line for line in download.splitlines() if line.startswith("StateDirectory")]
+        )
+        self.assertNotIn("hardened-blikvm-picoclaw-runtime", download)
+        # Its install and removal have a unit, a socket and an account of
+        # their own.
+        installer = (
+            ROOT / "packaging/systemd/hardened-blikvm-picoclaw-install@.service"
+        ).read_text().splitlines()
+        self.assertIn("User=hardened-blikvm-pico-install", installer)
+        self.assertIn("Group=hardened-blikvm-pico-install", installer)
+        self.assertIn("StateDirectory=hardened-blikvm-picoclaw-runtime", installer)
+        self.assertIn(
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-install "
+            "--peer-user hardened-blikvm-server",
+            installer,
+        )
+        socket = (ROOT / "packaging/systemd/hardened-blikvm-picoclaw-install.socket").read_text()
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        path = re.search(r'pub const PICOCLAW_INSTALLER_SOCKET: &str =\s*"([^"]+)";', helper)
+        assert path is not None
+        self.assertIn(f"ListenStream={path.group(1)}", socket.splitlines())
+        self.assertIn("SocketUser=hardened-blikvm-server", socket.splitlines())
+        sysusers = (
+            ROOT / "packaging/sysusers.d/hardened-blikvm-picoclaw-install.conf"
+        ).read_text().splitlines()
+        self.assertFalse([line for line in sysusers if line.startswith("m ")])
+        # The runtime starts only the copy root checked, from root's
+        # directory, whoever can write the installed file.
+        runtime = (ROOT / "packaging/systemd/hardened-blikvm-picoclaw.service").read_text().splitlines()
+        exec_dir = re.search(r'pub const PICOCLAW_EXEC_DIR: &str = "([^"]+)";', helper)
+        assert exec_dir is not None
+        self.assertIn(
+            "ExecStartPre=+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw-prepare",
+            runtime,
+        )
+        self.assertIn(f"ExecStart={exec_dir.group(1)}/picoclaw gateway", runtime)
+        # Every server unit names the installer to the server.
+        for unit in sorted((ROOT / "packaging/systemd").glob("**/hardened-blikvm-server-*.service")):
+            self.assertIn(
+                f"Environment=BLI_KVM_PICOCLAW_INSTALLER_SOCKET={path.group(1)}",
+                unit.read_text().splitlines(),
+                unit.name,
+            )
+
+    def test_a_download_worker_ends_within_its_transfer_budget(self) -> None:
+        # The helper has no deadline of its own on a curl that hangs, and the
+        # unit none either (code audit of 2026-10-20, AUD-05.3).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        limits = [line for line in unit.splitlines() if line.startswith("RuntimeMaxSec=")]
+        self.assertEqual(len(limits), 1, limits)
+        seconds = int(limits[0].removeprefix("RuntimeMaxSec="))
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/download.rs").read_text()
+        budgets = [int(value) for value in re.findall(r"max_seconds: (\d+),\n", helper)]
+        self.assertTrue(budgets)
+        self.assertGreater(seconds, max(budgets))
+        self.assertLessEqual(seconds, max(budgets) + 600)
+
+    def test_a_failed_native_boot_is_tried_again(self) -> None:
+        # At gate Y of the code audit of 2026-10-20 the board's first boot on
+        # the new system failed its composition attempt early in the boot and
+        # nothing tried again: the application stayed down until started by
+        # hand, when the same attempt succeeded.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-update-native-boot.service").read_text()
+        unit_section, service_section = unit.split("[Service]\n", 1)
+
+        def value(section: str, key: str) -> str:
+            values = [
+                line.removeprefix(f"{key}=")
+                for line in section.splitlines()
+                if line.startswith(f"{key}=")
+            ]
+            self.assertEqual(len(values), 1, (key, values))
+            return values[0]
+
+        def seconds(text: str) -> int:
+            self.assertRegex(text, r"^\d+s?$")
+            return int(text.removesuffix("s"))
+
+        self.assertEqual(value(service_section, "Restart"), "on-failure")
+        delay = seconds(value(service_section, "RestartSec"))
+        attempt = seconds(value(service_section, "TimeoutStartSec"))
+        burst = int(value(unit_section, "StartLimitBurst"))
+        interval = seconds(value(unit_section, "StartLimitIntervalSec"))
+        self.assertGreaterEqual(delay, 5)
+        self.assertLessEqual(delay, 60)
+        self.assertIn(burst, range(2, 6))
+        # Every attempt fits in the window, so the limit, not the window,
+        # ends a cause that does not pass.
+        self.assertGreaterEqual(interval, burst * (attempt + delay))
+
+    def test_nginx_starts_with_the_systems_configuration(self) -> None:
+        # A RAW update written by a board's older boot step carries the
+        # board's nginx.conf over the new system's, so a board updated from
+        # beta.8 kept proxying over loopback TCP, which the server's proxy
+        # socket rule then counts as one address (code audit of 2026-10-20,
+        # gate Y). The system puts its own file back before nginx starts.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-nginx.service").read_text()
+        drop_in = (
+            ROOT / "packaging/systemd/hardened-blikvm-nginx.service.d/50-system-config.conf"
+        ).read_text()
+        pre_start = [
+            line for line in unit.splitlines() if line.startswith("ExecStartPre=")
+        ]
+        given = [
+            line for line in drop_in.splitlines() if line.startswith("ExecStartPre=")
+        ]
+        render = (
+            "ExecStartPre=-+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --nginx-config"
+        )
+        # The list is given again with the step before the check, so nginx
+        # is checked and started with the file it was given; a failed step
+        # leaves the board's file and does not stop nginx.
+        test = "ExecStartPre=/usr/sbin/nginx -t -c /etc/hardened-blikvm/nginx.conf"
+        self.assertEqual(pre_start[-1], test)
+        self.assertEqual(given, ["ExecStartPre=", *pre_start[:-1], render, test])
+        # The system's copy is the packaged configuration, outside the
+        # carried directory.
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        self.assertIn(
+            'pub const NGINX_REFERENCE: &str = "/usr/share/hardened-blikvm/nginx/hardened-blikvm.conf";',
+            helper,
+        )
+        builder = (ROOT / "tools/build_debian_update_runtime_package.py").read_text()
+        self.assertIn('"share/nginx/hardened-blikvm.conf": (', builder)
+        self.assertIn('"usr/share/hardened-blikvm/nginx/hardened-blikvm.conf"', builder)
+        self.assertIn(
+            '"lib/systemd/system/hardened-blikvm-nginx.service.d/50-system-config.conf"',
+            builder,
+        )
+
+    def test_the_image_download_worker_has_an_account_of_its_own(self) -> None:
+        # The worker fetches remote data; it ran as the web server, could
+        # write the image store and the catalog and pass the root admin
+        # helper's peer check (security review of 2026-10-18, N1).
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-image-download@.service").read_text()
+        lines = unit.splitlines()
+        self.assertIn("User=hardened-blikvm-download", lines)
+        self.assertIn("Group=hardened-blikvm-download", lines)
+        self.assertFalse(
+            [line for line in lines if line.startswith(("ReadWritePaths=", "SupplementaryGroups="))]
+        )
+        inaccessible = " ".join(
+            line.removeprefix("InaccessiblePaths=")
+            for line in lines
+            if line.startswith("InaccessiblePaths=")
+        ).split()
+        for path in ("-/run/hardened-blikvm-gadget", "-/run/hardened-blikvm-admin"):
+            self.assertIn(path, inaccessible)
+        # It writes only the drop directory, bound where its code looks.
+        helper = (ROOT / "crates/bli-kvm-admin-helper/src/lib.rs").read_text()
+        drop = re.search(r'pub const DOWNLOAD_DROP: &str = "([^"]+)";', helper)
+        server = (ROOT / "crates/bli-kvm-server/src/remote_download.rs").read_text()
+        name = re.search(r'pub\(crate\) const DROP_DIRECTORY: &str = "([^"]+)";', server)
+        assert drop is not None and name is not None
+        binds = [line for line in lines if line.startswith("BindPaths=")]
+        self.assertEqual(
+            binds,
+            [f"BindPaths=-/var/lib/hardened-blikvm-gadget/images/{name.group(1)}:{drop.group(1)}"],
+        )
+        # In no group another account shares but for the web server's
+        # membership in its own, in a fragment of its own beside the
+        # runtime's pinned identities; the root admin helper admits only the
+        # server.
+        pinned = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        self.assertNotIn("hardened-blikvm-download", pinned)
+        sysusers = (
+            (ROOT / "packaging/sysusers.d/hardened-blikvm-download.conf").read_text().splitlines()
+        )
+        self.assertIn(
+            'u hardened-blikvm-download - "Hardened BliKVM remote image download" '
+            "/nonexistent /usr/sbin/nologin",
+            sysusers,
+        )
+        memberships = [line.split() for line in sysusers if line.startswith("m ")]
+        self.assertEqual(
+            [entry for entry in memberships if "hardened-blikvm-download" in entry],
+            [["m", "hardened-blikvm-server", "hardened-blikvm-download"]],
+        )
+        admin = (ROOT / "packaging/systemd/hardened-blikvm-admin@.service").read_text()
+        self.assertIn("--peer-user hardened-blikvm-server", admin)
+        self.assertNotIn("hardened-blikvm-download", admin)
+        # It passes through the gadget state directory to read the switches,
+        # and nothing more.
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-gadget.conf").read_text()
+        self.assertIn(
+            "a+ /var/lib/hardened-blikvm-gadget - - - - u:hardened-blikvm-download:--x",
+            tmpfiles.splitlines(),
+        )
+        self.assertEqual(tmpfiles.count("hardened-blikvm-download"), 1)
+
+    def test_a_server_with_the_owners_socket_has_the_restricted_surface(self) -> None:
+        # The server's handlers that reach the board owner check only that
+        # its socket is configured (security review of 2026-10-18, LOW-03);
+        # every unit that gives the web server that socket also turns the
+        # restricted control surface on, so the two never part.
+        units = sorted((ROOT / "packaging/systemd").rglob("*.service"))
+        checked = 0
+        for unit in units:
+            text = unit.read_text()
+            exec_start = [
+                line for line in text.splitlines() if line.startswith("ExecStart=")
+            ]
+            if not any("bli-kvm-server" in line for line in exec_start):
+                continue
+            if "BLI_KVM_CONTROL_SOCKET=" not in text:
+                continue
+            checked += 1
+            self.assertIn(
+                "Environment=BLI_KVM_RESTRICTED_CONTROLS=1",
+                text,
+                f"{unit.relative_to(ROOT)} gives the server the owner's socket "
+                "without the restricted surface",
+            )
+        self.assertGreaterEqual(checked, 3)
+
     def test_the_owner_unit_can_read_the_kernel_boot_identity(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"
@@ -2033,6 +2519,120 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("WantedBy=multi-user.target", unit)
         self.assertNotIn("rm -", unit)
         self.assertNotIn("mkfs", unit)
+        # Sandboxed but in the host's mount namespace, where the remount
+        # must happen (security review of 2026-10-18, LOW-07).
+        lines = unit.splitlines()
+        for line in (
+            "CapabilityBoundingSet=CAP_SYS_ADMIN",
+            "NoNewPrivileges=yes",
+            "IPAddressDeny=any",
+            "RestrictAddressFamilies=AF_UNIX",
+            "SystemCallFilter=@system-service @mount",
+        ):
+            self.assertIn(line, lines)
+        for namespaced in (
+            "ProtectSystem=",
+            "ProtectHome=",
+            "PrivateTmp=",
+            "PrivateDevices=",
+            "PrivateNetwork=",
+            "PrivateMounts=",
+            "ProtectKernel",
+            "ProtectControlGroups=",
+            "ReadWritePaths=",
+            "ReadOnlyPaths=",
+            "InaccessiblePaths=",
+            "TemporaryFileSystem=",
+            "BindPaths=",
+        ):
+            self.assertFalse(
+                [line for line in lines if line.startswith(namespaced)], namespaced
+            )
+
+    def test_the_unit_check_takes_every_tmpfiles_fragment(self) -> None:
+        # It installed six of the ten fragments into its test root, and only
+        # printed them, which passes a fragment that does not parse (code
+        # audit of 2026-10-20, AUD-21).
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.splitlines()
+        fragments = sorted(path.name for path in (ROOT / "packaging/tmpfiles.d").glob("*.conf"))
+        self.assertEqual(
+            sorted(line.split()[1] for line in listed if line.startswith("tmpfiles ")),
+            fragments,
+        )
+
+    def test_a_tmpfiles_fragment_that_does_not_parse_fails_the_unit_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fragments = Path(directory)
+            for path in (ROOT / "packaging/tmpfiles.d").glob("*.conf"):
+                shutil.copy(path, fragments / path.name)
+            (fragments / "zz-broken.conf").write_text("d /run/x 0755 nosuchuser - -\nbogus line\n")
+            result = subprocess.run(
+                ["sh", str(ROOT / "scripts/verify-systemd-units.sh")],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env={**os.environ, "BLI_KVM_TMPFILES_DIR": str(fragments)},
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tmpfiles", result.stderr)
+
+    def test_the_unit_check_covers_every_unit(self) -> None:
+        # scripts/verify-systemd-units.sh named its units, and six were never
+        # verified, eleven services never had their exposure checked
+        # (security review of 2026-10-18, LOW-07).
+        listed = subprocess.run(
+            ["sh", str(ROOT / "scripts/verify-systemd-units.sh"), "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.splitlines()
+        directory = ROOT / "packaging/systemd"
+        units = sorted(
+            path.name
+            for pattern in ("*.service", "*.socket", "*.timer")
+            for path in directory.glob(pattern)
+        )
+        services = sorted(
+            [path.name for path in directory.glob("*.service")]
+            + [f"native/{path.name}" for path in (directory / "native").glob("*.service")]
+        )
+        verified = sorted(line.split()[1] for line in listed if line.startswith("verify "))
+        exposed = {
+            line.split()[1]: int(line.split()[2]) for line in listed if line.startswith("exposure ")
+        }
+        self.assertEqual(verified, units)
+        self.assertEqual(sorted(exposed), services)
+        # The limits above the default are few and named.
+        self.assertEqual(
+            {name: limit for name, limit in exposed.items() if limit != 20},
+            {
+                "hardened-blikvm-update-exec@.service": 22,
+                "hardened-blikvm-nginx.service": 22,
+                "hardened-blikvm-msd-writable.service": 37,
+                "hardened-blikvm-admin@.service": 94,
+            },
+        )
+
+    def test_the_booted_check_reaches_only_the_boards_own_web_stack(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-system-update-booted.service"
+        ).read_text().splitlines()
+        for line in (
+            "IPAddressDeny=any",
+            "IPAddressAllow=127.0.0.1 ::1",
+            "CapabilityBoundingSet=",
+            "SystemCallFilter=@system-service",
+        ):
+            self.assertIn(line, unit)
+        source = (ROOT / "crates/bli-kvm-system-raw-update/src/main.rs").read_text()
+        self.assertIn('const DEFAULT_HEALTH_URL: &str = "https://127.0.0.1/api/health";', source)
 
     def test_the_board_owner_allows_exactly_the_network_write_surface(self) -> None:
         unit = (
@@ -2205,13 +2805,53 @@ class PackagingBoundaryTests(unittest.TestCase):
         server_end = config.index("location = /api/application-update/upload")
         self.assertNotIn("add_header", config[server_end:])
 
+    def test_nginx_reaches_the_server_through_a_socket_of_its_own(self) -> None:
+        # The server believed X-Forwarded-For from any loopback peer, and any
+        # local process reaches its TCP port (code audit of 2026-10-20,
+        # AUD-16.2). nginx goes through the server's proxy socket, which
+        # serves nginx's user alone; loopback TCP is the backup an older
+        # application slot, which makes no such socket, is still reached by.
+        config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
+        upstream = re.search(r"upstream hardened_blikvm_server \{([^{}]*)\}", config)
+        assert upstream is not None
+        servers = re.findall(r"^\s*server\s+([^;]+);", upstream.group(1), re.MULTILINE)
+        self.assertEqual(
+            servers,
+            ["unix:/run/hardened-blikvm-proxy/http.sock", "127.0.0.1:18080 backup"],
+        )
+        user = re.search(r"^user\s+([^;]+);", config, re.MULTILINE)
+        assert user is not None
+        for unit in sorted((ROOT / "packaging/systemd").glob("**/hardened-blikvm-server-*.service")):
+            lines = unit.read_text().splitlines()
+            self.assertIn(
+                "Environment=BLI_KVM_PROXY_SOCKET=/run/hardened-blikvm-proxy/http.sock",
+                lines,
+                unit.name,
+            )
+            self.assertIn(f"Environment=BLI_KVM_PROXY_USER={user.group(1)}", lines, unit.name)
+            directories = [line for line in lines if line.startswith("RuntimeDirectory=")]
+            self.assertEqual(len(directories), 1, unit.name)
+            self.assertIn("hardened-blikvm-proxy", directories[0].split("=", 1)[1].split())
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
+        # TLS 1.2 with forward secrecy and AEAD only (security review of
+        # 2026-10-18, LOW-07).
+        ciphers = re.findall(r"^\s*ssl_ciphers\s+([^;]+);", config, re.MULTILINE)
+        self.assertEqual(len(ciphers), 1)
+        for suite in ciphers[0].split(":"):
+            self.assertTrue(suite.startswith("ECDHE-"), suite)
+            self.assertTrue(
+                suite.endswith(("-GCM-SHA256", "-GCM-SHA384", "-CHACHA20-POLY1305")), suite
+            )
+        quic = (ROOT / "docs/design/quic-transport-v1.md").read_text()
+        self.assertIn("the board's systemd 249 is built without\n  its BPF framework", quic)
         destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
         self.assertEqual(
             sorted(destinations),
-            ["http://127.0.0.1:18080"] * 4 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
+            ["http://hardened_blikvm_server"] * 4
+            + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
         )
         locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
         self.assertEqual(
@@ -2237,7 +2877,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ]:
             block = locations[route]
             self.assertIn(f"client_max_body_size {limit};", block)
-            self.assertIn("proxy_pass http://127.0.0.1:18080;", block)
+            self.assertIn("proxy_pass http://hardened_blikvm_server;", block)
             self.assertIn("proxy_request_buffering off;", block)
             self.assertIn("proxy_buffering off;", block)
             self.assertIn("proxy_http_version 1.1;", block)
@@ -3038,10 +3678,26 @@ class PackagingBoundaryTests(unittest.TestCase):
             watchdog,
         )
         self.assertIn("Accept=yes", socket)
-        self.assertIn("SocketMode=0620", socket)
-        self.assertIn("SocketGroup=hardened-blikvm", socket)
         self.assertNotIn("ListenStream=0.0.0.0", socket)
         self.assertIn("OnUnitActiveSec=2s", timer)
+        # One client, the health reporter that the candidate server runs as
+        # its own account: the socket is that account's alone, and the
+        # confirmation checks the peer's uid (security review of 2026-10-18,
+        # MED-01).
+        candidate = (ROOT / "packaging/systemd/hardened-blikvm-server-candidate.service").read_text()
+        reporter = [
+            line
+            for line in candidate.splitlines()
+            if line.startswith("ExecStartPost=") and "--confirm-socket" in line
+        ]
+        self.assertEqual(len(reporter), 1)
+        self.assertTrue(reporter[0].startswith("ExecStartPost=/"), reporter[0])
+        self.assertIn("User=hardened-blikvm-server", candidate.splitlines())
+        socket_lines = socket.splitlines()
+        self.assertIn("SocketUser=hardened-blikvm-server", socket_lines)
+        self.assertIn("SocketGroup=root", socket_lines)
+        self.assertIn("SocketMode=0600", socket_lines)
+        self.assertIn("confirm-stdin --peer-user hardened-blikvm-server", confirmation)
 
     def test_update_status_worker_has_no_write_or_apply_authority(self) -> None:
         worker = (ROOT / "packaging/systemd/hardened-blikvm-update-status@.service").read_text()
@@ -3131,6 +3787,97 @@ class PackagingBoundaryTests(unittest.TestCase):
             "d /run/hardened-blikvm-update-confirm 0750 hardened-blikvm-update hardened-blikvm",
             tmpfiles,
         )
+
+    def test_every_group_of_the_h264_encoder_unit_comes_with_it(self) -> None:
+        # systemd starts no unit that names a group the system lacks
+        # (216/GROUP): the group of the video engine's encoder device must be
+        # made where the H.264 encoder's unit is installed, whether or not the
+        # driver is ever switched on. The board's first deploy of the unit
+        # without it left H.264 without an encoder.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-video-encoder-h264.service").read_text()
+        groups: set[str] = set()
+        for line in unit.splitlines():
+            if line.startswith("SupplementaryGroups="):
+                groups.update(line.removeprefix("SupplementaryGroups=").split())
+        self.assertIn("hardened-blikvm-ve", groups)
+        deploy = (ROOT / "tools/device/deploy_vp8.sh").read_text()
+        install = deploy[deploy.index("install_vp8() {") : deploy.index("remove_vp8() {")]
+        made = install.index('systemd-sysusers "$staging/hardened-blikvm-ve.conf"')
+        self.assertLess(made, install.index("systemctl restart hardened-blikvm-video-encoder.service"))
+        self.assertIn("g hardened-blikvm-ve -", (ROOT / "packaging/sysusers.d/hardened-blikvm-ve.conf").read_text())
+        # The other group is the runtime's own.
+        base = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        for group in groups - {"hardened-blikvm-ve"}:
+            self.assertRegex(base, rf"(?m)^[gu] {re.escape(group)} ")
+        # deploy_ve.sh makes the group without a directory the board may lack.
+        self.assertNotIn("/etc/sysusers.d", (ROOT / "tools/device/deploy_ve.sh").read_text())
+
+    def test_the_video_engine_lab_is_in_no_package(self) -> None:
+        # The lab tool and the lab module of the hardware H.264 plan give a
+        # root process the video engine. Nothing that is built for a board
+        # may name them, and no crate may depend on the tool.
+        workspace = (ROOT / "Cargo.toml").read_text()
+        self.assertIn('"crates/bli-kvm-ve-lab"', workspace)
+        manifest = (ROOT / "crates/bli-kvm-ve-lab/Cargo.toml").read_text()
+        self.assertIn("publish = false", manifest)
+        for other in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other.parent.name != "bli-kvm-ve-lab":
+                self.assertNotIn("bli-kvm-ve-lab", other.read_text(), other)
+        carriers = [
+            ROOT / "scripts/build-prototype-bundle.sh",
+            ROOT / "tools/build_debian_runtime_package.py",
+            ROOT / "tools/build_debian_update_runtime_package.py",
+            ROOT / "tools/build_production_update_bundle.py",
+            ROOT / "tools/build_system_raw_bundle.py",
+            ROOT / "tools/image/build_sd_image.sh",
+            ROOT / "tools/device/deploy_vp8.sh",
+            ROOT / "tools/device/deploy_native_profile.sh",
+            ROOT / "tools/device/deploy_ve.sh",
+            ROOT / "tools/ve_module.py",
+        ]
+        carriers += [path for path in (ROOT / "packaging").rglob("*") if path.is_file()]
+        self.assertGreater(len(carriers), 20)
+        for carrier in carriers:
+            text = carrier.read_text(errors="replace")
+            # The register trace (tools/ve-trace) runs a vendor library as
+            # a black box; neither it nor that library's names may travel.
+            for name in (
+                "ve-lab",
+                "ve_lab",
+                "ve_hello",
+                "ve_probe_test",
+                "ve-trace",
+                "ve_trace",
+                "libvencoder",
+                "libcedarc",
+                "h264_reference",
+            ):
+                self.assertNotIn(name, text, carrier)
+        # The vendor's interface headers are read from a cache at build
+        # time and never live in the repository.
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+        ).stdout.split()
+        for header in ("vencoder.h", "veInterface.h", "sc_interface.h", "veAdapter.h", "memoryAdapter.h"):
+            self.assertFalse([path for path in tracked if path.endswith("/" + header)], header)
+        self.assertFalse([path for path in tracked if path.endswith((".so", ".ko", ".a"))])
+        # One module of the project is packaged, the encoder driver: the
+        # bundle takes the built file from outside the repository, by name,
+        # and of the directory's sources only the driver's go with it.
+        bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('install -m 0644 "$ve_module" "$stage/share/ve/$ve_release/hardened-blikvm-ve-enc.ko"', bundle)
+        self.assertIn('python3 tools/ve_module.py check "$ve_module" "$ve_release"', bundle)
+        staged = {line.strip().rstrip("\\").strip() for line in bundle.splitlines()
+                  if line.strip().startswith("kernel/hardened-blikvm-ve/")}
+        self.assertEqual(staged, {
+            "kernel/hardened-blikvm-ve/ve_enc.c", "kernel/hardened-blikvm-ve/ve_enc_abi.h",
+            "kernel/hardened-blikvm-ve/ve_enc_plan.c", "kernel/hardened-blikvm-ve/ve_enc_plan.h",
+            "kernel/hardened-blikvm-ve/ve_hw.c", "kernel/hardened-blikvm-ve/ve_hw.h",
+        })
+        # The driver's own sources do not need the lab's.
+        for name in ("ve_enc.c", "ve_enc_plan.c", "ve_hw.c", "ve_enc_abi.h", "ve_enc_plan.h", "ve_hw.h"):
+            text = (ROOT / "kernel/hardened-blikvm-ve" / name).read_text()
+            self.assertNotIn("ve_lab", text, name)
 
 
 if __name__ == "__main__":

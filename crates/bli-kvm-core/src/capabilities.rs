@@ -119,6 +119,11 @@ pub enum VideoSetting {
     Resolution,
     /// The reference's MJPEG frame detect: identical frames are not sent.
     FrameDetect,
+    /// The target bitrate of the WebRTC encoders (VP8 and H.264).
+    WebrtcBitrate,
+    /// The board's choice of the engine that encodes H.264 for every
+    /// viewer: its video engine or x264.
+    H264Engine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

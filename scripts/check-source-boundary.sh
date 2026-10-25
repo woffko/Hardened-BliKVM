@@ -36,15 +36,31 @@ while IFS= read -r path; do
   case "$mime" in
     text/*|application/json|application/toml|application/xml|application/javascript|inode/x-empty) ;;
     image/png)
-      if [ "$path" != "web/public/hardened-blikvm-logo.png" ]; then
-        echo "unexpected PNG source asset: $path" >&2
-        exit 1
-      fi
+      # The logo, and the documentation's screenshots (docs/screenshots.md):
+      # made with the built page from recorded, anonymized API answers and a
+      # drawn stand-in for the target's screen, each one looked at before it
+      # was added.
+      case "$path" in
+        web/public/hardened-blikvm-logo.png) ;;
+        docs/screenshots/*/*)
+          echo "unexpected PNG source asset: $path" >&2
+          exit 1
+          ;;
+        docs/screenshots/[0-9][0-9]-*.png|docs/screenshots/[0-9][0-9][a-z]-*.png) ;;
+        *)
+          echo "unexpected PNG source asset: $path" >&2
+          exit 1
+          ;;
+      esac
       ;;
     image/jpeg)
-      # Synthetic ffmpeg testsrc2 frames for the VP8 pipeline's decoder tests.
+      # Synthetic test frames for the video encoder's decoder tests: ffmpeg
+      # testsrc2, and one generated pattern in four subsamplings
+      # (crates/bli-kvm-video-encoder/tests/fixtures/README.md).
       case "$path" in
         crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-420.jpg|crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-422.jpg) ;;
+        crates/bli-kvm-video-encoder/tests/fixtures/pattern-320x180-444.jpg|crates/bli-kvm-video-encoder/tests/fixtures/pattern-320x180-422.jpg) ;;
+        crates/bli-kvm-video-encoder/tests/fixtures/pattern-320x180-420.jpg|crates/bli-kvm-video-encoder/tests/fixtures/pattern-320x180-gray.jpg) ;;
         *)
           echo "unexpected JPEG source asset: $path" >&2
           exit 1
@@ -61,6 +77,14 @@ while IFS= read -r path; do
           exit 1
           ;;
       esac
+      ;;
+    image/vnd.microsoft.icon)
+      # The target agent's icon, made from the logo above by
+      # tools/build_agent_icon.mjs.
+      if [ "$path" != "crates/bli-kvm-target-agent/assets/agent.ico" ]; then
+        echo "unexpected icon source asset: $path" >&2
+        exit 1
+      fi
       ;;
     image/svg+xml)
       case "$path" in

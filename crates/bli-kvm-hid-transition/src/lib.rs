@@ -85,6 +85,14 @@ pub struct GadgetHidConfig {
     pub keyboard_function: String,
     pub absolute_mouse_function: String,
     pub relative_mouse_function: String,
+    /// The configfs root of a gadget this owner builds. With it, every
+    /// absolute mouse report follows `hid.usb1`'s present descriptor: report
+    /// ID 1 while it carries the target agent's collection, none without, and
+    /// nothing written for a descriptor that is neither. The descriptor is
+    /// read once for each change this process makes to the gadget
+    /// (`bli_kvm_usb_gadget::changes`), not for each report. Without it the
+    /// reports are the pinned descriptor's.
+    pub configfs_root: Option<PathBuf>,
 }
 
 /// Which pinned pointer interface currently owns the pointer reports.
@@ -111,6 +119,9 @@ pub struct GadgetHidExecutor {
     absolute: std::sync::Mutex<AbsolutePointerReportComposer>,
     relative: std::sync::Mutex<RelativePointerReportComposer>,
     mode: std::sync::Mutex<PointerMode>,
+    /// The absolute mouse's report ID as last read, with the count of the
+    /// gadget's changes taken before it was read.
+    report_id: std::sync::Mutex<Option<(u64, Option<u8>)>>,
 }
 
 #[cfg(feature = "gadget-hid-profile")]
@@ -122,6 +133,7 @@ impl GadgetHidExecutor {
             absolute: std::sync::Mutex::new(AbsolutePointerReportComposer::new()),
             relative: std::sync::Mutex::new(RelativePointerReportComposer::new()),
             mode: std::sync::Mutex::new(PointerMode::default()),
+            report_id: std::sync::Mutex::new(None),
         }
     }
 
@@ -177,6 +189,30 @@ impl GadgetHidExecutor {
         Ok(())
     }
 
+    /// Replays the releases a ledger kept. This executor started with no
+    /// pointer interface selected, and the absolute one is its default, while
+    /// the button may have been pressed through the relative one: a button
+    /// release clears both (code audit of 2026-10-20, AUD-20).
+    async fn replay_releases(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
+        self.execute_batch(events).await?;
+        if !events
+            .iter()
+            .any(|event| matches!(event, KvmdHidEvent::MouseButton { pressed: false, .. }))
+        {
+            return Ok(());
+        }
+        let mut absolute = self
+            .absolute
+            .lock()
+            .map_err(|_| gadget_error("gadget HID absolute pointer state is unavailable"))?;
+        let mut relative = self
+            .relative
+            .lock()
+            .map_err(|_| gadget_error("gadget HID relative pointer state is unavailable"))?;
+        self.write_absolute(&absolute.release_all())?;
+        self.write_relative(&relative.release_all())
+    }
+
     fn write_keyboard(&self, report: &[u8; 8]) -> Result<(), HidExecutorError> {
         bli_kvm_usb_gadget::write_report(
             &self.config.hidg_dir,
@@ -186,11 +222,39 @@ impl GadgetHidExecutor {
         .map_err(|_| gadget_error("gadget HID keyboard write failed"))
     }
 
+    /// The report ID `hid.usb1`'s present descriptor asks for, read again
+    /// only after the gadget changed. A descriptor that is not a known one is
+    /// not kept: it is read again at the next report.
+    fn absolute_report_id(&self) -> Result<Option<u8>, HidExecutorError> {
+        let Some(root) = &self.config.configfs_root else {
+            return Ok(None);
+        };
+        let mut known = self
+            .report_id
+            .lock()
+            .map_err(|_| gadget_error("gadget HID absolute pointer state is unavailable"))?;
+        let changes = bli_kvm_usb_gadget::changes(root);
+        if let Some((read_at, report_id)) = *known
+            && read_at == changes
+        {
+            return Ok(report_id);
+        }
+        let report_id = bli_kvm_usb_gadget::absolute_mouse_report_id(root).map_err(|_| {
+            gadget_error("gadget HID absolute pointer descriptor is not a known one")
+        })?;
+        *known = Some((changes, report_id));
+        Ok(report_id)
+    }
+
     fn write_absolute(&self, report: &[u8; 7]) -> Result<(), HidExecutorError> {
+        let report_id = self.absolute_report_id()?;
+        let mut bytes = Vec::with_capacity(8);
+        bytes.extend(report_id);
+        bytes.extend_from_slice(report);
         bli_kvm_usb_gadget::write_report(
             &self.config.hidg_dir,
             &self.config.absolute_mouse_function,
-            report,
+            &bytes,
         )
         .map_err(|_| gadget_error("gadget HID absolute pointer write failed"))
     }
@@ -238,6 +302,15 @@ pub enum HidExecutor {
 }
 
 impl HidExecutor {
+    async fn replay_releases(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
+        match self {
+            #[cfg(feature = "gadget-hid-profile")]
+            HidExecutor::Gadget(executor) => executor.replay_releases(events).await,
+            #[allow(unreachable_patterns)]
+            _ => self.execute_batch(events).await,
+        }
+    }
+
     async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
         match self {
             #[cfg(feature = "kvmd-hid-profile")]
@@ -323,6 +396,11 @@ impl HidTransitionEngine {
             Some(error) => Err(HidTransitionError::Lease(error)),
             None => Ok(()),
         }
+    }
+
+    /// Whether `identity` holds the lease now (see `HidLeaseManager::holds`).
+    pub fn holds(&self, identity: HidLeaseIdentity, now: Instant) -> bool {
+        self.manager.holds(identity, now)
     }
 
     pub async fn report(
@@ -418,7 +496,7 @@ impl HidTransitionEngine {
             return Ok(());
         }
         self.executor
-            .execute_batch(&self.pending_releases)
+            .replay_releases(&self.pending_releases)
             .await
             .map_err(HidTransitionError::Backend)?;
         self.ledger.store(&[])?;
@@ -813,6 +891,44 @@ mod tests {
 
     #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
+    async fn a_replayed_button_release_clears_both_pointer_interfaces() {
+        // A restart finds a button release in the ledger; the relative
+        // mouse may have been the one that pressed it (code audit of
+        // 2026-10-20, AUD-20).
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["hidg0", "hidg1", "hidg2"] {
+            std::fs::write(directory.path().join(name), b"").unwrap();
+        }
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        ledger
+            .store(&[KvmdHidEvent::MouseButton {
+                button: bli_kvm_hid_adapter::KvmdMouseButton::Left,
+                pressed: false,
+            }])
+            .unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().to_path_buf(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
+            })),
+            ledger,
+        )
+        .unwrap();
+        assert_eq!(engine.pending_release_count(), 1);
+        engine
+            .acquire(identity(1), Instant::now(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(engine.pending_release_count(), 0);
+        assert_eq!(last_report(directory.path(), "hidg2", 5), vec![0; 5]);
+        assert_eq!(last_report(directory.path(), "hidg1", 7)[0], 0);
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
     async fn gadget_executor_writes_boot_keyboard_reports() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("hidg0"), b"").unwrap();
@@ -825,6 +941,7 @@ mod tests {
                 keyboard_function: "hid.usb0".into(),
                 absolute_mouse_function: "hid.usb1".into(),
                 relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
             })),
             ledger,
         )
@@ -867,6 +984,7 @@ mod tests {
                 keyboard_function: "hid.usb0".into(),
                 absolute_mouse_function: "hid.usb1".into(),
                 relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
             })),
             ledger,
         )
@@ -907,5 +1025,164 @@ mod tests {
             last_report(directory.path(), "hidg2", 5),
             vec![0, 5, 0, 0, 0]
         );
+    }
+
+    /// One absolute move with `hid.usb1`'s descriptor as given (none: the
+    /// file is missing): whether it was taken, and what reached the device.
+    #[cfg(feature = "gadget-hid-profile")]
+    async fn absolute_move_with(descriptor: Option<Vec<u8>>) -> (bool, Vec<u8>) {
+        let directory = tempfile::tempdir().unwrap();
+        let hidg = directory.path().join("dev");
+        let function = directory
+            .path()
+            .join("configfs/hardened/functions/hid.usb1");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::create_dir_all(&function).unwrap();
+        std::fs::write(hidg.join("hidg1"), b"").unwrap();
+        if let Some(descriptor) = descriptor {
+            std::fs::write(function.join("report_desc"), descriptor).unwrap();
+        }
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: hidg.clone(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: Some(directory.path().join("configfs")),
+            })),
+            ledger,
+        )
+        .unwrap();
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let taken = engine
+            .report(
+                owner,
+                now,
+                &HidReport::AbsoluteMouse {
+                    data: [1, 0x00, 0x40, 0x00, 0x20, 0],
+                },
+            )
+            .await
+            .is_ok();
+        (taken, std::fs::read(hidg.join("hidg1")).unwrap())
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn absolute_reports_follow_the_present_descriptor_of_the_mouse() {
+        let descriptor =
+            |agent: bool| bli_kvm_usb_gadget::absolute_mouse_function(agent).report_descriptor;
+        // The pinned descriptor: the 7 bytes as without a gadget of our own.
+        let (taken, plain) = absolute_move_with(Some(descriptor(false))).await;
+        assert!(taken);
+        assert_eq!(plain.len(), 7);
+        assert_eq!(plain[0], 1, "the left button");
+        // With the agent's collection: the same report after its ID 1.
+        let (taken, with_id) = absolute_move_with(Some(descriptor(true))).await;
+        assert!(taken);
+        assert_eq!(with_id[0], 1);
+        assert_eq!(&with_id[1..], &plain[..]);
+        // A descriptor that is neither, or none: nothing is written.
+        assert_eq!(
+            absolute_move_with(Some(vec![0x05, 0x01])).await,
+            (false, vec![])
+        );
+        assert_eq!(absolute_move_with(None).await, (false, vec![]));
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn absolute_reports_read_the_descriptor_once_for_each_change_of_the_gadget() {
+        let directory = tempfile::tempdir().unwrap();
+        let hidg = directory.path().join("dev");
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::create_dir_all(&configfs).unwrap();
+        let udc = "musb-hdrc.2.auto";
+        bli_kvm_usb_gadget::apply(
+            &configfs,
+            &bli_kvm_usb_gadget::GadgetSpec {
+                id_vendor: 0x1d6b,
+                id_product: 0x0104,
+                bcd_usb: 0x0200,
+                bcd_device: 0x0100,
+                strings: bli_kvm_usb_gadget::GadgetStrings {
+                    manufacturer: "Hardened BLi-KVM".into(),
+                    product: "BLi-KVM Composite Device".into(),
+                    serial: "BLK-descriptor-once".into(),
+                    configuration: "BLi-KVM configuration".into(),
+                },
+                udc: udc.into(),
+                functions: bli_kvm_usb_gadget::hid_functions(false),
+            },
+        )
+        .unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: hidg.clone(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: Some(configfs.clone()),
+            })),
+            HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap(),
+        )
+        .unwrap();
+        let owner = identity(1);
+        engine
+            .acquire(owner, Instant::now(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        // Each move goes elsewhere, so that each is a report of its own.
+        let device = hidg.join("hidg1");
+        let mut moves = 0_u8;
+        let mut absolute_move = async || {
+            moves += 1;
+            std::fs::write(&device, b"").unwrap();
+            engine
+                .report(
+                    owner,
+                    Instant::now(),
+                    &HidReport::AbsoluteMouse {
+                        data: [1, moves, 0x40, 0x00, 0x20, 0],
+                    },
+                )
+                .await
+                .unwrap();
+            std::fs::read(&device).unwrap()
+        };
+        let plain = absolute_move().await;
+        assert_eq!((plain.len(), plain[0]), (7, 1), "the left button");
+
+        // A descriptor written behind the gadget's back is not read again:
+        // the descriptor is read once for each change of the gadget.
+        std::fs::write(
+            configfs.join("hardened/functions/hid.usb1/report_desc"),
+            bli_kvm_usb_gadget::absolute_mouse_function(true).report_descriptor,
+        )
+        .unwrap();
+        assert_eq!(absolute_move().await.len(), 7);
+
+        // The switch's change of the gadget: the reports follow it, both ways.
+        for agent in [true, false] {
+            bli_kvm_usb_gadget::replace_hid_function(
+                &configfs,
+                udc,
+                &bli_kvm_usb_gadget::absolute_mouse_function(agent),
+            )
+            .unwrap();
+            let report = absolute_move().await;
+            if agent {
+                assert_eq!((report.len(), report[0], report[1]), (8, 1, 1));
+            } else {
+                assert_eq!((report.len(), report[0]), (7, 1));
+            }
+        }
     }
 }

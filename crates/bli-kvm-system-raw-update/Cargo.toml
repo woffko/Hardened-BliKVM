@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-system-image-verifier = { path = "../bli-kvm-system-image-verifier" }
 libc.workspace = true
 serde.workspace = true

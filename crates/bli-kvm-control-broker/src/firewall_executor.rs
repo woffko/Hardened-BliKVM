@@ -2,7 +2,7 @@
 use crate::firewall_confirmation::{PendingFileStore, PendingStore};
 use crate::{
     firewall_observation,
-    firewall_rules::{BackendIsolation, FirewallMode, FirewallPorts, render},
+    firewall_rules::{BackendIsolation, FirewallMode, FirewallPorts, RuleForm, render},
     firewall_settings::{FirewallRunner, NFT},
     firewall_transaction::ModeExecutor,
 };
@@ -74,6 +74,15 @@ impl ModeConfiguration {
             webrtc_media: self.webrtc_media,
         }
     }
+}
+
+/// The owned table as the kernel holds it: its mode, its handle, and which
+/// build's rules for that mode it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Observed {
+    mode: FirewallMode,
+    handle: u64,
+    form: RuleForm,
 }
 
 pub struct NftModeExecutor {
@@ -191,7 +200,7 @@ impl NftModeExecutor {
         &self.configuration == requested
     }
 
-    fn observed_table(&mut self) -> Result<Option<(FirewallMode, u64)>, String> {
+    fn observed_table(&mut self) -> Result<Option<Observed>, String> {
         let inventory = self.runner.run(NFT, &["-j", "list", "tables"])?;
         if inventory.len() > 65536 {
             return Err("oversized table inventory".into());
@@ -240,21 +249,50 @@ impl NftModeExecutor {
                 observed = Some((mode, handle, source));
             }
         }
-        if let Some((mode, handle, source)) = observed {
-            let document = self
-                .runner
-                .run(NFT, &["-j", "list", "table", "inet", "hardened-blikvm"])?;
-            if firewall_observation::verify_with(
-                &document,
-                mode,
-                &self.configuration.ports(),
-                source,
-            )? != handle
-            {
-                return Err("firewall changed during observation".into());
+        let Some((mode, handle, source)) = observed else {
+            return Ok(None);
+        };
+        let document = self
+            .runner
+            .run(NFT, &["-j", "list", "table", "inet", "hardened-blikvm"])?;
+        let ports = self.configuration.ports();
+        // The table is this build's, or what an earlier build wrote for the
+        // same mode; anything else is not ours to interpret.
+        let mut refusal = "nft rule content mismatch";
+        for form in RuleForm::of(mode) {
+            match firewall_observation::verify_form(&document, mode, &ports, source, *form) {
+                Ok(verified) if verified == handle => {
+                    return Ok(Some(Observed {
+                        mode,
+                        handle,
+                        form: *form,
+                    }));
+                }
+                Ok(_) => return Err("firewall changed during observation".into()),
+                Err(error) if *form == RuleForm::Current => refusal = error,
+                Err(_) => {}
             }
         }
-        Ok(observed.map(|(mode, handle, _)| (mode, handle)))
+        Err(refusal.into())
+    }
+
+    /// Replaces the owned table, if there is one, by the rules of `mode` as
+    /// this build writes them, in one nft transaction.
+    fn replace(&mut self, mode: FirewallMode, observed: Option<Observed>) -> Result<(), String> {
+        let generated = render(mode, &self.configuration.ports())?;
+        let batch = match observed {
+            Some(table) => format!("delete table inet handle {}\n{generated}", table.handle),
+            None => generated,
+        };
+        let path = self.state_dir.join("mode-candidate.nft");
+        self.runner.write_file(&path, &batch)?;
+        let applied = self.runner.run(NFT, &["-f", &path.to_string_lossy()]);
+        let _ = self.runner.remove_file(&path);
+        applied?;
+        match self.observed_table()? {
+            Some(table) if table.mode == mode && table.form == RuleForm::Current => Ok(()),
+            _ => Err("firewall mode read-back mismatch".into()),
+        }
     }
 }
 
@@ -282,41 +320,39 @@ impl ModeExecutor for NftModeExecutor {
     }
     fn observe(&mut self) -> Result<FirewallMode, String> {
         match self.observed_table()? {
-            Some((mode, _)) => Ok(mode),
+            Some(table) => Ok(table.mode),
             None if self.configuration.backend_isolation.is_none() => Ok(FirewallMode::Baseline),
             None => Err("required backend isolation is absent".into()),
         }
     }
 
     fn apply(&mut self, mode: FirewallMode) -> Result<(), String> {
-        let generated = render(mode, &self.configuration.ports())?;
+        render(mode, &self.configuration.ports())?;
         let observed = self.observed_table()?;
-        if observed.is_some_and(|(current, _)| current == mode) {
+        if observed.is_some_and(|table| table.mode == mode && table.form == RuleForm::Current) {
             return Ok(());
         }
-        let batch = match observed {
-            Some((_, handle)) => format!("delete table inet handle {handle}\n{generated}"),
-            None => generated,
-        };
-        let path = self.state_dir.join("mode-candidate.nft");
-        self.runner.write_file(&path, &batch)?;
-        let applied = self.runner.run(NFT, &["-f", &path.to_string_lossy()]);
-        let _ = self.runner.remove_file(&path);
-        applied?;
+        self.replace(mode, observed)
+    }
+
+    fn refresh(&mut self) -> Result<Option<FirewallMode>, String> {
         match self.observed_table()? {
-            Some((current, _)) if current == mode => Ok(()),
-            _ => Err("firewall mode read-back mismatch".into()),
+            Some(table) if table.form != RuleForm::Current => {
+                self.replace(table.mode, Some(table))?;
+                Ok(Some(table.mode))
+            }
+            _ => Ok(None),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::firewall_confirmation::PendingChange;
     use crate::firewall_settings::SystemFirewallRunner;
 
-    fn configuration() -> ModeConfiguration {
+    pub(crate) fn configuration() -> ModeConfiguration {
         ModeConfiguration {
             https_enabled: true,
             https_port: 8443,
@@ -324,6 +360,216 @@ mod tests {
             backend_isolation: None,
             webrtc_media: None,
             https_probe: None,
+        }
+    }
+
+    /// nft as the executor meets it: a kernel that holds the owned table in
+    /// one of its forms, or no owned table. Files are real ones.
+    #[derive(Clone)]
+    pub(crate) struct Kernel(std::sync::Arc<std::sync::Mutex<KernelState>>);
+    pub(crate) struct KernelState {
+        table: Option<(FirewallMode, RuleForm)>,
+        handle: u64,
+        /// Something the owner never wrote is in its table.
+        foreign_rule: bool,
+        batches: Vec<String>,
+    }
+
+    impl Kernel {
+        pub(crate) fn holding(table: Option<(FirewallMode, RuleForm)>) -> Self {
+            Self(std::sync::Arc::new(std::sync::Mutex::new(KernelState {
+                table,
+                handle: 7,
+                foreign_rule: false,
+                batches: Vec::new(),
+            })))
+        }
+        pub(crate) fn table(&self) -> Option<(FirewallMode, RuleForm)> {
+            self.0.lock().unwrap().table
+        }
+        fn batches(&self) -> Vec<String> {
+            self.0.lock().unwrap().batches.clone()
+        }
+    }
+
+    impl FirewallRunner for Kernel {
+        fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
+            assert_eq!(program, NFT);
+            let mut kernel = self.0.lock().unwrap();
+            match args {
+                ["-j", "list", "tables"] => {
+                    let mut entries =
+                        vec![serde_json::json!({"metainfo": {"json_schema_version": 1}})];
+                    if let Some((mode, _)) = kernel.table {
+                        entries.push(serde_json::json!({"table": {
+                            "family": "inet",
+                            "name": "hardened-blikvm",
+                            "handle": kernel.handle,
+                            "comment": format!("hardened-blikvm-owner-v2:{}", mode.as_str()),
+                        }}));
+                    }
+                    Ok(serde_json::json!({ "nftables": entries }).to_string())
+                }
+                ["-j", "list", "table", "inet", "hardened-blikvm"] => {
+                    let (mode, form) = kernel.table.ok_or("no such table")?;
+                    let mut document: serde_json::Value =
+                        serde_json::from_str(&firewall_observation::observed_document(
+                            mode,
+                            &configuration().ports(),
+                            form,
+                        ))
+                        .unwrap();
+                    document["nftables"][1]["table"]["handle"] = kernel.handle.into();
+                    if kernel.foreign_rule {
+                        document["nftables"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(serde_json::json!({
+                                "rule": {
+                                    "family": "inet",
+                                    "table": "hardened-blikvm",
+                                    "chain": "input",
+                                    "handle": 99,
+                                    "expr": [{"accept": null}],
+                                }
+                            }));
+                    }
+                    Ok(document.to_string())
+                }
+                ["-f", path] => {
+                    let batch = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+                    let rules = match batch
+                        .strip_prefix(&format!("delete table inet handle {}\n", kernel.handle))
+                    {
+                        Some(rest) => rest,
+                        None if kernel.table.is_none() => &batch,
+                        None => return Err("the table exists".into()),
+                    };
+                    let mode = [
+                        FirewallMode::Baseline,
+                        FirewallMode::Moderate,
+                        FirewallMode::Restricted,
+                        FirewallMode::Paranoid,
+                    ]
+                    .into_iter()
+                    .find(|mode| rules == render(*mode, &configuration().ports()).unwrap())
+                    .ok_or("rules of no mode")?;
+                    kernel.table = Some((mode, RuleForm::Current));
+                    kernel.handle += 1;
+                    kernel.foreign_rule = false;
+                    kernel.batches.push(batch);
+                    Ok(String::new())
+                }
+                other => Err(format!("unexpected nft call: {other:?}")),
+            }
+        }
+        fn exists(&mut self, path: &std::path::Path) -> bool {
+            SystemFirewallRunner.exists(path)
+        }
+        fn read_file(&mut self, path: &std::path::Path) -> Result<String, String> {
+            SystemFirewallRunner.read_file(path)
+        }
+        fn write_file(&mut self, path: &std::path::Path, text: &str) -> Result<(), String> {
+            SystemFirewallRunner.write_file(path, text)
+        }
+        fn remove_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+            SystemFirewallRunner.remove_file(path)
+        }
+    }
+
+    fn opened(kernel: &Kernel) -> (tempfile::TempDir, NftModeExecutor) {
+        let root = tempfile::tempdir().unwrap();
+        let executor = NftModeExecutor::open_frozen(
+            Box::new(kernel.clone()),
+            root.path().into(),
+            configuration(),
+        )
+        .unwrap();
+        (root, executor)
+    }
+
+    /// An owner that was updated finds the rules its earlier build wrote.
+    /// Restricted then lacks the QUIC transport's port: it is still
+    /// Restricted, and its rules are replaced by this build's in one batch.
+    #[test]
+    fn rules_from_before_the_quic_port_are_restricted_and_are_brought_up_to_date() {
+        let kernel = Kernel::holding(Some((FirewallMode::Restricted, RuleForm::BeforeQuicPort)));
+        let (root, mut executor) = opened(&kernel);
+        assert_eq!(executor.observe(), Ok(FirewallMode::Restricted));
+        assert!(kernel.batches().is_empty());
+
+        assert_eq!(executor.refresh(), Ok(Some(FirewallMode::Restricted)));
+        assert_eq!(
+            kernel.table(),
+            Some((FirewallMode::Restricted, RuleForm::Current))
+        );
+        let batches = kernel.batches();
+        assert_eq!(batches.len(), 1);
+        // The old table goes and the new one comes in the same transaction.
+        assert!(batches[0].starts_with("delete table inet handle 7\ncreate table inet"));
+        assert!(batches[0].contains("udp dport 8443 accept"));
+        assert!(!root.path().join("mode-candidate.nft").exists());
+
+        // Up to date: nothing more is written, by a refresh or by the mode
+        // being asked for again.
+        assert_eq!(executor.refresh(), Ok(None));
+        assert_eq!(executor.apply(FirewallMode::Restricted), Ok(()));
+        assert_eq!(kernel.batches().len(), 1);
+        assert_eq!(executor.observe(), Ok(FirewallMode::Restricted));
+    }
+
+    #[test]
+    fn asking_for_the_mode_in_force_also_replaces_earlier_rules() {
+        let kernel = Kernel::holding(Some((FirewallMode::Restricted, RuleForm::BeforeQuicPort)));
+        let (_root, mut executor) = opened(&kernel);
+        assert_eq!(executor.apply(FirewallMode::Restricted), Ok(()));
+        assert_eq!(kernel.batches().len(), 1);
+        assert_eq!(
+            kernel.table(),
+            Some((FirewallMode::Restricted, RuleForm::Current))
+        );
+        // Leaving the mode works from either form.
+        let kernel = Kernel::holding(Some((FirewallMode::Restricted, RuleForm::BeforeQuicPort)));
+        let (_root, mut executor) = opened(&kernel);
+        assert_eq!(executor.apply(FirewallMode::Paranoid), Ok(()));
+        assert_eq!(
+            kernel.table(),
+            Some((FirewallMode::Paranoid, RuleForm::Current))
+        );
+    }
+
+    #[test]
+    fn current_rules_and_no_table_need_no_refresh() {
+        for table in [
+            None,
+            Some((FirewallMode::Moderate, RuleForm::Current)),
+            Some((FirewallMode::Restricted, RuleForm::Current)),
+            Some((FirewallMode::Paranoid, RuleForm::Current)),
+        ] {
+            let kernel = Kernel::holding(table);
+            let (_root, mut executor) = opened(&kernel);
+            assert_eq!(executor.refresh(), Ok(None), "{table:?}");
+            assert!(kernel.batches().is_empty());
+            assert_eq!(
+                executor.observe(),
+                Ok(table.map_or(FirewallMode::Baseline, |(mode, _)| mode))
+            );
+        }
+    }
+
+    #[test]
+    fn a_table_that_is_no_form_of_its_mode_is_not_interpreted() {
+        for form in [RuleForm::Current, RuleForm::BeforeQuicPort] {
+            let kernel = Kernel::holding(Some((FirewallMode::Restricted, form)));
+            kernel.0.lock().unwrap().foreign_rule = true;
+            let (_root, mut executor) = opened(&kernel);
+            assert_eq!(
+                executor.observe(),
+                Err("nft rule content mismatch".to_owned())
+            );
+            assert!(executor.refresh().is_err());
+            assert!(executor.apply(FirewallMode::Moderate).is_err());
+            assert!(kernel.batches().is_empty());
         }
     }
 

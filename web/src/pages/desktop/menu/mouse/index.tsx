@@ -4,7 +4,7 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import { MouseIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { supportsRestrictedControls } from '@/lib/capabilities.ts';
+import { supportsBoardFeature, supportsRestrictedControls } from '@/lib/capabilities.ts';
 import * as ls from '@/lib/localstorage';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import {
@@ -18,11 +18,13 @@ import { useIsTouchLayout } from '@/hooks/useResponsiveLayout.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
 import { Cursor } from './cursor.tsx';
+import { DesktopArea } from './desktop-area.tsx';
 import { Direction } from './direction.tsx';
 import { HidMode } from './hid-mode.tsx';
 import { MobilePointerMode as MobilePointerModeMenu } from './mobile-pointer-mode.tsx';
 import { MouseMode } from './mouse-mode.tsx';
 import { PointerSensitivity } from './pointer-sensitivity.tsx';
+import { ReleaseControl } from './release-control.tsx';
 import { ResetHid } from './reset-hid.tsx';
 import { Speed } from './speed.tsx';
 
@@ -33,6 +35,7 @@ export const Mouse = () => {
   // HID-only mode and the legacy HID reset are not part of the hardened
   // restricted surface; the legacy endpoints do not exist there.
   const restricted = supportsRestrictedControls(manifest);
+  const desktopArea = supportsBoardFeature(manifest, 'hid_screen_area');
 
   const setMouseStyle = useSetAtom(mouseStyleAtom);
   const setMouseMode = useSetAtom(mouseModeAtom);
@@ -71,6 +74,7 @@ export const Mouse = () => {
     <div className="flex flex-col space-y-1">
       <Cursor />
       <MouseMode />
+      {desktopArea && <DesktopArea />}
       <PointerSensitivity />
       <Direction />
       <Speed />
@@ -78,16 +82,19 @@ export const Mouse = () => {
 
       {!restricted && <HidMode />}
       {!restricted && <ResetHid />}
+      {restricted && <ReleaseControl />}
     </div>
   );
 
   const mobileContent = (
     <div className="flex flex-col space-y-1">
       <MobilePointerModeMenu />
+      {desktopArea && <DesktopArea />}
       <Direction />
       <Speed />
       <Divider style={{ margin: '10px 0' }} />
       {!restricted && <ResetHid />}
+      {restricted && <ReleaseControl />}
     </div>
   );
 

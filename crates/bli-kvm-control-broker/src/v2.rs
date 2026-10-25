@@ -12,10 +12,7 @@ use std::time::Instant;
 use std::time::Duration;
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
-use bli_kvm_core::{
-    AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2,
-    VideoSettingsChange,
-};
+use bli_kvm_core::{AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2};
 
 use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 
@@ -44,6 +41,80 @@ fn share_atx(engine: AtxTransitionEngine) -> SharedAtx {
     std::sync::Arc::new(tokio::sync::Mutex::new(engine))
 }
 
+/// The settings whose commands wait on systemd for seconds (a unit's
+/// restart, hostnamed): the server runs them on a blocking worker behind
+/// this lock of their own, so the shared state's lock, which HID leases and
+/// their expiry wait on, is never held for them (code audit of 2026-10-20,
+/// AUD-07).
+#[derive(Default)]
+pub struct SystemSettings {
+    video_settings: Option<crate::video_settings::VideoSettingsState>,
+    hostname: Option<crate::hostname_settings::HostnameSettings>,
+    ssh: Option<crate::ssh_settings::SshSettings>,
+    quic: Option<crate::quic_settings::QuicSettings>,
+}
+
+pub type SharedSystemSettings = std::sync::Arc<std::sync::Mutex<SystemSettings>>;
+
+impl SystemSettings {
+    /// Whether `request` is one of these settings'.
+    pub fn serves(request: &PlatformControlRequestV2) -> bool {
+        matches!(
+            request,
+            PlatformControlRequestV2::VideoSettings { .. }
+                | PlatformControlRequestV2::VideoSettingsState {}
+                | PlatformControlRequestV2::Hostname { .. }
+                | PlatformControlRequestV2::Ssh { .. }
+                | PlatformControlRequestV2::SshState {}
+                | PlatformControlRequestV2::Quic { .. }
+                | PlatformControlRequestV2::QuicState {}
+        )
+    }
+
+    pub fn dispatch(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
+        let disabled = || reject(ControlRejectionCode::CapabilityDisabled);
+        match request {
+            PlatformControlRequestV2::VideoSettings { change } => self
+                .video_settings
+                .as_mut()
+                .map_or_else(disabled, |state| state.handle(change)),
+            PlatformControlRequestV2::VideoSettingsState {} => {
+                let Some(state) = self.video_settings.as_ref() else {
+                    return disabled();
+                };
+                match state.readback() {
+                    Ok(current) => ControlResponse::VideoState {
+                        fps: current.fps,
+                        quality: current.quality,
+                        resolution: Some(current.resolution),
+                    },
+                    Err(code) => reject(code),
+                }
+            }
+            PlatformControlRequestV2::Hostname { name } => self
+                .hostname
+                .as_mut()
+                .map_or_else(disabled, |hostname| hostname.set(name)),
+            PlatformControlRequestV2::Ssh { enabled } => self
+                .ssh
+                .as_mut()
+                .map_or_else(disabled, |ssh| ssh.handle(*enabled)),
+            PlatformControlRequestV2::SshState {} => {
+                self.ssh.as_mut().map_or_else(disabled, |ssh| ssh.state())
+            }
+            PlatformControlRequestV2::Quic { enabled } => self
+                .quic
+                .as_mut()
+                .map_or_else(disabled, |quic| quic.handle(*enabled)),
+            PlatformControlRequestV2::QuicState {} => self
+                .quic
+                .as_mut()
+                .map_or_else(disabled, |quic| quic.state()),
+            _ => disabled(),
+        }
+    }
+}
+
 pub struct ControlV2State {
     enabled: bool,
     attestations: TargetAttestationRegistry,
@@ -61,14 +132,21 @@ pub struct ControlV2State {
     network_write: Option<
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
-    video_settings: Option<crate::video_settings::VideoSettingsState>,
+    system_settings: SharedSystemSettings,
     mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
+    display_sleep: Option<crate::device_settings::DisplaySleepState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
-    ssh: Option<crate::ssh_settings::SshSettings>,
+    /// The target agent's channel on the absolute mouse's device, and the
+    /// operator's switch for it.
+    target_agent: Option<(
+        crate::target_agent::AgentChannel,
+        crate::target_agent::AgentSwitch,
+    )>,
+    /// The record of the switches kept in system files, across a RAW update.
+    system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
-    hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::SharedWifi>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::SharedFirewall>,
@@ -83,6 +161,8 @@ pub struct ControlV2State {
 }
 
 impl ControlV2State {
+    /// No surface attached and the state off: the one literal of the
+    /// state's fields, which every other constructor starts from.
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -98,14 +178,15 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
-            video_settings: None,
+            system_settings: SharedSystemSettings::default(),
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
-            ssh: None,
+            target_agent: None,
+            system_switches: None,
             ipv4: None,
-            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -138,7 +219,7 @@ impl ControlV2State {
 
     /// Attach the reviewed video-settings surface to the board state.
     pub fn with_video_settings(&mut self, state: crate::video_settings::VideoSettingsState) {
-        self.video_settings = Some(state);
+        self.system_settings_mut().video_settings = Some(state);
     }
 
     /// Attach the reviewed device toggles to the board state.
@@ -205,7 +286,7 @@ impl ControlV2State {
 
     /// Attach the administration feature switches to the board state.
     pub fn with_hostname(&mut self, hostname: crate::hostname_settings::HostnameSettings) {
-        self.hostname = Some(hostname);
+        self.system_settings_mut().hostname = Some(hostname);
     }
 
     pub fn with_ipv4(&mut self, ipv4: crate::ipv4_settings::Ipv4Settings) {
@@ -221,7 +302,115 @@ impl ControlV2State {
     }
 
     pub fn with_ssh(&mut self, ssh: crate::ssh_settings::SshSettings) {
-        self.ssh = Some(ssh);
+        self.system_settings_mut().ssh = Some(ssh);
+    }
+
+    pub fn with_quic(&mut self, quic: crate::quic_settings::QuicSettings) {
+        self.system_settings_mut().quic = Some(quic);
+    }
+
+    fn system_settings_mut(&mut self) -> std::sync::MutexGuard<'_, SystemSettings> {
+        self.system_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The settings that wait on systemd, for the server's blocking worker,
+    /// while enabled.
+    pub fn system_settings_shared(&self) -> Option<SharedSystemSettings> {
+        if !self.enabled {
+            return None;
+        }
+        Some(std::sync::Arc::clone(&self.system_settings))
+    }
+
+    /// Records a switch kept in system files once its change applied.
+    pub fn note_system_setting(
+        &mut self,
+        request: &PlatformControlRequestV2,
+        response: &ControlResponse,
+    ) {
+        if !matches!(response, ControlResponse::Applied) {
+            return;
+        }
+        match request {
+            PlatformControlRequestV2::Ssh { enabled } => {
+                self.note_switch(crate::system_switches::Switch::Ssh, *enabled);
+            }
+            PlatformControlRequestV2::Quic { enabled } => {
+                self.note_switch(crate::system_switches::Switch::Quic, *enabled);
+            }
+            _ => {}
+        }
+    }
+
+    /// Attach the target agent's channel and switch to the board state.
+    pub fn with_target_agent(
+        &mut self,
+        channel: crate::target_agent::AgentChannel,
+        switch: crate::target_agent::AgentSwitch,
+    ) {
+        self.target_agent = Some((channel, switch));
+    }
+
+    /// The target agent's channel for `call`, once the call may be made: a
+    /// ping by any client, a read only under the HID lease the operator
+    /// holds now.
+    pub fn target_agent_for(
+        &self,
+        call: &bli_kvm_agent_protocol::Call,
+        lease: Option<bli_kvm_core::TargetAgentLease>,
+        now: Instant,
+    ) -> Result<crate::target_agent::AgentChannel, ControlRejectionCode> {
+        let channel = self
+            .target_agent_shared()
+            .ok_or(ControlRejectionCode::CapabilityDisabled)?;
+        if !call.needs_lease() {
+            return Ok(channel);
+        }
+        let lease = lease.ok_or(ControlRejectionCode::LeaseExpired)?;
+        #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+        if let Some(policy) = self.hid.as_ref() {
+            let identity =
+                HidLeaseIdentity::new(lease.lease_id, lease.session_binding, lease.target_binding)
+                    .map_err(|_| ControlRejectionCode::InvalidState)?;
+            return if policy.holds(identity, now) {
+                Ok(channel)
+            } else {
+                Err(ControlRejectionCode::LeaseExpired)
+            };
+        }
+        let _ = (lease, now);
+        Err(ControlRejectionCode::CapabilityDisabled)
+    }
+
+    /// The target agent's channel, for a call that waits outside the shared
+    /// state's lock, while enabled.
+    pub fn target_agent_shared(&self) -> Option<crate::target_agent::AgentChannel> {
+        if !self.enabled {
+            return None;
+        }
+        self.target_agent
+            .as_ref()
+            .map(|(channel, _)| channel.clone())
+    }
+
+    /// Keeps the record of the switches held in system files, and sets them
+    /// as recorded when the system image is a new one (after a RAW update).
+    /// Called once the SSH, QUIC and mDNS surfaces are attached.
+    pub fn with_system_switches(
+        &mut self,
+        mut switches: crate::system_switches::SystemSwitches,
+    ) -> crate::system_switches::Reconciled {
+        let reconciled = switches.reconcile(self.mdns.as_mut());
+        self.system_switches = Some(switches);
+        reconciled
+    }
+
+    fn note_switch(&mut self, switch: crate::system_switches::Switch, enabled: bool) {
+        if let Some(switches) = self.system_switches.as_mut() {
+            switches.note(switch, enabled);
+        }
     }
 
     pub fn with_admin_features(&mut self, features: crate::admin_features::AdminFeaturesState) {
@@ -231,6 +420,11 @@ impl ControlV2State {
     /// Attach the reviewed mouse jiggler to the board state.
     pub fn with_mouse_jiggler(&mut self, jiggler: crate::mouse_jiggler::MouseJigglerState) {
         self.mouse_jiggler = Some(jiggler);
+    }
+
+    /// Attach the display's sleep time, which the board daemon follows.
+    pub fn with_display_sleep(&mut self, display_sleep: crate::device_settings::DisplaySleepState) {
+        self.display_sleep = Some(display_sleep);
     }
 
     /// One jiggler interval: the serve loop calls this, and it is a no-op when
@@ -252,13 +446,48 @@ impl ControlV2State {
     pub async fn begin_quiescence(&mut self) -> Result<(), ControlRejectionCode> {
         self.enabled = false;
         #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-        if let Some(policy) = self.hid.as_mut() {
-            return match policy.disconnect().await {
+        let released = match self.hid.as_mut() {
+            Some(policy) => match policy.disconnect().await {
                 HidDecision::Applied => Ok(()),
                 HidDecision::Reject(rejection) => Err(rejection.rejection_code()),
-            };
+            },
+            None => Ok(()),
+        };
+        #[cfg(not(any(feature = "hid-transition-profile", feature = "gadget-hid-profile")))]
+        let released = Ok(());
+        self.leave_the_absolute_mouse_plain().await;
+        released
+    }
+
+    /// A stopping owner takes the agent's collection away from the absolute
+    /// mouse, and the agent's drive; the switch stays as it is, and the next
+    /// owner puts them back. An update may roll back to a slot from before the
+    /// agent, which writes the mouse's reports without an ID: the target
+    /// would read them against a descriptor with IDs, buttons among them.
+    async fn leave_the_absolute_mouse_plain(&mut self) {
+        let Some((channel, _)) = self.target_agent.as_ref() else {
+            return;
+        };
+        channel.pause().await;
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        if let Some(media) = self.media.as_ref() {
+            // The agent's drive too: a slot from before the agent knows no
+            // second LUN and would take the drive alone for an image.
+            if let Err(error) = media.set_agent_drive(None) {
+                eprintln!("target agent: the drive could not be taken away: {error:?}");
+            }
+            match media.set_agent(false) {
+                Ok(true) => {
+                    eprintln!(
+                        "target agent: the absolute mouse is left without the agent's collection"
+                    )
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!(
+                    "target agent: the agent's collection could not be taken away: {error:?}"
+                ),
+            }
         }
-        Ok(())
     }
 
     /// Release held HID state when an idle lease reaches its deadline. The
@@ -283,34 +512,7 @@ impl ControlV2State {
     fn enabled_base() -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -318,34 +520,8 @@ impl ControlV2State {
     pub fn with_hid_policy(policy: HidControlPolicy) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
             hid: Some(policy),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -353,34 +529,8 @@ impl ControlV2State {
     pub fn with_atx_engine(engine: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(share_atx(engine)),
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -403,33 +553,9 @@ impl ControlV2State {
     pub fn with_hid_and_atx(hid: HidControlPolicy, atx: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(share_atx(atx)),
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
             hid: Some(hid),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -440,33 +566,9 @@ impl ControlV2State {
     pub fn with_media_and_hid(media: MediaTransitionEngine, hid: HidControlPolicy) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
             media: Some(media),
             hid: Some(hid),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -493,14 +595,15 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
-            video_settings: None,
+            system_settings: SharedSystemSettings::default(),
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
-            ssh: None,
+            target_agent: None,
+            system_switches: None,
             ipv4: None,
-            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -564,18 +667,14 @@ impl ControlV2State {
         reject(ControlRejectionCode::CapabilityDisabled)
     }
 
-    fn handle_video_settings(&mut self, change: &VideoSettingsChange) -> ControlResponse {
-        let Some(state) = self.video_settings.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        state.handle(change)
-    }
-
     fn handle_tailscale_status(&mut self) -> ControlResponse {
         let Some(tailscale) = self.tailscale.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         let status = tailscale.status();
+        // The administration helper switches the daemon: the record follows
+        // what the owner reads.
+        self.note_switch(crate::system_switches::Switch::Tailscaled, status.enabled);
         ControlResponse::TailscaleState {
             installed: status.installed,
             running: status.running,
@@ -652,11 +751,108 @@ impl ControlV2State {
         }
     }
 
-    fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
+    async fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
         let Some(state) = self.hid_only.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        state.handle(enabled)
+        let response = state.handle(enabled);
+        if matches!(response, ControlResponse::Applied) {
+            // HID-only mode presents no storage: the agent's drive follows,
+            // the agent's channel closed while the gadget changes.
+            let channel = self.target_agent_shared();
+            if let Some(channel) = channel.as_ref() {
+                channel.pause().await;
+            }
+            self.present_agent_drive();
+            if let Some(channel) = channel.as_ref() {
+                channel.resume().await;
+            }
+        }
+        response
+    }
+
+    /// Presents the target agent's drive as the switch and HID-only mode
+    /// say. A gadget that cannot be changed is logged; the drive is a
+    /// convenience, not the channel. The caller pauses the channel.
+    fn present_agent_drive(&mut self) {
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        {
+            let switch = self
+                .target_agent
+                .as_ref()
+                .is_some_and(|(_, switch)| switch.enabled());
+            let hid_only = self.hid_only.as_ref().is_some_and(|state| state.enabled());
+            let drive = crate::target_agent::wanted_drive(
+                switch,
+                hid_only,
+                crate::target_agent::agent_drive_in_slot(),
+            );
+            if let Some(media) = self.media.as_ref()
+                && let Err(error) = media.set_agent_drive(drive)
+            {
+                eprintln!("target agent: the drive could not be presented: {error:?}");
+            }
+        }
+    }
+
+    /// The operator's "Target agent" switch: the absolute mouse's interface
+    /// gets the agent's collection, or loses it, and the channel follows.
+    /// The switch is written first and put back, with the channel's wish,
+    /// when the gadget cannot be changed, so it never says what the gadget
+    /// is not.
+    async fn handle_target_agent(&mut self, enabled: bool) -> ControlResponse {
+        let Some((channel, switch)) = self.target_agent.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let channel = channel.clone();
+        let was = switch.enabled();
+        if let Err(reason) = switch.set(enabled) {
+            eprintln!("target agent: the switch could not be written: {reason}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        if !enabled {
+            channel.want(false).await;
+        }
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        let applied = match self.media.as_ref() {
+            Some(media) => {
+                channel.pause().await;
+                let result = media.set_agent(enabled);
+                channel.resume().await;
+                result.map_err(|error| format!("{error:?}"))
+            }
+            None => Err("the owner keeps no gadget".to_string()),
+        };
+        #[cfg(not(any(feature = "media-transition-profile", feature = "gadget-media-profile")))]
+        let applied: Result<bool, String> = Err("the owner keeps no gadget".to_string());
+        let Some((_, switch)) = self.target_agent.as_mut() else {
+            return reject(ControlRejectionCode::Internal);
+        };
+        match applied {
+            Ok(changed) => {
+                channel.pause().await;
+                self.present_agent_drive();
+                channel.resume().await;
+                channel.want(enabled).await;
+                if changed {
+                    eprintln!(
+                        "target agent: switched {}",
+                        if enabled { "on" } else { "off" }
+                    );
+                }
+                ControlResponse::Applied
+            }
+            Err(reason) => {
+                eprintln!("target agent: the gadget could not be changed: {reason}");
+                if let Err(reason) = switch.set(was) {
+                    eprintln!("target agent: the switch could not be put back: {reason}");
+                }
+                // The channel follows the switch put back: a switch-off told
+                // it it was not wanted before the gadget refused.
+                channel.want(was).await;
+                reject(ControlRejectionCode::BackendRejected)
+            }
+        }
     }
 
     fn handle_hid_only_state(&self) -> ControlResponse {
@@ -688,11 +884,31 @@ impl ControlV2State {
         }
     }
 
+    fn handle_display_sleep(&mut self, seconds: u32) -> ControlResponse {
+        let Some(state) = self.display_sleep.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.handle(seconds)
+    }
+
+    fn handle_display_sleep_state(&self) -> ControlResponse {
+        let Some(state) = self.display_sleep.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        ControlResponse::DisplaySleepState {
+            seconds: state.seconds(),
+        }
+    }
+
     fn handle_mdns(&mut self, enabled: bool) -> ControlResponse {
         let Some(state) = self.mdns.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        state.handle(enabled)
+        let response = state.handle(enabled);
+        if matches!(response, ControlResponse::Applied) {
+            self.note_switch(crate::system_switches::Switch::Mdns, enabled);
+        }
+        response
     }
 
     fn handle_mdns_state(&self) -> ControlResponse {
@@ -701,21 +917,6 @@ impl ControlV2State {
         };
         ControlResponse::MdnsState {
             enabled: state.current(),
-        }
-    }
-
-    fn handle_video_settings_state(&self) -> ControlResponse {
-        let Some(state) = self.video_settings.as_ref() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        let current = match state.readback() {
-            Ok(current) => current,
-            Err(code) => return reject(code),
-        };
-        ControlResponse::VideoState {
-            fps: current.fps,
-            quality: current.quality,
-            resolution: Some(current.resolution),
         }
     }
 
@@ -745,35 +946,7 @@ impl ControlV2State {
     fn enabled_for_test() -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -799,6 +972,14 @@ impl ControlV2State {
             return None;
         }
         self.firewall_modes.clone()
+    }
+
+    /// No surface attached, but serving requests.
+    #[cfg(test)]
+    pub(crate) fn serving() -> Self {
+        let mut state = Self::disabled();
+        state.enabled = true;
+        state
     }
 
     pub async fn handle(
@@ -857,15 +1038,26 @@ impl ControlV2State {
             PlatformControlRequestV2::NetworkWrite { request } => {
                 self.handle_network_write(request)
             }
-            PlatformControlRequestV2::VideoSettings { change } => {
-                self.handle_video_settings(change)
+            PlatformControlRequestV2::VideoSettings { .. }
+            | PlatformControlRequestV2::VideoSettingsState {}
+            | PlatformControlRequestV2::Hostname { .. }
+            | PlatformControlRequestV2::Ssh { .. }
+            | PlatformControlRequestV2::SshState {}
+            | PlatformControlRequestV2::Quic { .. }
+            | PlatformControlRequestV2::QuicState {} => {
+                let response = self.system_settings_mut().dispatch(request);
+                self.note_system_setting(request, &response);
+                response
             }
-            PlatformControlRequestV2::VideoSettingsState {} => self.handle_video_settings_state(),
             PlatformControlRequestV2::Mdns { enabled } => self.handle_mdns(*enabled),
             PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
             PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
-            PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled),
+            PlatformControlRequestV2::DisplaySleep { seconds } => {
+                self.handle_display_sleep(*seconds)
+            }
+            PlatformControlRequestV2::DisplaySleepState {} => self.handle_display_sleep_state(),
+            PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled).await,
             PlatformControlRequestV2::HidOnlyState {} => self.handle_hid_only_state(),
             PlatformControlRequestV2::AdminFeature { feature, enabled } => {
                 match self.admin_features.as_mut() {
@@ -873,14 +1065,6 @@ impl ControlV2State {
                     None => reject(ControlRejectionCode::CapabilityDisabled),
                 }
             }
-            PlatformControlRequestV2::Ssh { enabled } => match self.ssh.as_mut() {
-                Some(ssh) => ssh.handle(*enabled),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Hostname { name } => match self.hostname.as_mut() {
-                Some(hostname) => hostname.set(name),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
             PlatformControlRequestV2::NetworkInfo {}
             | PlatformControlRequestV2::Ipv4Set { .. }
             | PlatformControlRequestV2::Ipv6Set { .. }
@@ -891,9 +1075,20 @@ impl ControlV2State {
                 },
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
-            PlatformControlRequestV2::SshState {} => match self.ssh.as_mut() {
-                Some(ssh) => ssh.state(),
+            PlatformControlRequestV2::TargetAgent { enabled } => {
+                self.handle_target_agent(*enabled).await
+            }
+            PlatformControlRequestV2::TargetAgentState {} => match self.target_agent.as_ref() {
+                Some((channel, switch)) => target_agent_state(switch.enabled(), channel.snapshot()),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::TargetAgentCall {
+                call,
+                timeout_ms,
+                lease,
+            } => match self.target_agent_for(call, *lease, now) {
+                Ok(channel) => run_target_agent_call(channel, call.clone(), *timeout_ms).await,
+                Err(code) => reject(code),
             },
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {
                 Some(features) => features.state(),
@@ -1021,14 +1216,28 @@ impl ControlV2State {
             };
         }
 
-        // Lazy gadget recovery: a gadget lost to an external unbind or a USB
-        // controller reset is rebuilt before the lease is served, so the first
-        // HID request after a reboot still finds a keyboard and a mouse.
+        // Lazy gadget recovery: a gadget that is gone (the owner's start found
+        // no configfs yet, or it was taken apart by hand) is built before the
+        // lease is served, so the first HID request still finds a keyboard
+        // and a mouse. A gadget present but unbound is left as it is. The
+        // agent's channel is closed meanwhile, as for every gadget change.
         #[cfg(feature = "gadget-media-profile")]
         if let Some(media) = self.media.as_ref()
-            && let Err(error) = media.ensure_hid_gadget()
+            && media.needs_hid_gadget()
         {
-            eprintln!("gadget: lazy HID bind failed: {error:?}");
+            let channel = self
+                .target_agent
+                .as_ref()
+                .map(|(channel, _)| channel.clone());
+            if let Some(channel) = channel.as_ref() {
+                channel.pause().await;
+            }
+            if let Err(error) = media.ensure_hid_gadget() {
+                eprintln!("gadget: lazy HID bind failed: {error:?}");
+            }
+            if let Some(channel) = channel.as_ref() {
+                channel.resume().await;
+            }
         }
 
         let (session_binding, target_binding, ttl_seconds) = match lease {
@@ -1297,6 +1506,9 @@ impl ControlV2State {
         if self.hid_only.as_ref().is_some_and(|state| state.enabled()) && !detaching {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
+        // Every media operation may unbind and bind the gadget, which takes
+        // the agent's device away and back: the channel closes it first.
+        let agent = self.target_agent_shared();
         let Some(engine) = self.media.as_mut() else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
@@ -1316,15 +1528,21 @@ impl ControlV2State {
         let Ok(observed) = engine.observe().await else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
-        match engine
+        if let Some(agent) = agent.as_ref() {
+            agent.pause().await;
+        }
+        let executed = engine
             .execute(
                 operation,
                 MediaEligibility::verified_for_test_profile(),
                 observed,
                 now_ms,
             )
-            .await
-        {
+            .await;
+        if let Some(agent) = agent.as_ref() {
+            agent.resume().await;
+        }
+        match executed {
             Ok(
                 MediaTransitionOutcome::Applied
                 | MediaTransitionOutcome::Noop
@@ -1347,6 +1565,68 @@ impl ControlV2State {
             Ok(MediaTransitionOutcome::Rejected(rejection)) => reject(media_code(rejection)),
             Err(_) => reject(ControlRejectionCode::Internal),
         }
+    }
+}
+
+/// The switch and the channel's snapshot as the control protocol says them.
+fn target_agent_state(
+    enabled: bool,
+    snapshot: crate::target_agent::AgentSnapshot,
+) -> ControlResponse {
+    ControlResponse::TargetAgentState {
+        enabled,
+        wanted: snapshot.wanted,
+        open: snapshot.open,
+        problem: snapshot.problem,
+        agent: snapshot.agent,
+        refused: snapshot.refused,
+        messages_in: snapshot.messages_in,
+        messages_out: snapshot.messages_out,
+        dropped: snapshot.dropped,
+        board_commit: crate::target_agent::board_commit().into(),
+    }
+}
+
+/// One call to the connected agent, waited for without the shared state's
+/// lock when the server's dispatch runs it.
+pub(crate) async fn run_target_agent_call(
+    channel: crate::target_agent::AgentChannel,
+    call: bli_kvm_agent_protocol::Call,
+    timeout_ms: u32,
+) -> ControlResponse {
+    let started = std::time::Instant::now();
+    let result = channel
+        .call(
+            call,
+            std::time::Duration::from_millis(u64::from(timeout_ms)),
+        )
+        .await;
+    call_response(result, started.elapsed())
+}
+
+/// The owner's response at a call's end: the answer and its round trip, the
+/// agent's refusal with its reason (which the channel keeps within the
+/// protocol's bound), or why there was none.
+pub(crate) fn call_response(
+    result: Result<bli_kvm_agent_protocol::Answer, crate::target_agent::CallError>,
+    elapsed: std::time::Duration,
+) -> ControlResponse {
+    use crate::target_agent::CallError;
+    match result {
+        Ok(answer) => ControlResponse::TargetAgentAnswer {
+            answer,
+            round_trip_us: u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
+        },
+        Err(CallError::NotConnected) => reject(ControlRejectionCode::InvalidState),
+        Err(CallError::TimedOut) => reject(ControlRejectionCode::BackendUnavailable),
+        Err(CallError::Failed(reason)) => {
+            if bli_kvm_control_protocol::agent_reason_is_valid(&reason) {
+                ControlResponse::TargetAgentRefused { reason }
+            } else {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+        }
+        Err(CallError::Closed) => reject(ControlRejectionCode::Internal),
     }
 }
 
@@ -1408,6 +1688,81 @@ fn atx_code(rejection: AtxRejection) -> ControlRejectionCode {
 
 #[cfg(test)]
 mod tests {
+    /// The SSH and QUIC switches set through the owner reach the record that
+    /// a RAW update carries (`system_switches`).
+    #[tokio::test]
+    async fn a_switch_set_through_the_owner_is_recorded_for_a_raw_update() {
+        use crate::system_switches::SystemSwitches;
+        use crate::tailscale::TailscaleRunner;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Units(Arc<Mutex<HashMap<String, bool>>>);
+
+        impl TailscaleRunner for Units {
+            fn run(&mut self, _program: &str, args: &[&str]) -> Result<String, String> {
+                let mut units = self.0.lock().unwrap();
+                match args {
+                    ["show", "--property=UnitFileState", "--value", unit] => {
+                        Ok(match units.get(*unit) {
+                            Some(true) => "enabled".to_string(),
+                            Some(false) => "disabled".to_string(),
+                            None => String::new(),
+                        })
+                    }
+                    [.., verb @ ("enable" | "disable"), "--now", unit] => {
+                        units.insert(unit.to_string(), *verb == "enable");
+                        Ok(String::new())
+                    }
+                    _ => Ok(String::new()),
+                }
+            }
+
+            fn path_exists(&mut self, _path: &str) -> bool {
+                false
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("image"), "image A\n").unwrap();
+        let units = Units::default();
+        units.0.lock().unwrap().extend([
+            ("ssh.service".to_string(), true),
+            ("hardened-blikvm-quic.service".to_string(), false),
+        ]);
+        // An owner that serves requests, without any device profile.
+        let mut state = ControlV2State::disabled();
+        state.enabled = true;
+        state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
+            units.clone(),
+        )));
+        state.with_quic(crate::quic_settings::QuicSettings::open(Box::new(
+            units.clone(),
+        )));
+        state.with_system_switches(SystemSwitches::open(
+            directory.path().join("record.json"),
+            directory.path().join("image"),
+            Box::new(units.clone()),
+        ));
+        for request in [
+            PlatformControlRequestV2::Quic { enabled: true },
+            PlatformControlRequestV2::Ssh { enabled: false },
+        ] {
+            assert_eq!(
+                state.handle(&request, Instant::now()).await,
+                ControlResponse::Applied
+            );
+        }
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.path().join("record.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            (record["ssh"].clone(), record["quic"].clone()),
+            (serde_json::json!(false), serde_json::json!(true))
+        );
+    }
+
     #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
     async fn hid_reconciliation_observation_preserves_pending_ledger_without_device_access() {
@@ -1435,6 +1790,7 @@ mod tests {
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: None,
                 })),
                 ledger,
             )
@@ -1633,6 +1989,389 @@ mod tests {
             ControlResponse::Applied
         );
         assert!(!state.attestations.authorize(9, &TARGET, now));
+    }
+
+    #[test]
+    fn an_agents_refusal_reaches_the_server_with_its_reason() {
+        use crate::target_agent::CallError;
+        let elapsed = std::time::Duration::from_millis(3);
+        assert_eq!(
+            call_response(
+                Err(CallError::Failed(
+                    "Windows refused the monitors' configuration (87)".into()
+                )),
+                elapsed
+            ),
+            ControlResponse::TargetAgentRefused {
+                reason: "Windows refused the monitors' configuration (87)".into()
+            }
+        );
+        // No reason to carry: the code alone.
+        assert_eq!(
+            call_response(Err(CallError::Failed(String::new())), elapsed),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert_eq!(
+            call_response(Err(CallError::TimedOut), elapsed),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendUnavailable
+            }
+        );
+        assert_eq!(
+            call_response(Ok(bli_kvm_agent_protocol::Answer::Pong), elapsed),
+            ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Pong,
+                round_trip_us: 3_000
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_target_agent_is_read_and_called_only_with_its_channel() {
+        let now = Instant::now();
+        let mut state = ControlV2State::enabled_for_test();
+        let call = PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms: 100,
+            lease: None,
+        };
+        for request in [PlatformControlRequestV2::TargetAgentState {}, call.clone()] {
+            assert_eq!(
+                state.handle(&request, now).await,
+                ControlResponse::Rejected {
+                    code: ControlRejectionCode::CapabilityDisabled
+                }
+            );
+        }
+        let directory = tempfile::tempdir().unwrap();
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(directory.path().join("target-agent.env")),
+        );
+        assert!(matches!(
+            state
+                .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+                .await,
+            ControlResponse::TargetAgentState {
+                enabled: false,
+                wanted: false,
+                open: false,
+                agent: None,
+                ..
+            }
+        ));
+        // The state names the commit the board's hello names.
+        assert!(matches!(
+            state
+                .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+                .await,
+            ControlResponse::TargetAgentState { board_commit, .. }
+                if board_commit == crate::target_agent::board_hello().commit
+        ));
+        // No agent has said hello: the call is refused at once.
+        assert_eq!(
+            state.handle(&call, now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+        // A read without the operator's lease never reaches the agent; with
+        // a lease and no HID here, it is not offered at all.
+        let read = |lease| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Monitors,
+            timeout_ms: 100,
+            lease,
+        };
+        assert_eq!(
+            state.handle(&read(None), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::LeaseExpired
+            }
+        );
+        let lease = bli_kvm_core::TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        assert_eq!(
+            state.handle(&read(Some(lease)), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
+            }
+        );
+        assert!(state.target_agent_shared().is_some());
+    }
+
+    /// The owner's gadget on a fake configfs under `directory` (`configfs`,
+    /// with an empty store of images), its HID functions bound.
+    #[cfg(feature = "gadget-media-profile")]
+    fn gadget_engine(directory: &std::path::Path, serial: &str) -> MediaTransitionEngine {
+        let configfs = directory.join("configfs");
+        let images = directory.join("images");
+        std::fs::create_dir_all(&configfs).unwrap();
+        std::fs::create_dir_all(&images).unwrap();
+        let catalog = images.join("catalog.json");
+        std::fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        let engine = MediaTransitionEngine::open_with_executor(
+            directory.join("journal.json"),
+            bli_kvm_media_catalog::MediaCatalog::open(&catalog).unwrap(),
+            bli_kvm_media_transition::MediaExecutor::Gadget(
+                bli_kvm_media_transition::GadgetMediaExecutor::new(
+                    bli_kvm_media_transition::GadgetMediaConfig {
+                        configfs_root: configfs,
+                        udc: "musb-hdrc.2.auto".into(),
+                        image_directory: images,
+                        strings: bli_kvm_usb_gadget::GadgetStrings {
+                            manufacturer: "Hardened BLi-KVM".into(),
+                            product: "BLi-KVM Composite Device".into(),
+                            serial: serial.into(),
+                            configuration: "BLi-KVM configuration".into(),
+                        },
+                        id_vendor: 0x1d6b,
+                        id_product: 0x0104,
+                        bcd_usb: 0x0200,
+                        bcd_device: 0x0100,
+                    },
+                ),
+            ),
+        )
+        .unwrap();
+        assert!(engine.ensure_hid_gadget().unwrap());
+        engine
+    }
+
+    #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+    #[tokio::test]
+    async fn a_gadget_built_again_for_a_hid_request_closes_the_channel_meanwhile() {
+        use bli_kvm_hid_transition::{
+            GadgetHidConfig, GadgetHidExecutor, HidExecutor, HidReleaseLedger, HidTransitionEngine,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let hid = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().join("absent-devices"),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
+            })),
+            HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap(),
+        )
+        .unwrap();
+        let mut state = ControlV2State::with_hid_policy(HidControlPolicy::new(hid))
+            .with_media_engine(gadget_engine(directory.path(), "BLK-lazy-build"));
+        // The channel's device, a new one at each open: one end of a socket
+        // pair, the target's end kept.
+        let opens = std::sync::Arc::new(AtomicUsize::new(0));
+        let targets = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opener: crate::target_agent::Opener = Box::new({
+            let (opens, targets) = (opens.clone(), targets.clone());
+            move || {
+                let (board, target) =
+                    std::os::unix::net::UnixDatagram::pair().map_err(|error| error.to_string())?;
+                board
+                    .set_nonblocking(true)
+                    .map_err(|error| error.to_string())?;
+                targets.lock().unwrap().push(target);
+                opens.fetch_add(1, Ordering::SeqCst);
+                Ok(std::fs::File::from(std::os::fd::OwnedFd::from(board)))
+            }
+        });
+        let channel = crate::target_agent::AgentChannel::start_with(
+            opener,
+            crate::target_agent::board_hello(),
+        );
+        state.with_target_agent(
+            channel.clone(),
+            crate::target_agent::AgentSwitch::open(directory.path().join("target-agent.env")),
+        );
+        channel.want(true).await;
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+
+        // The gadget is gone (taken apart by hand): a HID request, whatever
+        // it is answered, builds it again, the channel's device closed
+        // meanwhile and opened again after.
+        std::fs::remove_dir_all(configfs.join("hardened")).unwrap();
+        let _ = state
+            .handle(
+                &PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: TARGET,
+                        ttl_seconds: 30,
+                    },
+                },
+                Instant::now(),
+            )
+            .await;
+        assert!(
+            bli_kvm_usb_gadget::observe(&configfs)
+                .unwrap()
+                .udc
+                .is_some()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while opens.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        assert!(channel.snapshot().open);
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn a_failed_switch_off_leaves_the_channel_as_the_switch() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let engine = gadget_engine(directory.path(), "BLK-agent-switch-off");
+        let mut state = ControlV2State::disabled().with_media_engine(engine);
+        let switch_path = directory.path().join("target-agent.env");
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(&switch_path),
+        );
+        let now = Instant::now();
+        let switch = |enabled| PlatformControlRequestV2::TargetAgent { enabled };
+        assert_eq!(
+            state.handle(&switch(true), now).await,
+            ControlResponse::Applied
+        );
+
+        // The gadget cannot be changed back: the switch stays on, and so
+        // does the channel's wish, so that an agent may still connect.
+        std::fs::remove_file(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        std::fs::create_dir(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        assert_eq!(
+            state.handle(&switch(false), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        let read = state
+            .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+            .await;
+        assert!(
+            matches!(
+                read,
+                ControlResponse::TargetAgentState {
+                    enabled: true,
+                    wanted: true,
+                    ..
+                }
+            ),
+            "{read:?}"
+        );
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn the_target_agents_switch_changes_the_gadget_and_is_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let engine = gadget_engine(directory.path(), "BLK-agent-switch");
+        let mut state = ControlV2State::disabled().with_media_engine(engine);
+        let switch_path = directory.path().join("target-agent.env");
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(&switch_path),
+        );
+        let now = Instant::now();
+        let report_id = || bli_kvm_usb_gadget::absolute_mouse_report_id(&configfs).unwrap();
+        let enabled = |state: &ControlResponse| {
+            matches!(
+                state,
+                ControlResponse::TargetAgentState {
+                    enabled: true,
+                    wanted: true,
+                    ..
+                }
+            )
+        };
+
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), Some(1));
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        let read = state
+            .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+            .await;
+        assert!(enabled(&read), "{read:?}");
+
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: false },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), None);
+        assert!(!crate::target_agent::switch_enabled(&switch_path));
+
+        // A stopping owner leaves the mouse plain for whoever owns the
+        // gadget next, and the switch as it is.
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), Some(1));
+        assert_eq!(state.begin_quiescence().await, Ok(()));
+        assert_eq!(report_id(), None);
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        state.enabled = true;
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: false },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+
+        // A gadget that cannot be changed leaves the switch as it was.
+        std::fs::remove_file(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        std::fs::create_dir(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert!(!crate::target_agent::switch_enabled(&switch_path));
     }
 
     #[tokio::test]

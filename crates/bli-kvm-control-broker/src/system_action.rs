@@ -333,6 +333,16 @@ impl<R: ActionRunner> SystemActionState<R> {
         ) else {
             return reject(ControlRejectionCode::InvalidState);
         };
+        // A reboot leaves its record pending until it is accepted after the
+        // boot, and nothing else can close it while the owner runs: the owner
+        // holds the journal, so the acceptance unit cannot open it, and no page
+        // asks for the acceptance. A new action the operator confirms is their
+        // word that the board came back: a record whose boot is over is
+        // accepted first. One dispatched in this boot, whose outcome is not
+        // known, or one younger than the startup guard still refuses it.
+        if self.capability_enabled && self.policy.pending_count() == 1 {
+            let _ = self.accept_post_boot(true);
+        }
         let eligibility = SystemActionEligibility::reviewed(
             self.capability_enabled,
             self.backend_ready,
@@ -598,6 +608,94 @@ mod tests {
         assert_eq!(
             engine.accept_post_boot(operation, observation).unwrap(),
             SystemActionPostBootDecision::PersistAccepted
+        );
+    }
+
+    /// A reboot left its record pending, and the board came back: the next
+    /// action the operator confirms closes that record and is dispatched,
+    /// where it was refused for good before. In the boot that dispatched it the
+    /// record still refuses another action. The owner gives the policy the
+    /// wall clock for an action and the uptime for an acceptance, as here.
+    #[test]
+    fn the_next_confirmed_action_closes_the_reboot_that_happened() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("store");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        // Safety: the effective ids are read once for the store ownership.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let open = || {
+            bli_kvm_system_action_store::SystemActionStore::open_at(root.clone(), uid, gid).unwrap()
+        };
+        let now = 1_791_000_000_000_u64;
+        let confirmed = |session_binding: u64, at: u64| SystemActionWireRequest {
+            action: SystemActionKind::Reboot,
+            session_binding,
+            confirmation_binding: [0x11; 32],
+            confirmed_at_unix_ms: at - 1_000,
+        };
+
+        let first_runner = MockRunner::default();
+        let first_dispatched = Arc::clone(&first_runner.dispatched);
+        let mut first = SystemActionState::new(first_runner, true, true, [0x22; 16]);
+        first.with_store(open()).unwrap();
+        assert_eq!(
+            first.handle("a123456789abcdef0123456789abcdef", &confirmed(9, now), now),
+            ControlResponse::Applied
+        );
+        assert_eq!(first_dispatched.lock().unwrap().len(), 1);
+        // The reboot has not happened in this boot: another action waits.
+        assert_eq!(
+            first.handle(
+                "b123456789abcdef0123456789abcdef",
+                &confirmed(10, now + 120_000),
+                now + 120_000
+            ),
+            reject(ControlRejectionCode::PendingUnreconciled)
+        );
+        assert_eq!(first_dispatched.lock().unwrap().len(), 1);
+        drop(first);
+
+        // The next boot: the owner restores the pending record.
+        let runner = MockRunner::default();
+        let dispatched = Arc::clone(&runner.dispatched);
+        let mut next = SystemActionState::new(runner, true, true, [0x33; 16]);
+        next.with_store(open()).unwrap();
+        assert_eq!(next.pending_count(), 1);
+        let later = now + 3_600_000;
+        assert_eq!(
+            next.handle(
+                "c123456789abcdef0123456789abcdef",
+                &confirmed(11, later),
+                later
+            ),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            dispatched.lock().unwrap().as_slice(),
+            &[SystemAction::Reboot]
+        );
+        // The first reboot is accepted, the new one is the pending record, and
+        // both are in the journal.
+        assert_eq!(next.pending_count(), 1);
+        let phases: Vec<SystemActionPhase> = next
+            .policy_snapshot()
+            .record_snapshots()
+            .into_iter()
+            .flatten()
+            .map(|record| record.phase)
+            .collect();
+        assert!(
+            phases.contains(&SystemActionPhase::PostBootAccepted),
+            "{phases:?}"
+        );
+        drop(next);
+        let stored = SystemActionPolicyEngine::restore(open().load(1).unwrap().state()).unwrap();
+        assert_eq!(stored.pending_count(), 1);
+        assert_eq!(
+            stored.phase_for(*b"\xa1\x23\x45\x67\x89\xab\xcd\xef\x01\x23\x45\x67\x89\xab\xcd\xef"),
+            Some(SystemActionPhase::PostBootAccepted)
         );
     }
 

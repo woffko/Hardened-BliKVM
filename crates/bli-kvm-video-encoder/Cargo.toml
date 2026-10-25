@@ -10,15 +10,34 @@ links = "bk_vp8"
 build = "build.rs"
 
 [features]
+default = ["zune"]
+# Decodes capture frames with zune-jpeg (pure Rust), the fallback decoder.
+zune = ["dep:zune-jpeg"]
+# Decodes capture frames with the pinned static libjpeg-turbo from
+# BLI_KVM_LIBJPEG_TURBO_DIR (scripts/build-libjpeg-turbo.sh); preferred when
+# built in.
+turbojpeg = ["dep:cc"]
 # Links the pinned static libvpx from BLI_KVM_LIBVPX_DIR (scripts/build-libvpx.sh).
 vp8 = ["dep:cc"]
 # Links the pinned static x264 from BLI_KVM_X264_DIR (scripts/build-x264.sh).
 h264 = ["vp8"]
 
 [dependencies]
+# The record header of the frame socket; no code of the QUIC stack.
+bli-kvm-quic-protocol = { path = "../bli-kvm-quic-protocol" }
+# The H616 video engine's H.264 encoder: the client of its driver.
+bli-kvm-ve-encoder = { path = "../bli-kvm-ve-encoder" }
+# The report for the web server.
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"] }
+zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"], optional = true }
+
+[dev-dependencies]
+# The stand-in for the engine, behind the driver's interface.
+bli-kvm-ve-encoder = { path = "../bli-kvm-ve-encoder", features = ["standin"] }
+tempfile.workspace = true
 
 [build-dependencies]
 cc = { version = "=1.2.55", optional = true }
@@ -26,4 +45,23 @@ cc = { version = "=1.2.55", optional = true }
 [[bin]]
 name = "bli-kvm-video-encoder"
 path = "src/main.rs"
+required-features = ["vp8", "h264"]
+
+# The binary's frame socket, with a stand-in for uStreamer.
+[[test]]
+name = "frame_socket"
+path = "tests/frame_socket.rs"
+required-features = ["vp8", "h264"]
+
+# A frame socket without a board, for the transport's host tests.
+[[example]]
+name = "h264_frame_source"
+path = "examples/h264_frame_source.rs"
+required-features = ["vp8", "h264"]
+
+# The product's x264 over pictures from a file: the reference of the
+# hardware encoder's lab. No package carries it.
+[[example]]
+name = "h264_reference"
+path = "examples/h264_reference.rs"
 required-features = ["vp8", "h264"]

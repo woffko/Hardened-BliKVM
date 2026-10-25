@@ -264,6 +264,9 @@ pub(crate) struct ReferenceStatus {
     restricted_active: bool,
     paranoid_active: bool,
     webrtc_blocked: bool,
+    /// The QUIC gateway's port is admitted by no rule: the restrictive modes
+    /// keep it closed, as they keep the WebRTC media range closed.
+    quic_blocked: bool,
     paranoid_available: bool,
     confirmation_required: bool,
     https_enabled: bool,
@@ -451,6 +454,7 @@ async fn read_status(state: &AppState) -> AppResult<ReferenceStatus> {
         restricted_active: mode == FirewallMode::Restricted,
         paranoid_active: mode == FirewallMode::Paranoid,
         webrtc_blocked: restrictive && !media_admitted(&rules.nft),
+        quic_blocked: quic_blocked(mode),
         paranoid_available: status.configuration_ready,
         confirmation_required: status.pending_operation_id.is_some(),
         https_enabled: https_port != 0,
@@ -566,9 +570,45 @@ pub(crate) async fn reference_confirm(
     reference_status(state).await
 }
 
+/// Paranoid admits HTTPS from local addresses and nothing else: the QUIC
+/// gateway's UDP port stays closed in it. Restricted admits that port from
+/// the local ranges beside HTTPS and SSH (the owner's rules), and the open
+/// modes need no rule for it.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn quic_blocked(mode: FirewallMode) -> bool {
+    mode == FirewallMode::Paranoid
+}
+
+/// Whether the mode in force keeps the QUIC gateway's port closed. Without
+/// firewall modes, or when the owner cannot be asked, it is not known to be.
+pub(crate) async fn quic_blocked_now(state: &AppState) -> bool {
+    #[cfg(feature = "restricted-control-surface")]
+    if state.options.restricted_controls_enabled
+        && state.options.firewall_modes_enabled
+        && let Ok(bli_kvm_control_protocol::ControlResponse::FirewallModeState { status }) =
+            execute(
+                state,
+                bli_kvm_core::PlatformControlRequestV2::FirewallModeStatus {},
+            )
+            .await
+    {
+        return quic_blocked(status.mode);
+    }
+    let _ = state;
+    false
+}
+
 #[cfg(test)]
 mod reference_tests {
-    use super::media_admitted;
+    use super::{FirewallMode, media_admitted, quic_blocked};
+
+    #[test]
+    fn the_quic_port_is_closed_in_paranoid_only() {
+        assert!(!quic_blocked(FirewallMode::Baseline));
+        assert!(!quic_blocked(FirewallMode::Moderate));
+        assert!(!quic_blocked(FirewallMode::Restricted));
+        assert!(quic_blocked(FirewallMode::Paranoid));
+    }
 
     #[test]
     fn the_local_media_range_is_read_from_the_owned_table_only() {

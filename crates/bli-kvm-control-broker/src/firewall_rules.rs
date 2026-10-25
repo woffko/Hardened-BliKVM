@@ -3,6 +3,29 @@
 
 pub use bli_kvm_core::FirewallMode;
 
+/// How a mode's rules read in the kernel. The owner verifies its whole table
+/// against the mode it is marked with, so it must also know what an earlier
+/// build wrote for that mode: after an update it finds those rules in force
+/// and brings them up to date (`firewall_executor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleForm {
+    /// What `render` writes.
+    Current,
+    /// Restricted before it admitted the QUIC transport's port.
+    BeforeQuicPort,
+}
+
+impl RuleForm {
+    /// The forms a table of `mode` may have, this build's first.
+    pub fn of(mode: FirewallMode) -> &'static [RuleForm] {
+        if mode == FirewallMode::Restricted {
+            &[RuleForm::Current, RuleForm::BeforeQuicPort]
+        } else {
+            &[RuleForm::Current]
+        }
+    }
+}
+
 /// Set only from a verified native front/backend topology, never a copied eth0.
 pub struct BackendIsolation<'a> {
     pub interface: &'a str,
@@ -68,6 +91,13 @@ pub fn render(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Result<String, &
             String::new()
         };
         input.push_str(&format!("ip saddr {LOCAL_V4} {accepted_ports}ct state new accept\nip6 saddr {LOCAL_V6} {accepted_ports}ct state new accept\n"));
+        if mode == FirewallMode::Restricted {
+            // The QUIC transport answers on the UDP side of the page's port
+            // (docs/design/quic-transport-v1.md) and is admitted like the
+            // page itself. Paranoid keeps it closed: HTTPS only.
+            let port = ports.https_port;
+            input.push_str(&format!("ip saddr {LOCAL_V4} udp dport {port} accept\nip6 saddr {LOCAL_V6} udp dport {port} accept\n"));
+        }
         if restricted {
             if let Some((first, last)) = ports.webrtc_media {
                 input.push_str(&format!("ip saddr {LOCAL_V4} udp dport {first}-{last} accept\nip6 saddr {LOCAL_V6} udp dport {first}-{last} accept\n"));
@@ -166,6 +196,25 @@ mod tests {
         assert!(restricted.contains("tcp dport { 22, 8443 }"));
         assert!(restricted.contains("udp dport { 53, 123, 1514 }"));
         assert!(paranoid.contains("tcp dport 8443"));
+        // The QUIC transport's port, the UDP side of the page's: Restricted
+        // admits it from the local ranges, and no other mode names it.
+        assert!(restricted.contains(&format!("ip saddr {LOCAL_V4} udp dport 8443 accept\n")));
+        assert!(restricted.contains(&format!("ip6 saddr {LOCAL_V6} udp dport 8443 accept\n")));
+        for mode in [
+            FirewallMode::Baseline,
+            FirewallMode::Moderate,
+            FirewallMode::Paranoid,
+        ] {
+            assert!(
+                !render(mode, &config).unwrap().contains("udp dport 8443"),
+                "{mode:?}"
+            );
+        }
+        assert_eq!(
+            RuleForm::of(FirewallMode::Restricted),
+            [RuleForm::Current, RuleForm::BeforeQuicPort]
+        );
+        assert_eq!(RuleForm::of(FirewallMode::Paranoid), [RuleForm::Current]);
         assert!(!paranoid.contains("dport { 53"));
         assert!(!paranoid.contains("22,"));
         assert!(

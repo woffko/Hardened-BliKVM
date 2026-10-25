@@ -5,10 +5,7 @@
 //! tick sends a one-pixel relative move followed by a release report so a
 //! jiggler can never leave a held movement behind.
 
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 use bli_kvm_core::{MouseJigglerChange, MouseJigglerMode};
@@ -132,28 +129,7 @@ fn render_state(mode: Option<MouseJigglerMode>) -> String {
 }
 
 fn write_state(path: &Path, mode: Option<MouseJigglerMode>) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "the state file has no parent directory".to_string())?;
-    let metadata = std::fs::symlink_metadata(parent)
-        .map_err(|error| format!("the state directory is unavailable: {error}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("the state directory must be a real directory".into());
-    }
-    let temporary = path.with_extension("env.new");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&temporary)
-        .map_err(|error| format!("the temporary state file is unavailable: {error}"))?;
-    file.write_all(render_state(mode).as_bytes())
-        .map_err(|error| format!("the temporary state file could not be written: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("the temporary state file could not be synced: {error}"))?;
-    drop(file);
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("the state file could not be replaced: {error}"))
+    crate::device_settings::replace_state_file(path, &render_state(mode))
 }
 
 fn reject(code: ControlRejectionCode) -> ControlResponse {
@@ -191,6 +167,23 @@ mod tests {
             MouseJigglerState::open(path, Box::new(writer), true),
             nudges,
         )
+    }
+
+    #[test]
+    fn the_jigglers_state_file_is_0640() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mouse-jiggler.env");
+        let (mut jiggler, _) = state(&path, false);
+        assert_eq!(
+            jiggler.handle(&MouseJigglerChange {
+                enabled: true,
+                mode: MouseJigglerMode::Relative,
+            }),
+            ControlResponse::Applied
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "{mode:o}");
     }
 
     #[test]

@@ -9,7 +9,6 @@
 // Without the restricted control surface no wake is sent, so nothing records.
 #![cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use axum::{Json, extract::State};
@@ -90,11 +89,30 @@ impl WolMacStore {
                 return Err(WolMacError::Unavailable);
             }
         }
-        let store = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Store>(&text).ok())
-            .unwrap_or_default();
+        // A file that cannot be read is not taken for an empty one: a change
+        // would write over what it holds.
+        let store = match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                serde_json::from_str::<Store>(&text).map_err(|_| WolMacError::Unavailable)?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Store::default(),
+            Err(_) => return Err(WolMacError::Unavailable),
+        };
         Ok(Self { path, store })
+    }
+
+    /// Opens the store and applies `change` to it while no other change
+    /// runs (code audit of 2026-10-20, AUD-13).
+    pub fn change<T>(
+        state_dir: &Path,
+        change: impl FnOnce(&mut Self) -> Result<T, WolMacError>,
+    ) -> Result<T, WolMacError> {
+        static CHANGES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _change = CHANGES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut store = Self::open(state_dir)?;
+        change(&mut store)
     }
 
     /// Reference wire format: the address, then the name when one is set.
@@ -161,9 +179,14 @@ impl WolMacStore {
         if text.len() as u64 > MAX_FILE_BYTES {
             return Err(WolMacError::Unavailable);
         }
-        std::fs::write(&self.path, text).map_err(|_| WolMacError::Unavailable)?;
-        std::fs::set_permissions(&self.path, PermissionsExt::from_mode(0o600))
-            .map_err(|_| WolMacError::Unavailable)
+        let name = self.path.file_name().ok_or(WolMacError::Unavailable)?;
+        crate::state_file::replace(
+            parent,
+            ".wol-macs-",
+            &name.to_string_lossy(),
+            text.as_bytes(),
+        )
+        .map_err(|_| WolMacError::Unavailable)
     }
 }
 
@@ -204,9 +227,7 @@ fn map_error(error: WolMacError) -> AppError {
 /// Records an address after a successful wake; a storage failure never turns
 /// a sent packet into an error.
 pub(crate) fn remember(state: &AppState, mac: &str) {
-    if let Ok(mut store) = WolMacStore::open(&state.options.state_dir) {
-        let _ = store.record(mac);
-    }
+    let _ = WolMacStore::change(&state.options.state_dir, |store| store.record(mac));
 }
 
 pub(crate) async fn list(
@@ -221,7 +242,8 @@ pub(crate) async fn delete(
     State(state): State<AppState>,
     Json(body): Json<WolMacBody>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    open(&state)?.delete(&body.mac).map_err(map_error)?;
+    WolMacStore::change(&state.options.state_dir, |store| store.delete(&body.mac))
+        .map_err(map_error)?;
     Ok(Json(ApiResponse::ok(())))
 }
 
@@ -229,15 +251,17 @@ pub(crate) async fn rename(
     State(state): State<AppState>,
     Json(body): Json<WolMacNameBody>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    open(&state)?
-        .rename(&body.mac, &body.name)
-        .map_err(map_error)?;
+    WolMacStore::change(&state.options.state_dir, |store| {
+        store.rename(&body.mac, &body.name)
+    })
+    .map_err(map_error)?;
     Ok(Json(ApiResponse::ok(())))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn addresses_are_normalized_bounded_named_and_deleted() {
@@ -283,5 +307,41 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn parallel_records_keep_every_address() {
+        let dir = tempfile::tempdir().unwrap();
+        let recorders: Vec<_> = (0..2_u8)
+            .map(|thread| {
+                let state_dir = dir.path().to_path_buf();
+                std::thread::spawn(move || {
+                    for index in 0..(MAX_MACS / 2) as u8 {
+                        WolMacStore::change(&state_dir, |store| {
+                            store.record(&format!("02:00:00:00:{thread:02X}:{index:02X}"))
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for recorder in recorders {
+            recorder.join().unwrap();
+        }
+        assert_eq!(
+            WolMacStore::open(dir.path()).unwrap().lines().len(),
+            MAX_MACS
+        );
+    }
+
+    #[test]
+    fn a_damaged_history_is_not_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(&path, "{\"macs\":[").unwrap();
+        assert!(
+            WolMacStore::change(dir.path(), |store| store.record("00:11:22:33:44:55")).is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"macs\":[");
     }
 }

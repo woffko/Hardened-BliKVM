@@ -47,6 +47,18 @@ export function clearPicoclawSessionId() {
   removeLocalValue(PICOCLAW_SESSION_ID_KEY);
 }
 
+/** Forgets everything the page keeps for the assistant, as a logout does. */
+export function clearPicoclawStorage() {
+  clearPicoclawSessionId();
+  for (const key of [
+    PICOCLAW_MAX_STEPS_KEY,
+    PICOCLAW_MAX_RUNTIME_KEY,
+    PICOCLAW_RUNTIME_INSTALL_SNAPSHOT_KEY
+  ]) {
+    removeLocalValue(key);
+  }
+}
+
 export function getPicoclawMaxSteps() {
   const value = getLocalValue(PICOCLAW_MAX_STEPS_KEY);
   const parsed = value ? Number(value) : 20;

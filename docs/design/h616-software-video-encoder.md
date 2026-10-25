@@ -96,7 +96,17 @@ Signaling and deployment (host-complete, not yet deployed):
   preferred. The GUI offers "VP8 (WebRTC)".
 - `packaging/janus/` enables only the streaming plugin and the loopback
   WebSocket transport, no admin API, host candidates only, RTP ports
-  20000-20099 for media.
+  20000-20099 for media. Janus's WebSocket and its mountpoints' RTP inputs
+  are on a loopback address of its own, `127.0.0.2` (the encoders send
+  there, `deploy_vp8.sh` gives the server `BLI_KVM_JANUS_WS=127.0.0.2:8188`;
+  Janus's unit gives `lo` that address under the label `lo:janus` before it
+  starts, as Janus binds only an interface's own address: on the test board
+  without it the mountpoints failed and the WebSockets server took every
+  address),
+  and every unit that neither feeds nor asks Janus denies that address;
+  allow lists name `127.0.0.1` rather than `localhost`, which would admit it
+  (security review of 2026-10-18, MED-03). Its unit's bind list names each
+  of its ports, for a systemd that enforces it (249 does not, N6).
 - `hardened-blikvm-janus.service` and `hardened-blikvm-video-encoder.service`
   run as dynamic users; the encoder has loopback-only networking and
   `CPUQuota=250%`.
@@ -128,7 +138,10 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   viewer's signaling lasts and names the codec on its first line. Without a
   connection the encoder leaves the capture stream two seconds later; a new
   viewer makes it reconnect and start from a key frame. Without the socket
-  setting the encoder runs always, as before.
+  setting the encoder runs always, as before. Of the socket's group only
+  the user `BLI_KVM_VP8_DEMAND_USER` names (the web server) is served, by
+  its connection's peer credentials, and at most eight connections at once
+  (security review of 2026-10-18, MED-13).
 - MJPEG: the server reads the capture's multipart stream continuously and
   keeps only the newest complete part (`mjpeg_latest.rs`); the response
   sends a part only when the connection takes one, so a slow viewer skips
@@ -225,3 +238,208 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   periodic key frames) received only the headers and decoded nothing, as
   the VP8 probe of the same minute did; with key frames every two seconds
   both decode at 1920x1080.
+
+## Frame preparation with libjpeg-turbo (2026-10-01)
+
+- Preparing a capture frame (decoding the JPEG, then 4:4:4 to I420) took
+  45 ms at 1920x1080 and was the slowest stage. The encoder now decodes with
+  libjpeg-turbo 3.2.0 (`scripts/build-libjpeg-turbo.sh`: pinned, signature
+  checked, NEON required) straight into Y, Cb and Cr planes at the frame's
+  own subsampling, so a 4:2:2 capture needs only its chroma rows averaged
+  for I420; with halving it scales by half in the IDCT. zune-jpeg stays as
+  the fallback feature (`zune`), and `bench` measures both decoders on the
+  same frames.
+- On the board (`jpeg-bench-*.txt`, 60 frames of the same capture, both
+  decoders in one run):
+
+  | capture | decoder | decode | convert | total |
+  | --- | --- | --- | --- | --- |
+  | 1920x1080 4:2:2, 256 KB frames | zune-jpeg | 25.1 ms | 20.2 ms | 45.3 ms |
+  | 1920x1080 4:2:2, 256 KB frames | libjpeg-turbo | 19.1 ms | 6.1 ms | 25.2 ms |
+  | busier screen, 355 KB frames | zune-jpeg | 45.8 ms | 21.4 ms | 67.2 ms |
+  | busier screen, 355 KB frames | libjpeg-turbo | 28.8 ms | 5.9 ms | 34.7 ms |
+
+  At 1280x720 (decoded at 1920x1080, then scaled by two thirds) the totals
+  are 27.7 against 48.1 ms. The fast IDCT saves about 1 ms and is not used.
+  With two converter threads, preparation no longer bounds any codec at
+  1920x1080: x264 ultrafast reaches 36 frames/s (bounded by its 28 ms of
+  encoding), VP8 25 frames/s, at the earlier capture settings.
+- Quality: luma matches the zune path within 70 dB, and 4:4:4 chroma
+  exactly. For subsampled frames the new chroma is closer to the source
+  picture (tests: 4:2:2 49.8 against 38.2 dB, 4:2:0 44.3 against 36.1 dB),
+  because zune-jpeg upsamples chroma before it is averaged back.
+- Two faults found while testing, both handled: a damaged frame could leave
+  the TurboJPEG decompressor's Huffman tables corrupt, so every later frame
+  failed ("Bogus Huffman table definition") until a restart, and the
+  decompressor is now recreated after any error; and the fast IDCT scaled
+  by half returned wrong chroma for 4:2:0 frames, so it is never used when
+  halving. 20000 randomly damaged frames run through the decoder in a
+  release build in `check.sh`.
+- Live, with a WebRTC viewer (`stage-cpu-*-jpeg-*.txt`): the measurement
+  after the change ran with the capture settings that had been changed
+  through the Screen menu on 2026-09-30 (60 frames/s, 1920x1080, frame
+  detection off), which the restart of uStreamer during the deployment put
+  in force, and with a changing screen. The settings file also carries
+  quality 100, which changes nothing here: the capture device compresses the
+  JPEG itself (uStreamer reports a hardware encoder with quality 0), which is
+  why the quality setting is not offered. With detection off every frame
+  reaches the probe page's MJPEG view too, so nginx, the server and the
+  video proxy take 40-50 % of a core each and the encoders' stages slow down
+  by contention (decode 35-84 ms, convert 10-20 ms per frame). Those numbers
+  are not comparable with the earlier still-screen run (decode 26-49 ms,
+  convert 20-29 ms); the bench above is the controlled comparison.
+
+## WebRTC quality (2026-10-01, slot 58)
+
+- The Screen menu's Quality, in the H.264 and VP8 modes, sets the WebRTC
+  encoders' target bitrate: 1.5, 2.5, 5 or 8 Mbit/s (the units start at
+  2.5, `BLI_KVM_VP8_KBPS`). The server keeps the choice in its state
+  directory (`webrtc-bitrate.json`), offers `webrtc_bitrate` in the
+  capability manifest when an encoder demand socket is configured, and
+  reports it as `webrtcKbps` in `GET /api/vm/screen`; `POST /api/vm/screen`
+  with `type: webrtc_kbps` changes it.
+- Nothing restarts: every demand connection carries `kbps N` after the codec,
+  and another line whenever the choice changes while a viewer watches; the
+  encoder applies the last one to the running libvpx (`vpx_codec_enc_config_set`)
+  or x264 (`x264_encoder_reconfig`) encoder and keeps it across a capture size
+  change. An older encoder ignores the lines.
+- On the board (`webrtc-bitrate-seq58-*.txt`): an H.264 viewer started at the
+  stored 1.5 Mbit/s, moved to 5 Mbit/s mid-stream ("bitrate 5000 kbit/s" in
+  the encoder's journal) and the probe kept decoding.
+- MJPEG still offers no quality: the capture device compresses the JPEG
+  itself.
+
+## The VP8 picture's range (2026-10-07)
+
+- The encoders are given the capture's JPEG YCbCr as it is: of the full
+  range, 0 to 255, with the BT.601 matrix. H.264 says so in its SPS since
+  2026-10-06 (`h616-ve-h264-encoder.md`); VP8 has no field for it, and a
+  browser takes a VP8 frame as of the narrow range, 16 to 235, with the
+  BT.601 matrix: every colour channel is drawn as 255/219 (level - 16), and
+  the picture darker than as MJPEG. The board does not convert the samples
+  for VP8: that would be a pass over every frame on the board and a seventh
+  of the levels.
+- The page draws the VP8 picture through an SVG filter, a table per channel
+  that undoes the stretch (`web/src/lib/vp8-range.ts`): the levels 17 to 234
+  come back within one, black and white stay black and white (the stretch
+  made every level up to 16 black and every level from 235 white), and the
+  colours come out 2 % less saturated than MJPEG's, the difference of the two
+  ranges' chroma scales. Only VP8 is filtered, not H.264 over the same view.
+- The browser applies the filter as it draws each frame. With the machine's
+  GPU that is next to nothing; drawn in software, any filter on the picture
+  (the table, a colour matrix or CSS contrast alike) cost Chromium on
+  SwiftShader a processor core more at 1920x1080 and 30 frames a second, and
+  26 frames of 30 drawn. The page asks WebGL once for its renderer: no WebGL,
+  or a software rasterizer (SwiftShader, llvmpipe, softpipe, Microsoft's
+  Basic Render Driver), leaves VP8 drawn as before.
+- A board whose encoder gives VP8 the narrow range must say so to the page,
+  which would otherwise stretch its picture the other way.
+- Tests: `tools/test_vp8_range.mjs` (the table and the renderer names) and
+  `tools/playwright/vp8_range_contract.mjs` (the built page, given a track of
+  the board's samples marked as Chromium marks a decoded VP8 frame, draws them
+  as the JPEG with a GPU, H.264 over the same view unchanged, and VP8 as
+  before when it draws in software). The board's measurements are in
+  `docs/baselines/audit-20261006-colour-range.md`.
+
+## The frame socket and QUIC viewers (2026-10-02, QUIC plan Q3)
+
+The H.264 unit serves its encoded frames to the QUIC gateway as well
+(`docs/design/quic-transport-v1.md` has the transport; this is the encoder's
+side).
+
+- `BLI_KVM_ENCODER_FRAME_SOCKET` (`/run/hardened-blikvm-h264/frames.sock`)
+  carries every encoded frame as a record: a 32-byte header (stream, frame
+  and reference ids, size, picture size, capture time on the board's
+  monotonic clock) and the access unit in Annex B form. Only the user named
+  by `BLI_KVM_ENCODER_FRAME_USER` is served, four clients at most: a
+  connection beyond them is closed as it is accepted rather than given a
+  thread (MED-13); the VP8 unit has no such socket. Janus keeps its RTP: one encoder serves both kinds of viewer, and
+  the server holds its demand for either.
+- A client asks for a key frame by writing a byte; one is made at most
+  every 250 ms. The capture loop lets its next frame through for a request
+  that is due and for a viewer that has just come, so a still screen, which
+  gives the encoder a frame only every 2 s, answers at once. A WebRTC
+  viewer on a still screen gains the same: its first picture no longer
+  waits for the periodic frame.
+- The unit may run 40 tasks (16 before): six threads of the process, six of
+  x264, one for every viewer's demand, two for every client of the frame
+  socket. An encoder for another size is made after the old one is gone.
+  With both alive for a moment the old limit refused x264's threads, x264
+  could not be opened and the process ended: seen on the board when the
+  first QUIC viewer came, and once before in the kernel's log.
+- An encoder that ends is started again by its unit 2 s later. The server
+  now holds its viewers' demand again as soon as the socket is back; before,
+  the new process had nobody to work for until the viewers negotiated anew.
+- The binary for the board is built like the others, with the paths of the
+  build machine mapped away (`scripts/rustc-remap-wrapper.sh`, as
+  `scripts/build-aarch64.sh` sets it up) and a target directory of its own,
+  and then passes `scripts/verify-aarch64-elf.sh`. The builds before this
+  one carried 19 paths of the toolchain and the crate registry in their
+  panic messages.
+
+  The build, from the repository's root, with the three libraries built for
+  aarch64 by `scripts/build-libvpx.sh`, `scripts/build-x264.sh` and
+  `scripts/build-libjpeg-turbo.sh` and the musl headers of
+  `scripts/musl-headers.sh`:
+
+  ```sh
+  export CC_aarch64_unknown_linux_musl=clang
+  export CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-linux-musl -nostdinc \
+    -isystem $MUSL_HEADERS/include -isystem $(clang -print-resource-dir)/include \
+    -ffile-prefix-map=$PWD=/src"
+  export BLI_KVM_REMAP_PROJECT_ROOT="$PWD"
+  export BLI_KVM_REMAP_RUST_SYSROOT="$(rustc --print sysroot)"
+  export BLI_KVM_REMAP_CARGO_HOME="$CARGO_HOME"
+  export RUSTC_WRAPPER="$PWD/scripts/rustc-remap-wrapper.sh"
+  export BLI_KVM_LIBVPX_DIR=... BLI_KVM_X264_DIR=... BLI_KVM_LIBJPEG_TURBO_DIR=...
+  CARGO_TARGET_DIR=$ENCODER_TARGET cargo build --locked --release \
+    --target aarch64-unknown-linux-musl -p bli-kvm-video-encoder \
+    --features h264,turbojpeg
+  scripts/verify-aarch64-elf.sh \
+    $ENCODER_TARGET/aarch64-unknown-linux-musl/release/bli-kvm-video-encoder
+  ```
+
+  The wrapper is not part of cargo's fingerprint: a target directory that
+  was filled without it keeps the old objects, so the directory must be one
+  that was only ever used with it.
+
+## H.264 by the video engine (2026-10-03, hardware H.264 plan)
+
+The H.264 unit has a third engine: the board's video engine, through the
+encoder driver of `docs/design/h616-ve-encoder-driver-v1.md` (the engine
+and how it was learnt: `docs/design/h616-ve-h264-encoder.md`; the plan:
+`docs/baselines/work-plan-20261002-hardware-h264.md`).
+
+- When a viewer's stream opens, the encoder opens
+  `BLI_KVM_ENCODER_HARDWARE` (`/dev/hardened-blikvm-ve-enc`), configures it
+  for the size and encodes a test picture; without the device, or when that
+  fails, x264 encodes as before, with a line in the journal that says why.
+  A frame the engine fails on is lost and the next one is a key frame;
+  after three failures in a row x264 takes the stream over where it is,
+  behind the same packetizer and frame socket, until the encoder restarts.
+- The converter still gives I420; the engine's path writes it into the
+  driver's NV12 of whole macroblocks. The rate control is the lab's
+  (`bli-kvm-ve-encoder`): a QP for every frame from the frames before, the
+  engine's search for motion chosen for every frame, a second pass for a
+  frame that does not fit, a frame of skipped macroblocks for one that fits
+  at no QP. Key frames come as with x264, with SPS and PPS before each.
+- The statistics line names the engine and counts its passes, frames
+  left out, key frames and failures, and the engine's time a pass. The
+  encoder writes `hardware` or `x264` to `BLI_KVM_ENCODER_STATUS`
+  (`/run/hardened-blikvm-h264/encoder`); `GET /api/vm/screen` reports it as
+  `h264Encoder`, and the screen settings show it.
+- The unit may open that device and no other, joins the device's group
+  (which `tools/device/deploy_vp8.sh` makes with the unit), and has three
+  converter threads: with the engine, decoding the capture's JPEG pictures
+  is what bounds the frame rate.
+
+On the board (V7.1), thirty pictures a second of a moving 1920x1080 picture
+into a second, transient instance of the encoder: the engine holds 30
+frames a second with 1.56 cores (`drag`) and 1.70 (`motion`); x264 makes
+18.8 and 12.5 of them with 3.07 and 3.27 cores. The encoder's gate admits a
+frame no sooner than an interval of its limit after the one before: fed at
+60 pictures a second with a limit of 30, as the board's capture feeds it,
+it let about twenty a second through in the lab's runs, whichever engine
+encoded, because a picture that comes a little early waits for the next.
+How many the board's own capture loses so was not measured: the target's
+picture stood still.
