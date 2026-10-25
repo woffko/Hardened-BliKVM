@@ -201,6 +201,7 @@ pub async fn serve(
         None
     };
     let why = ending(reason.as_ref(), connection.quic_connection().close_reason());
+    let path = path_line(&connection.quic_connection().stats().path);
     if let Some(reason) = reason {
         farewell(
             &connection,
@@ -211,7 +212,28 @@ pub async fn serve(
     }
     connection.close(VarInt::from_u32(0), b"");
     link.closed(&session);
-    eprintln!("quic gateway: session from {peer} ended ({why})");
+    eprintln!("quic gateway: session from {peer} ended ({why}); {path}");
+}
+
+/// The path as the connection last measured it, for the journal's line of a
+/// session's end: a page that stops hearing the gateway for seconds while a
+/// new connection works at once (2026-10-25) is told apart by its losses,
+/// the window the congestion control left it, and the MTU it found.
+fn path_line(path: &wtransport::quinn::PathStats) -> String {
+    format!(
+        "round trip {} ms (least {} ms), MTU {}, window {} B, {} of {} packets lost, \
+         {} congestion events, {} black holes, {} of {} MTU probes lost",
+        path.rtt.as_millis(),
+        path.min_rtt.as_millis(),
+        path.current_mtu,
+        path.cwnd,
+        path.lost_packets,
+        path.sent_packets,
+        path.congestion_events,
+        path.black_holes_detected,
+        path.lost_plpmtud_probes,
+        path.sent_plpmtud_probes,
+    )
 }
 
 /// Why a session ended, as the journal says it: the gateway's reason, or the
@@ -490,6 +512,26 @@ mod tests {
             "the gateway ended it: Session"
         );
         assert_eq!(ending(None, None), "the page ended it");
+    }
+
+    #[test]
+    fn the_journal_says_what_the_path_was_at_the_end() {
+        let mut path = wtransport::quinn::PathStats::default();
+        path.rtt = Duration::from_millis(48);
+        path.min_rtt = Duration::from_millis(9);
+        path.current_mtu = 1360;
+        path.cwnd = 61_440;
+        path.lost_packets = 37;
+        path.sent_packets = 18_200;
+        path.congestion_events = 4;
+        path.black_holes_detected = 1;
+        path.lost_plpmtud_probes = 2;
+        path.sent_plpmtud_probes = 6;
+        assert_eq!(
+            path_line(&path),
+            "round trip 48 ms (least 9 ms), MTU 1360, window 61440 B, 37 of 18200 packets \
+             lost, 4 congestion events, 1 black holes, 2 of 6 MTU probes lost"
+        );
     }
 
     #[test]

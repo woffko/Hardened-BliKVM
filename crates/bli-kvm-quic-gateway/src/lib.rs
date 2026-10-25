@@ -42,14 +42,28 @@ const RECEIVE_WINDOW: u32 = 256 * 1024;
 const DATAGRAM_RECEIVE_BUFFER: usize = 16 * 1024;
 /// Room for the datagrams of a frame or two on their way out.
 const DATAGRAM_SEND_BUFFER: usize = 512 * 1024;
+/// The UDP payload every QUIC path carries, and the largest one the path's
+/// MTU is searched up to. Quinn searches up to 1452 by default, an Ethernet
+/// packet's, which a path through a VPN or another tunnel loses; RustAdmin's
+/// QUIC transport searches up to 1360 for that reason (docs/QUIC_PROTOCOL_V2.md
+/// there, "Packet Sizing"). A path whose MTU then shrinks loses every full
+/// packet until quinn judges it a black hole, which a lower ceiling makes
+/// less likely.
+const MIN_MTU: u16 = 1200;
+const MTU_CEILING: u16 = 1360;
 
 fn server_config(
     config: &Config,
     bind: SocketAddr,
     identity: Identity,
 ) -> Result<ServerConfig, String> {
+    let mut mtu_discovery = quinn::MtuDiscoveryConfig::default();
+    mtu_discovery.upper_bound(MTU_CEILING);
     let mut transport = quinn::TransportConfig::default();
     transport
+        .initial_mtu(MIN_MTU)
+        .min_mtu(MIN_MTU)
+        .mtu_discovery_config(Some(mtu_discovery))
         .max_idle_timeout(Some(
             quinn::IdleTimeout::try_from(config.idle_timeout).map_err(|error| error.to_string())?,
         ))
