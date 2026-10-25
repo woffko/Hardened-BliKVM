@@ -995,6 +995,82 @@ pub(crate) async fn disable(
 pub(crate) struct SessionBody {
     /// The page's clock, milliseconds since 1970.
     page_time: u64,
+    /// How the page's session before this one ended, from its side.
+    #[serde(default)]
+    previous: Option<PreviousSession>,
+}
+
+/// How a page's last session ended, as the page says it: the gateway sees
+/// only that the page closed its connection, or went silent. It is written in
+/// the journal and nothing else; a later page may name what this one does not
+/// know, or say more, and is not refused for it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviousSession {
+    ending: PageEnding,
+    open_seconds: u64,
+    since_pong_ms: u64,
+    hidden: bool,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PageEnding {
+    /// Its pings went unanswered.
+    NoPong,
+    /// The control stream ended.
+    StreamEnded,
+    ReadFailed,
+    WriteFailed,
+    /// The browser closed the connection, or found it closed.
+    TransportClosed,
+    /// The gateway said it closes the session.
+    GatewayClosing,
+    #[serde(other)]
+    Other,
+}
+
+/// The longest part of what the browser said that the journal keeps.
+const DETAIL_CHARS: usize = 120;
+
+impl PreviousSession {
+    fn line(&self) -> String {
+        let ending = match self.ending {
+            PageEnding::NoPong => "its pings went unanswered",
+            PageEnding::StreamEnded => "its control stream ended",
+            PageEnding::ReadFailed => "a read failed",
+            PageEnding::WriteFailed => "a write failed",
+            PageEnding::TransportClosed => "its connection closed",
+            PageEnding::GatewayClosing => "the gateway closed it",
+            PageEnding::Other => "something this server does not name",
+        };
+        let mut line = format!(
+            "{ending} after {} s, {} ms after the last pong",
+            self.open_seconds, self.since_pong_ms
+        );
+        if self.hidden {
+            line.push_str(", the page hidden");
+        }
+        if let Some(detail) = &self.detail {
+            // What the browser said, kept to one short line of plain text.
+            let detail: String = detail
+                .chars()
+                .take(DETAIL_CHARS)
+                .map(|c| {
+                    if c.is_ascii_graphic() || c == ' ' {
+                        c
+                    } else {
+                        '?'
+                    }
+                })
+                .collect();
+            line.push_str(": ");
+            line.push_str(&detail);
+        }
+        line
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1034,6 +1110,12 @@ pub(crate) async fn session(
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<SessionBody>,
 ) -> AppResult<Json<ApiResponse<SessionView>>> {
+    if let Some(previous) = &body.previous {
+        eprintln!(
+            "quic link: a page's last session ended: {}",
+            previous.line()
+        );
+    }
     let Some(transport) = state.quic.as_ref() else {
         return Ok(Json(ApiResponse::ok(SessionView::refused("unavailable"))));
     };
@@ -1259,5 +1341,67 @@ mod tests {
             outbox,
         );
         assert_eq!(replaced, vec![(session.token.clone(), "5a".repeat(16))]);
+    }
+
+    #[test]
+    fn the_journal_says_how_a_page_lost_its_last_session() {
+        let body: SessionBody = serde_json::from_value(serde_json::json!({
+            "pageTime": 1,
+            "previous": {
+                "ending": "no_pong",
+                "openSeconds": 152,
+                "sincePongMs": 6012,
+                "hidden": false
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            body.previous.unwrap().line(),
+            "its pings went unanswered after 152 s, 6012 ms after the last pong"
+        );
+
+        // What the browser said is one short line of plain text.
+        let previous: PreviousSession = serde_json::from_value(serde_json::json!({
+            "ending": "transport_closed",
+            "openSeconds": 3,
+            "sincePongMs": 40,
+            "hidden": true,
+            "detail": format!("WebTransportError: lost\nnext line é {}", "x".repeat(200))
+        }))
+        .unwrap();
+        let line = previous.line();
+        assert!(
+            line.starts_with(
+                "its connection closed after 3 s, 40 ms after the last pong, the page hidden: \
+                 WebTransportError: lost?next line ? xx"
+            ),
+            "{line}"
+        );
+        let (_, detail) = line.split_once("hidden: ").unwrap();
+        assert_eq!(detail.chars().count(), DETAIL_CHARS);
+
+        // A later page's names and fields are not refused; an older page
+        // says nothing.
+        let later: SessionBody = serde_json::from_value(serde_json::json!({
+            "pageTime": 1,
+            "previous": {
+                "ending": "something_new",
+                "openSeconds": 1,
+                "sincePongMs": 1,
+                "hidden": false,
+                "more": 1
+            }
+        }))
+        .unwrap();
+        assert!(
+            later
+                .previous
+                .unwrap()
+                .line()
+                .starts_with("something this server")
+        );
+        let older: SessionBody =
+            serde_json::from_value(serde_json::json!({ "pageTime": 1 })).unwrap();
+        assert!(older.previous.is_none());
     }
 }

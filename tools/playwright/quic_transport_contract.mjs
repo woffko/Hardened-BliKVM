@@ -457,6 +457,7 @@ try {
     const { context, page, errors } = await open({ choice: "quic" });
     await openSettings(page);
     await connected(page);
+    const before = board.sessionRequests.length;
     await board.stopGateway();
     await page.waitForFunction(
       () =>
@@ -467,12 +468,43 @@ try {
     board.startGateway();
     await connected(page);
     assert.equal(await page.locator(".ant-notification-notice").count(), 0);
+    // The first request after the loss says how the page lost the session,
+    // which the gateway cannot tell; the server only writes it in its
+    // journal.
+    const endings = [
+      "no_pong",
+      "stream_ended",
+      "read_failed",
+      "write_failed",
+      "transport_closed",
+      "gateway_closing",
+    ];
+    const told = (from) =>
+      board.sessionRequests.slice(from).filter((body) => body.previous);
+    const said = told(before);
+    assert.equal(
+      said.length,
+      1,
+      JSON.stringify(board.sessionRequests.slice(before)),
+    );
+    assert.deepEqual(board.sessionRequests.slice(before)[0], said[0]);
+    const { previous } = said[0];
+    assert.ok(endings.includes(previous.ending), JSON.stringify(previous));
+    assert.ok(Number.isInteger(previous.openSeconds), JSON.stringify(previous));
+    assert.ok(Number.isInteger(previous.sincePongMs), JSON.stringify(previous));
+    assert.equal(previous.hidden, false);
+    console.log(
+      `quic transport contract: a lost session was said as ${JSON.stringify(previous)}`,
+    );
 
     const requests = board.sessionRequests.length;
     await board.stopGateway();
     const box = await notice(page, "lost", { retry: true });
-    // Three attempts, 1, 2 and 4 seconds after the one before.
+    // Three attempts, 1, 2 and 4 seconds after the one before; the first
+    // says how the session was lost, once.
     assert.equal(board.sessionRequests.length, requests + 3);
+    assert.equal(told(requests).length, 1);
+    assert.ok(board.sessionRequests[requests].previous);
     const [first, second, third] = board.sessionRequestTimes.slice(requests);
     assert.ok(
       second - first >= 1900 && second - first < 3000,

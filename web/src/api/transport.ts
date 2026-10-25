@@ -41,7 +41,35 @@ export function disableQuic(): Promise<ApiResponse<TransportState>> {
   return http.post('/api/transport/quic/disable');
 }
 
-/** A token for one QUIC session of this web session, with the page's clock. */
-export function requestQuicSession(): Promise<ApiResponse<QuicSessionGrant>> {
-  return http.post('/api/transport/quic/session', { pageTime: Date.now() });
+/**
+ * How the page's last session ended, from the page's side: what ended it
+ * first, how long it had been open, how long since the gateway last answered
+ * a ping, whether the page was hidden, and what the browser said. The server
+ * only writes it in its journal (docs/design/quic-transport-v1.md).
+ */
+export type QuicSessionEnding = {
+  ending:
+    | 'no_pong'
+    | 'stream_ended'
+    | 'read_failed'
+    | 'write_failed'
+    | 'transport_closed'
+    | 'gateway_closing';
+  openSeconds: number;
+  sincePongMs: number;
+  hidden: boolean;
+  detail?: string;
+};
+
+/**
+ * A token for one QUIC session of this web session, with the page's clock,
+ * and how the page's session before it ended.
+ */
+export function requestQuicSession(
+  previous: QuicSessionEnding | null = null
+): Promise<ApiResponse<QuicSessionGrant>> {
+  return http.post('/api/transport/quic/session', {
+    pageTime: Date.now(),
+    ...(previous ? { previous } : {})
+  });
 }

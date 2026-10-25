@@ -306,6 +306,18 @@ answers.
 - `closing` with the reason `session` ends the session for good: the page
   does not try again, and asks the server at once, whose answer sends it to
   the login.
+- The first token request after a lost session says how it was lost, as
+  `previous`: what ended it first (`no_pong`, `stream_ended`,
+  `read_failed`, `write_failed`, `transport_closed` or `gateway_closing`),
+  how many seconds it had been open, the milliseconds since the last pong,
+  whether the page was hidden, and what the browser or the gateway said,
+  up to 120 characters. The server writes it in its journal ("quic link: a
+  page's last session ended: …") and nothing else; it keeps the browser's
+  words to printable ASCII, and takes a name it does not know or a field
+  more without refusing the request. The gateway's own line says only that
+  the page closed the connection or went silent (2026-10-25: a phone's
+  sessions were closed by its page every two to three minutes, with
+  nothing on the board to say why).
 
 ## Messages
 

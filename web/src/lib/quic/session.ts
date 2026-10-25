@@ -7,7 +7,7 @@
  */
 import { getDefaultStore } from 'jotai';
 
-import { getTransport, requestQuicSession } from '@/api/transport.ts';
+import { getTransport, requestQuicSession, type QuicSessionEnding } from '@/api/transport.ts';
 import { counted } from '@/lib/busy.ts';
 import { quicStatusAtom, quicVideoAtom } from '@/jotai/transport.ts';
 
@@ -127,6 +127,27 @@ type Open = {
   stopsAwaited: number;
 };
 type Ended = 'lost' | 'session';
+/** How a session ended, and how the page tells the server of it. */
+type Served = { ended: Ended; ending: QuicSessionEnding };
+
+/**
+ * What the browser said of an ending, short: an error's name and message, a
+ * close's code and reason, or the gateway's reason.
+ */
+function describe(cause: unknown): string {
+  let text: string;
+  if (cause instanceof Error) {
+    text = `${cause.name}: ${cause.message}`;
+  } else if (typeof cause === 'string') {
+    text = cause;
+  } else if (cause && typeof cause === 'object' && 'closeCode' in cause) {
+    const info = cause as { closeCode?: number; reason?: string };
+    text = `closed ${info.closeCode ?? 0}${info.reason ? ` ${info.reason}` : ''}`;
+  } else {
+    text = String(cause);
+  }
+  return text.slice(0, 120);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -270,6 +291,11 @@ class QuicSession {
   private sink: VideoSink | null = null;
   /** Sessions opened since the page was loaded: one more for every one lost and opened again. */
   private opened = 0;
+  /**
+   * How the last session was lost, until a token request has carried it to
+   * the server: the gateway sees only that the page closed its connection.
+   */
+  private ending: QuicSessionEnding | null = null;
 
   getStatus(): QuicStatus {
     return this.status;
@@ -445,9 +471,10 @@ class QuicSession {
       this.set({ state: 'connected', roundTripMs: null, counters: null });
       this.deliver(attempt);
       this.subscribe(attempt);
-      const ended = await this.serve(attempt);
+      const { ended, ending } = await this.serve(attempt);
       if (run !== this.run) return;
       this.close();
+      if (ended === 'lost') this.ending = ending;
       // The web session ended. The server says so to the next request, and
       // the page then asks for a login; one is made now rather than whenever.
       if (ended === 'session') {
@@ -489,8 +516,9 @@ class QuicSession {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let grant;
       try {
-        const response = await requestQuicSession();
+        const response = await requestQuicSession(this.ending);
         if (response.code !== 0) return { failure: 'unavailable' };
+        this.ending = null;
         grant = response.data;
       } catch {
         return { failure: 'unavailable' };
@@ -564,10 +592,11 @@ class QuicSession {
   }
 
   /** Pings, and reads what the gateway says, until the session ends. */
-  private serve(open: Open): Promise<Ended> {
+  private serve(open: Open): Promise<Served> {
     return new Promise((resolve) => {
       let done = false;
-      let lastPong = performance.now();
+      const openedAt = performance.now();
+      let lastPong = openedAt;
       let pingId = 0;
       let roundTripMs: number | null = null;
       let counters: GatewayCounters | null = null;
@@ -575,18 +604,29 @@ class QuicSession {
       // Pings that ask for the board's clock only.
       const clockPings = new Set<number>();
 
-      const finish = (ended: Ended) => {
+      // The first of what ends the session is what the server is told.
+      const finish = (ended: Ended, ending: QuicSessionEnding['ending'], cause?: unknown) => {
         if (done) return;
         done = true;
         clearInterval(pinger);
         clearInterval(clockPinger);
-        resolve(ended);
+        const now = performance.now();
+        resolve({
+          ended,
+          ending: {
+            ending,
+            openSeconds: Math.round((now - openedAt) / 1000),
+            sincePongMs: Math.round(now - lastPong),
+            hidden: document.hidden,
+            ...(cause === undefined ? {} : { detail: describe(cause) })
+          }
+        });
       };
       const send = () => {
         pingId += 1;
         open.writer
           .write(encodeMessage({ t: 'ping', id: pingId, pageTime: performance.now() }))
-          .catch(() => finish('lost'));
+          .catch((error: unknown) => finish('lost', 'write_failed', error));
         return pingId;
       };
       let lastTick = performance.now();
@@ -597,7 +637,7 @@ class QuicSession {
         // that time: it does not count against the session's answers.
         if (now - lastTick > 2 * PING_INTERVAL_MS) lastPong = now;
         lastTick = now;
-        if (now - lastPong > PONG_TIMEOUT_MS) return finish('lost');
+        if (now - lastPong > PONG_TIMEOUT_MS) return finish('lost', 'no_pong');
         send();
       };
       const pinger = setInterval(ping, PING_INTERVAL_MS);
@@ -614,7 +654,7 @@ class QuicSession {
       const read = async () => {
         for (;;) {
           const message = await nextMessage(open);
-          if (!message) return finish('lost');
+          if (!message) return finish('lost', 'stream_ended');
           switch (message.t) {
             case 'pong': {
               lastPong = performance.now();
@@ -660,16 +700,20 @@ class QuicSession {
               publish();
               break;
             case 'closing':
-              return finish(message.reason === 'session' ? 'session' : 'lost');
+              return finish(
+                message.reason === 'session' ? 'session' : 'lost',
+                'gateway_closing',
+                message.reason
+              );
             default:
               break;
           }
         }
       };
-      read().catch(() => finish('lost'));
+      read().catch((error: unknown) => finish('lost', 'read_failed', error));
       open.transport.closed.then(
-        () => finish('lost'),
-        () => finish('lost')
+        (info) => finish('lost', 'transport_closed', info),
+        (error: unknown) => finish('lost', 'transport_closed', error)
       );
     });
   }
