@@ -275,7 +275,9 @@ server answers `clock` instead.
    restarting.
 
 Limits: 8 connections, 2 per web session; 64 tokens waiting, the oldest
-giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s,
+giving way; idle timeout 30 s; keep-alive 5 s; the path's MTU starts at
+1200 and is searched up to 1360, not quinn's 1452, as RustAdmin's QUIC
+transport does for paths through a VPN (2026-10-25); the page pings every 2 s,
 and every 250 ms while it watches the picture (for the board's clock, see
 "Receiver"). A gateway that connects anew replaces the one before it, and
 the sessions and tokens of that one are forgotten.
@@ -317,7 +319,14 @@ answers.
   more without refusing the request. The gateway's own line says only that
   the page closed the connection or went silent (2026-10-25: a phone's
   sessions were closed by its page every two to three minutes, with
-  nothing on the board to say why).
+  nothing on the board to say why), and what the path was at the end: its
+  round trip, MTU, congestion window, packets lost of those sent,
+  congestion events, black holes and MTU probes lost. On the phone the
+  page heard no pong for 6.2 and 7.0 s while it was shown, and the next
+  connection opened within a second or two.
+- A picture shown before keeps its last frame for 1.5 s while a new
+  session starts it again; only then is the screen dimmed for the wait
+  (2026-10-25: dimming it for each reconnect blinked on the phone).
 
 ## Messages
 

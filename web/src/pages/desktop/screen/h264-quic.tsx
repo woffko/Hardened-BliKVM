@@ -27,6 +27,13 @@ const STALL_MS = 10000;
  * picture that stalled.
  */
 const HELD_MS = 3000;
+/**
+ * A picture shown before keeps its last frame this long while a new
+ * session starts it again, before the screen is dimmed for the wait: a
+ * session that is lost and opened again (a phone's path, 2026-10-25) takes
+ * about a second, and dimming the screen for it blinks.
+ */
+const RESUME_MS = 1500;
 
 /** The bytes of `bytes` as a buffer of their own, to hand to the worker. */
 function buffer(bytes: Uint8Array): ArrayBuffer {
@@ -43,6 +50,22 @@ export const H264Quic = () => {
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const video = useAtomValue(quicVideoAtom);
+  const playing = video.state === 'playing';
+  const shownOnce = useRef(false);
+  const [waiting, setWaiting] = useState(!playing);
+  useEffect(() => {
+    if (playing) {
+      shownOnce.current = true;
+      setWaiting(false);
+      return;
+    }
+    if (!shownOnce.current) {
+      setWaiting(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setWaiting(true), RESUME_MS);
+    return () => window.clearTimeout(timer);
+  }, [playing]);
   const setStats = useSetAtom(quicVideoStatsAtom);
   const setGivenUp = useSetAtom(quicVideoGivenUpAtom);
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
@@ -235,7 +258,7 @@ export const H264Quic = () => {
         ></canvas>
       </div>
 
-      {video.state !== 'playing' && (
+      {waiting && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300">
           <Spin size="large" />
         </div>
