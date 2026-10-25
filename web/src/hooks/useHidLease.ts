@@ -18,8 +18,14 @@ import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 const LEASE_TTL_SECONDS = 30;
 const MOUSE_FLUSH_MS = 10;
-/** After a lease that could not be taken again, input waits this long. */
-const RETRY_AFTER_MS = 1000;
+/**
+ * How long a report that met a lost lease waits before each new try. A report
+ * is delivered or control turns off: none is dropped silently, since a
+ * relative move that is lost puts the target's cursor apart from the page's
+ * for good (2026-10-24: the phone's trackpad cursor drifted from the
+ * target's while its QUIC session reconnected).
+ */
+const RETRY_DELAYS_MS = [0, 250, 500, 1000, 2000];
 
 /**
  * Every input surface shares one broker lease and one ordered queue. Queue
@@ -38,7 +44,6 @@ const mouseQueue = new MouseQueue(
 );
 let consumers = 0;
 let lifecycleCleanup: (() => void) | null = null;
-let retryAt = 0;
 // When the last open menu closed: a menu closes on the press that lands on
 // the screen before the screen hears it, so that press only closed it.
 const MENU_CLOSING_MS = 150;
@@ -105,8 +110,12 @@ export function useHidLease() {
     if (consumers === 1) {
       // A window without focus gives the lease back, so the target gets
       // nothing meant for another window; the confirmation stays, and the
-      // next input takes the lease again.
-      const releaseLease = () => cancelSharedSession();
+      // next input takes the lease again. What was input before is still
+      // delivered first.
+      const releaseLease = () => {
+        mouseQueue.flush();
+        void sharedQueue.then(cancelSharedSession, cancelSharedSession);
+      };
       const visibilityChanged = () => {
         if (document.visibilityState === 'hidden') releaseLease();
       };
@@ -133,7 +142,6 @@ export function useHidLease() {
   const ensureSession = useCallback(
     async (generation: number): Promise<HidLeaseSession | null> => {
       if (generation !== queueGeneration || !(await ensureConfirmed())) return null;
-      if (!sharedSession && performance.now() < retryAt) return null;
       const current = manifestRef.current;
       if (!current) return null;
       await ensureFocus(current.platform.id);
@@ -169,25 +177,30 @@ export function useHidLease() {
 
   const send = useCallback(
     async (report: HidReport, generation: number) => {
-      const session = await ensureSession(generation);
-      if (!session) return;
-      try {
-        await session.report(report);
-      } catch (error) {
-        if (
-          generation !== queueGeneration ||
-          (error instanceof Error && error.message === ASSISTANT_ACTIVE) ||
-          (error instanceof DOMException && error.name === 'AbortError')
-        ) {
-          throw error;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const session = await ensureSession(generation);
+          if (!session) return;
+          await session.report(report);
+          return;
+        } catch (error) {
+          if (
+            generation !== queueGeneration ||
+            error instanceof LeaseNotGranted ||
+            (error instanceof Error && error.message === ASSISTANT_ACTIVE) ||
+            (error instanceof DOMException && error.name === 'AbortError') ||
+            attempt >= RETRY_DELAYS_MS.length
+          ) {
+            throw error;
+          }
+          // The lease ended under the page (a QUIC session that reconnected,
+          // a socket opened again, the board) or could not be taken just now:
+          // it is taken again, and the same report sent with it, so neither a
+          // key nor a move is lost on the way.
+          dropSharedSession();
+          resetFocusConfirmation();
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
         }
-        // The lease ended under the page: a QUIC session that reconnected, a
-        // socket opened again, the board. It is taken again once, and the
-        // report is sent with it, so a key is not lost on the way.
-        dropSharedSession();
-        resetFocusConfirmation();
-        const again = await ensureSession(generation);
-        if (again) await again.report(report);
       }
     },
     [ensureSession]
@@ -215,10 +228,11 @@ export function useHidLease() {
             );
             return;
           }
-          // Anything else passes: the confirmation stays, and input takes
-          // the lease again after a moment.
-          retryAt = performance.now() + RETRY_AFTER_MS;
+          // The lease could not be taken again: control turns off where it
+          // can be seen, rather than input being lost.
+          disableControl();
           cancelSharedSession();
+          void message.warning(t('control.lost'));
         });
       return sharedQueue;
     },

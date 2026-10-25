@@ -240,6 +240,13 @@ class RestrictedControlGuiTests(unittest.TestCase):
         hid_hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
         self.assertIn("useFocusConfirmation", hid_hook)
         self.assertIn("ensureConfirmed", hid_hook)
+        # A report is delivered or control turns off, never dropped silently;
+        # the phone's trackpad cursor moves only under control (2026-10-24).
+        self.assertIn("const RETRY_DELAYS_MS = [", hid_hook)
+        self.assertNotIn("retryAt", hid_hook)
+        self.assertIn("t('control.lost')", hid_hook)
+        trackpad = (ROOT / "web/src/pages/desktop/mouse/mobile-trackpad.tsx").read_text()
+        self.assertIn("restricted && !controlRef.current", trackpad)
         # The first press asks; the toolbar has no button for it, and the
         # Mouse menu gives control back (2026-10-24).
         self.assertIn("isPress(report) && (report.mode === 'keyboard' || !pressClosesMenu())", hid_hook)

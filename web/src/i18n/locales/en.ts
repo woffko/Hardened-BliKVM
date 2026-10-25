@@ -284,6 +284,7 @@ const en = {
       }
     },
     control: {
+      lost: 'Remote control was lost: the board did not answer',
       otherSession: 'Another session controls the target',
       refused: 'Remote control was refused: {{reason}}'
     },

@@ -231,6 +231,35 @@ try {
   );
   await lostContext.close();
 
+  // A lease that cannot be had back: after its tries the report is not
+  // dropped silently; control turns off with a notice.
+  const goneApp = await startApp({ lostReports: 1000 });
+  apps.push(goneApp);
+  const goneContext = await browser.newContext();
+  await goneContext.addCookies([
+    {
+      name: "hardened-blikvm-csrf",
+      value: "fixture-csrf",
+      url: goneApp.baseUrl,
+    },
+  ]);
+  const gonePage = await goneContext.newPage();
+  await gonePage.goto(`${goneApp.baseUrl}/#/`, { waitUntil: "networkidle" });
+  await takeControl(gonePage);
+  await gonePage.keyboard.press("KeyA");
+  await gonePage
+    .getByText("Remote control was lost: the board did not answer")
+    .waitFor({ timeout: 15000 });
+  await gonePage.waitForFunction(
+    () => document.documentElement.dataset.remoteControl === "off",
+  );
+  const goneReports = goneApp.requestDetails.filter(
+    (request) =>
+      request.route === "/api/hid/lease" && request.body?.action === "report",
+  ).length;
+  assert.ok(goneReports >= 5, `the report was tried ${goneReports} times`);
+  await goneContext.close();
+
   // A board that refuses the lease: control turns off with a notice, and
   // the next press asks again.
   const rejectedApp = await startApp({ hidLeaseApplied: false });

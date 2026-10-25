@@ -658,11 +658,15 @@ the lease like a client that vanished.
   target) and kept for the page's life; it is given back from the Mouse
   menu. A window that loses focus gives the lease back, and the next input
   takes it again without asking. A report that meets a lost lease (a QUIC
-  session that reconnected, a socket opened again) takes the lease again
-  once, over the transport that is there now, and is sent with it; other
-  failures leave the confirmation and let input try again after 1 s. Only
-  a lease the board refuses (another session controls the target) turns
-  control off, with a notice. A lease taken over HTTPS stays there when a
+  session that reconnected, a socket opened again) or cannot have one just
+  now takes the lease again, over the transport that is there now, and is
+  sent with it: up to five tries over about 4 s, in order, before the next
+  report. A report is delivered or control turns off with a notice; none is
+  dropped silently, since a relative move that is lost puts the target's
+  cursor apart from the page's for good, and the phone's trackpad moves its
+  own cursor only under remote control (2026-10-24). A lease the board
+  refuses (another session controls the target) turns control off at once,
+  with a notice. A lease taken over HTTPS stays there when a
   session opens, and Settings say which of the two carries the input.
 - **The gateway** serves one input stream per session: the stream the page
   opens after its control stream. It passes one request to the server at a

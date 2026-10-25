@@ -172,9 +172,9 @@ try {
   }
 
   // The server refuses, as it does without a current confirmation of the
-  // target (a socket opened again clears it): control stays on, nothing more
-  // is sent at once, and a key a moment later confirms the target again and
-  // takes the lease.
+  // target (a socket opened again clears it): the page confirms the target
+  // again and tries again, control stays on, and the key is not lost once
+  // the server takes it.
   {
     board.leaseAnswer = () => ({
       status: 200,
@@ -189,9 +189,7 @@ try {
     await until("the acquire reaches the link", () =>
       overQuic().length >= 1 ? true : null,
     );
-    await page.keyboard.press("KeyB");
     await sleep(300);
-    assert.deepEqual(actions(overQuic()), ["acquire"]);
     assert.deepEqual(overHttps(), []);
     assert.equal(
       await controlIsOn(page),
@@ -199,18 +197,19 @@ try {
       "the refusal turned control off",
     );
     board.leaseAnswer = null;
-    await sleep(800);
-    await page.keyboard.press("KeyC");
-    await until("a later key takes the lease again", () =>
-      actions(overQuic()).filter((action) => action === "acquire").length >= 2
-        ? true
-        : null,
+    await until("the key reaches the link once the server takes it", () =>
+      keys(overQuic()).includes(4) ? true : null,
+    );
+    assert.ok(
+      actions(overQuic()).filter((action) => action === "acquire").length >= 2,
+      "the acquire was not tried again",
     );
     assert.ok(
       app.requests.filter((request) => request.endsWith("POST /api/hid/focus"))
         .length > focusBefore,
       "the target was not confirmed again",
     );
+    assert.equal(await controlIsOn(page), true);
 
     // A lease that is not granted turns control off with a notice, and the
     // next press asks again.

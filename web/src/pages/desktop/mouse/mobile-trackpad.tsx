@@ -42,7 +42,11 @@ export const MobileTrackpad = () => {
   const resolution = useAtomValue(resolutionAtom);
   // The element the view draws on; input binds to it again when it changes.
   const screenFromView = useAtomValue(screenElementAtom);
-  const { restricted, reportHid } = useHidLease();
+  const { restricted, confirmed, reportHid } = useHidLease();
+  // The page's cursor moves with the target's only under remote control: a
+  // move that reaches nothing must not move it (2026-10-24).
+  const controlRef = useRef(confirmed);
+  controlRef.current = confirmed;
 
   const mouseRef = useRef(new MouseReportRelative());
   const activePointersRef = useRef(new Map<number, Point>());
@@ -178,7 +182,9 @@ export const MobileTrackpad = () => {
         clearLongPress();
       }
 
-      if (deltaX !== 0 || deltaY !== 0) {
+      if ((deltaX !== 0 || deltaY !== 0) && restricted && !controlRef.current) {
+        lastRef.current = point;
+      } else if (deltaX !== 0 || deltaY !== 0) {
         const movementScale = getMobileTrackpadMovementScale(resolution);
         const remoteDeltaX = deltaX * pointerSensitivity * movementScale;
         const remoteDeltaY = deltaY * pointerSensitivity * movementScale;
