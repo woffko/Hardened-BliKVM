@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardened BliKVM — open-source KVM over IP for the BliKVM v4 (Allwinner H616)</title>
+<meta name="description" content="Hardened BliKVM is a security-focused, open-source KVM over IP (IP-KVM) firmware for the BliKVM v4 with Allwinner H616: a Rust backend and a React web interface with keyboard, mouse and touch control, H.264, VP8 and MJPEG video over WebRTC and QUIC/WebTransport, virtual media, ATX power, signed updates and a ready SD card image.">
+<meta name="keywords" content="BliKVM, BliKVM v4, Allwinner H616, KVM over IP, IP-KVM, IPKVM, open-source KVM, hardware KVM, remote KVM, KVM switch, PiKVM alternative, NanoKVM, Hardened NanoKVM, Rust, web KVM, browser KVM, HTML5 KVM, remote desktop, remote BIOS access, out-of-band management, OOB management, headless server, homelab, H.264, VP8, WebRTC, QUIC, WebTransport, MJPEG, virtual media, ISO mount, ATX power control, Wake-on-LAN, Tailscale, firewall, signed updates, SD card image">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://woffko.github.io/Hardened-BliKVM/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Hardened BliKVM">
+<meta property="og:title" content="Hardened BliKVM — open-source KVM over IP for the BliKVM v4">
+<meta property="og:description" content="Security-focused IP-KVM firmware for the BliKVM v4 (Allwinner H616): Rust backend, React web UI, H.264/VP8 over WebRTC and QUIC, virtual media, ATX power, signed updates.">
+<meta property="og:url" content="https://woffko.github.io/Hardened-BliKVM/">
+<meta property="og:image" content="https://woffko.github.io/Hardened-BliKVM/img/02-desktop.png">
+<meta property="og:image:width" content="1440">
+<meta property="og:image:height" content="900">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Hardened BliKVM — open-source KVM over IP for the BliKVM v4">
+<meta name="twitter:description" content="Security-focused IP-KVM firmware for the BliKVM v4 (Allwinner H616) with a Rust backend and a React web UI.">
+<meta name="twitter:image" content="https://woffko.github.io/Hardened-BliKVM/img/02-desktop.png">
+<meta name="theme-color" content="#0f1720">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Hardened BliKVM",
+  "alternateName": ["BLi-KVM", "Hardened BLi-KVM"],
+  "description": "Security-focused, open-source KVM over IP (IP-KVM) firmware for the BliKVM v4 with Allwinner H616: Rust backend, React web interface, H.264, VP8 and MJPEG video over WebRTC and QUIC/WebTransport, virtual media, ATX power control and signed updates.",
+  "applicationCategory": "UtilitiesApplication",
+  "applicationSubCategory": "KVM over IP",
+  "operatingSystem": "Linux (Armbian) on the BliKVM v4, Allwinner H616",
+  "softwareVersion": "0.1.0-beta.10",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "url": "https://woffko.github.io/Hardened-BliKVM/",
+  "codeRepository": "https://github.com/woffko/Hardened-BliKVM",
+  "downloadUrl": "https://github.com/woffko/Hardened-BliKVM/releases",
+  "screenshot": "https://woffko.github.io/Hardened-BliKVM/img/02-desktop.png",
+  "programmingLanguage": ["Rust", "TypeScript"],
+  "keywords": "BliKVM, Allwinner H616, KVM over IP, IP-KVM, PiKVM alternative, NanoKVM, out-of-band management, WebRTC, QUIC, WebTransport, H.264, virtual media, homelab",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+}
+</script>
+<style>
+:root {
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --text: #17202b;
+  --muted: #4d5b6b;
+  --line: #dde3ea;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --code: #eef2f7;
+  --shadow: 0 10px 30px rgba(15, 23, 32, .10);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1720;
+    --surface: #17212c;
+    --text: #e6edf3;
+    --muted: #9aa8b6;
+    --line: #2a3644;
+    --accent: #4c8dff;
+    --accent-text: #0b1220;
+    --code: #1d2a37;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--accent); }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+header.top .wrap { display: flex; align-items: center; gap: 18px; height: 56px; }
+header.top .brand { font-weight: 700; color: var(--text); text-decoration: none; margin-right: auto; }
+header.top nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
+header.top nav a:hover { color: var(--text); }
+header.top nav { display: flex; gap: 16px; }
+.hero { padding: 56px 0 32px; text-align: center; }
+.hero h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.15; margin: 0 0 14px; }
+.hero p.lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 820px; margin: 0 auto 26px; }
+.buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.button {
+  display: inline-block; padding: 11px 20px; border-radius: 8px; font-weight: 600;
+  text-decoration: none; border: 1px solid var(--line); color: var(--text); background: var(--surface);
+}
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.badges { margin-top: 18px; color: var(--muted); font-size: 14px; }
+.shot { margin: 34px auto 0; max-width: 1000px; }
+.shot img, figure img {
+  width: 100%; height: auto; display: block; border-radius: 10px;
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+section { padding: 44px 0; border-top: 1px solid var(--line); }
+section h2 { font-size: 28px; margin: 0 0 8px; }
+section p.sub { color: var(--muted); margin: 0 0 26px; max-width: 820px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.gallery { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+figure { margin: 0; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+.phones { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); align-items: start; }
+@media (max-width: 720px) {
+  .phones { grid-template-columns: 1fr; }
+  header.top nav { display: none; }
+}
+table { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--surface); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+pre {
+  background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+  padding: 14px; overflow-x: auto; font-size: 14px;
+}
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+ol li, ul li { margin-bottom: 6px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">Hardened BliKVM</a>
+    <nav aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#security">Security</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/woffko/Hardened-BliKVM">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="wrap hero">
+  <h1>Open-source KVM over IP for the BliKVM v4</h1>
+  <p class="lead">Hardened BliKVM is a security-focused IP-KVM firmware for the BliKVM v4 (Allwinner H616). Control a computer's keyboard, mouse and screen from a browser, down to the BIOS, mount ISO images, press its power and reset buttons, from a desktop or a phone. The backend is written in Rust; the web interface is React and TypeScript.</p>
+  <div class="buttons">
+    <a class="button primary" href="https://github.com/woffko/Hardened-BliKVM/releases/latest">Download the SD card image</a>
+    <a class="button" href="https://github.com/woffko/Hardened-BliKVM">Source code on GitHub</a>
+  </div>
+  <div class="badges">Beta · 0.1.0-beta.10 · GPL-3.0-only · BliKVM v4 (Allwinner H616)</div>
+  <div class="shot">
+    <img src="img/02-desktop.png" width="1440" height="900" alt="Hardened BliKVM web interface: the remote computer's desktop under the toolbar in a browser">
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Features</h2>
+    <p class="sub">A KVM-over-IP stack that replaces the vendor's KVMD services on the board with sandboxed Rust services and a web interface derived from Hardened NanoKVM.</p>
+    <div class="grid">
+      <div class="card"><h3>Remote keyboard and mouse</h3><p>Absolute and relative mouse, a touch layout for phones with an on-screen keyboard and a row of extra keys. Remote control is taken by the first click, tap or key after a confirmation.</p></div>
+      <div class="card"><h3>H.264, VP8 and MJPEG video</h3><p>H.264 encoded by the H616's video engine or by x264, VP8 with libvpx, over WebRTC; or the capture's MJPEG. The encoders work only while someone watches.</p></div>
+      <div class="card"><h3>QUIC and WebTransport</h3><p>An optional transport on UDP 443 for the keyboard, the mouse and the H.264 picture, with the bitrate fitted to the narrowest path; a lost session reopens without dropping control.</p></div>
+      <div class="card"><h3>Sharp upscaling</h3><p>Where the browser draws with a GPU, a picture shown larger than its size is drawn sharply (deringing and SGSR 1), with a watchdog that turns it off where frames are lost.</p></div>
+      <div class="card"><h3>Virtual media</h3><p>Mount an ISO as a CD-ROM or a disk image as USB mass storage, upload images or download them from a URL.</p></div>
+      <div class="card"><h3>ATX power control</h3><p>Power and reset buttons of the target computer, short and long press, and Wake-on-LAN.</p></div>
+      <div class="card"><h3>Windows target agent</h3><p>An optional agent knows the target's monitors and keyboard layouts, keeps the mouse on the captured monitor, switches layouts, passes clipboard text both ways and locks the session.</p></div>
+      <div class="card"><h3>Quality monitor</h3><p>Speed, delay, frames a second, codec and bitrate over the picture, and in its extended level the transport's, the encoder's and the decoder's numbers.</p></div>
+      <div class="card"><h3>Network and firewall</h3><p>IPv4, IPv6, DNS, Wi-Fi, TLS, Tailscale, and a firewall with four modes whose changes roll back by themselves unless confirmed.</p></div>
+      <div class="card"><h3>Signed updates</h3><p>Signed application slots with health checks and automatic rollback, and signed RAW system updates that keep the board's accounts, keys and settings.</p></div>
+      <div class="card"><h3>Features off until wanted</h3><p>Web terminal, scripts, remote ISO download, PicoClaw and RAW updates stay off until switched on; each switch is enforced below the web server.</p></div>
+      <div class="card"><h3>Phone friendly</h3><p>The screen as a trackpad, pinch to zoom, the extra keys and the settings on a phone's whole screen.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="screenshots">
+  <div class="wrap">
+    <h2>Screenshots</h2>
+    <p class="sub">Anonymized: documentation addresses, made-up names and a drawn stand-in for the target's screen. Every menu and settings page is in <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.10/docs/screenshots.md">docs/screenshots.md</a>.</p>
+    <div class="gallery">
+      <figure><img src="img/04-screen-menu.png" width="1440" height="900" loading="lazy" alt="Screen menu: video mode, resolution, frame rate, scale, upscaling"><figcaption>Screen menu: video mode, resolution, frame rate, upscaling.</figcaption></figure>
+      <figure><img src="img/03-confirm-control.png" width="1440" height="900" loading="lazy" alt="Confirm remote control dialog"><figcaption>The first press asks before anything reaches the target.</figcaption></figure>
+      <figure><img src="img/11-monitors-menu.png" width="1440" height="900" loading="lazy" alt="Monitors menu with the target agent"><figcaption>The target agent's monitors and Windows' display modes.</figcaption></figure>
+      <figure><img src="img/08-mouse-menu.png" width="1440" height="900" loading="lazy" alt="Mouse menu"><figcaption>Mouse menu: cursor, mode, desktop layout, release control.</figcaption></figure>
+      <figure><img src="img/10-keyboard-menu.png" width="1440" height="900" loading="lazy" alt="Keyboard menu"><figcaption>Keyboard menu: paste, on-screen keyboard, shortcuts, the target's layout and clipboard.</figcaption></figure>
+      <figure><img src="img/12-virtual-media.png" width="1440" height="900" loading="lazy" alt="Virtual media dialog with ISO images"><figcaption>Virtual media: ISO images as mass storage or CD-ROM.</figcaption></figure>
+      <figure><img src="img/13-power-menu.png" width="1440" height="900" loading="lazy" alt="ATX power menu"><figcaption>ATX power: reset, short and long press.</figcaption></figure>
+      <figure><img src="img/14-quality-monitor.png" width="1440" height="900" loading="lazy" alt="Quality monitor overlay"><figcaption>The quality monitor's extended level.</figcaption></figure>
+      <figure><img src="img/07-screen-upscaling.png" width="1440" height="900" loading="lazy" alt="Upscaling settings"><figcaption>Upscaling: sharpness and size.</figcaption></figure>
+      <figure><img src="img/25-settings-system.png" width="1440" height="900" loading="lazy" alt="System settings: network and QUIC transport"><figcaption>Settings: network and the QUIC transport.</figcaption></figure>
+      <figure><img src="img/28-settings-system-firewall.png" width="1440" height="900" loading="lazy" alt="Firewall modes"><figcaption>The firewall's four modes.</figcaption></figure>
+      <figure><img src="img/31-settings-update.png" width="1440" height="900" loading="lazy" alt="Signed application and system updates"><figcaption>Signed application slots and RAW system updates.</figcaption></figure>
+    </div>
+    <h3 style="margin-top:32px">On a phone</h3>
+    <div class="phones">
+      <figure><img src="img/40-phone.png" width="780" height="1688" loading="lazy" alt="Hardened BliKVM on a phone in portrait"><figcaption>Portrait.</figcaption></figure>
+      <div>
+        <figure><img src="img/41-phone-landscape.png" width="1688" height="780" loading="lazy" alt="Hardened BliKVM on a phone in landscape"><figcaption>Landscape, the screen as a trackpad.</figcaption></figure>
+        <figure style="margin-top:20px"><img src="img/42-phone-keyboard-key-row.png" width="1688" height="780" loading="lazy" alt="Phone with the row of extra keys"><figcaption>The row of extra keys: Shift, Ctrl, Alt, Win, Del, Esc, arrows.</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <h2>Security model</h2>
+    <p class="sub">The vendor's KVMD services are masked; each process below runs as its own systemd unit with a sandbox and only the rights it needs.</p>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Process</th><th>Runs as</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>nginx</td><td>root, workers as <code>www-data</code></td><td>TLS on TCP 443 in front of the web server, reached through a Unix socket that serves nginx alone</td></tr>
+        <tr><td><code>bli-kvm-server</code></td><td>its own user, from the active signed slot</td><td>login, sessions, the API and its policy, the web interface, WebRTC signalling; no device access of its own</td></tr>
+        <tr><td>board owner</td><td>root</td><td>the USB gadget, the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests</td></tr>
+        <tr><td>video encoders, Janus</td><td>dynamic users</td><td>H.264 and VP8 while someone watches; WebRTC media only</td></tr>
+        <tr><td>QUIC gateway</td><td>its own user</td><td>QUIC and TLS on UDP 443 while its switch is on; it holds no authority of its own</td></tr>
+        <tr><td>update supervisor</td><td>its own user</td><td>verifies, stages and activates signed slots, checks their health and rolls back</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-top:18px">The design notes, the audits and what was shown on the test board are in the repository: <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.10/docs/design">docs/design</a>, <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.10/docs/baselines">docs/baselines</a> and <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.10/docs/security-boundaries.md">docs/security-boundaries.md</a>.</p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install on a BliKVM v4</h2>
+    <p class="sub">The image needs a microSD card of at least 32 GB. Check the download against <code>SHA256SUMS</code> from the <a href="https://github.com/woffko/Hardened-BliKVM/releases/latest">release</a> first.</p>
+    <ol>
+      <li>Write the card. Linux or macOS:
+        <pre><code>zstd -dc hardened-blikvm-h616-sd.img.zst | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress</code></pre>
+        Windows: unpack with <code>zstd -d</code>, then write the <code>.img</code> with balenaEtcher or Rufus.</li>
+      <li>Insert the card, connect Ethernet and power the board. The first boot creates the board's own SSH host keys, TLS certificate and identifiers; it takes about a minute.</li>
+      <li>Open <code>https://&lt;board address&gt;/</code> and create the administrator account in First Setup, on a trusted network. The password you choose also becomes root's password for SSH.</li>
+    </ol>
+    <p>A board that already runs Hardened BliKVM is updated from Settings &gt; Update with the signed application bundle and the signed RAW system update of the release; the release notes say how.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details><summary>Which hardware does it run on?</summary><p>The BliKVM v4 with the Allwinner H616. Everything was verified on one board.</p></details>
+    <details><summary>Is it a PiKVM or NanoKVM alternative?</summary><p>It is an IP-KVM firmware for the BliKVM v4 hardware, with a web interface derived from Hardened NanoKVM. It is not affiliated with BliKVM, PiKVM or Sipeed.</p></details>
+    <details><summary>Which browsers work?</summary><p>It was tried with Chrome, Edge and Firefox on a desktop and Chrome on Android. QUIC needs WebTransport; where a browser has none, the standard transport (HTTPS, WebSocket, WebRTC) is used.</p></details>
+    <details><summary>Is it finished?</summary><p>It is a beta. Each release lists what was checked and its known limitations; report what you find in the <a href="https://github.com/woffko/Hardened-BliKVM/issues">issues</a>.</p></details>
+    <details><summary>What licence?</summary><p>GPL-3.0-only. Third-party components keep their own licences, listed in the repository.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    Hardened BliKVM · <a href="https://github.com/woffko/Hardened-BliKVM">github.com/woffko/Hardened-BliKVM</a> · <a href="https://github.com/woffko/Hardened-BliKVM/releases">Releases</a> · GPL-3.0-only.
+    BliKVM is a trademark of its owner; this project is independent of it.
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://woffko.github.io/Hardened-BliKVM/sitemap.xml
