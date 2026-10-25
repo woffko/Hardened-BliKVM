@@ -136,13 +136,27 @@ page.on("requestfailed", (request) => {
 });
 
 const settle = (ms = 1500) => page.waitForTimeout(ms);
-const closeOverlays = async () => {
-  await page.keyboard.press("Escape").catch(() => {});
-  await page.mouse
-    .click(mobile ? 380 : 1400, mobile ? 830 : 980)
-    .catch(() => {});
+// Closes what a menu item opened, by the dialog's close button or the item
+// again: neither a key nor a press on the screen, since the first of either
+// asks for remote control (docs/design/quic-transport-v1.md), which a walk
+// that only watches must not.
+const closeOverlays = async (item) => {
+  const close = page.locator(".ant-modal-wrap:visible .ant-modal-close");
+  if (await close.count())
+    await close
+      .first()
+      .click()
+      .catch(() => {});
+  else if (item && (await page.locator(".ant-popover:visible").count()))
+    await item
+      .locator("svg")
+      .first()
+      .click()
+      .catch(() => {});
   await settle(500);
 };
+const askedForControl = () =>
+  page.getByRole("button", { name: "Confirm and control" }).isVisible();
 
 // On a phone the menu bar hides after five seconds without a touch; its tab
 // at the top edge brings it back.
@@ -226,7 +240,9 @@ try {
         step.api.push({ note: `submenu ${name}` });
       }
     }
-    await closeOverlays();
+    await closeOverlays(item);
+    if (await askedForControl())
+      step.errors.push("the walk asked for remote control");
     flush(`next`);
   }
 
