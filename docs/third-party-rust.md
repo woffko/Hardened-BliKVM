@@ -331,3 +331,26 @@ QUIC server and its TLS configuration has no client authentication
 (`wtransport`'s `with_no_client_auth`), so it verifies no certificate
 chain; its links to the server are Unix sockets. The next system build
 takes 0.103.16.
+
+## RustSec scan for 0.1.0-beta.10 (2026-10-25)
+
+An application, a card image and a RAW system update, with the work of
+2026-10-24 and 25 on remote control from a phone. The lock has 317 packages.
+`rustls-webpki` 0.103.16 replaces 0.103.15, so RUSTSEC-2026-0382 of beta.9
+is gone, and `tokio` 1.53.3 replaces 1.53.1 for RUSTSEC-2026-0386 of
+2026-10-13 (`AsyncFd::new` and its siblings take any raw descriptor, which
+can free a registration that a reused descriptor number still has). The
+board owner's one `AsyncFd`, the target agent's device, now uses
+`AsyncFd::register`: it owns the `File`, so the descriptor stays open and
+names the same device for the `AsyncFd`'s life. Both were taken from the
+local registry without fetching.
+
+`cargo audit --deny warnings`, run without fetching (the database as
+fetched on 2026-10-24, 1,352 advisories), reports one: RUSTSEC-2026-0385 of
+2026-10-23 in `ctutils` 0.4.2 (non-constant-time mask generation and `u128`
+comparisons), fixed in 0.4.4, which the local registry does not have. It is
+reached only through `universal-hash`, `poly1305` and `chacha20poly1305`
+from `bli-kvm-diagnostic-journal` and the diagnostic crates that use it;
+none of them is in a program the board runs (the application bundle, the
+update runtime, the image's units or the agent), so it is not reachable on
+a board. The next dependency update takes 0.4.4.

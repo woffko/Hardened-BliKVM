@@ -546,7 +546,9 @@ impl Channel {
             return;
         }
         match (self.opener)().and_then(|file| {
-            AsyncFd::new(file)
+            // SAFETY: the AsyncFd owns the File, so its descriptor stays open
+            // and names the same device until the AsyncFd is dropped.
+            unsafe { AsyncFd::register(file) }
                 .map_err(|error| format!("the agent's device could not be watched: {error}"))
         }) {
             Ok(device) => {
