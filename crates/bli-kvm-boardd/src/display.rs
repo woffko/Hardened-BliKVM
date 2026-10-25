@@ -164,6 +164,14 @@ where
     }
 
     /// Draw one complete frame from an RGB565 buffer.
+    ///
+    /// The frame is sent from its last pixel to its first, half a turn. The
+    /// configured MADCTL (0x70, Waveshare's horizontal scan) shows memory a
+    /// quarter turn clockwise; the vendor's program (`kvmd-main`) sends 0x00
+    /// and turns its picture a quarter the other way in software, which is
+    /// the way up the case holds the panel. Half a turn of the frame needs no
+    /// address offset, which a MADCTL mirroring the controller's long side
+    /// would (the 240x240 glass on its 240x320 memory).
     pub fn draw_frame(&mut self, frame: &[Rgb565]) -> Result<(), DisplayError> {
         if !self.initialized {
             return Err(DisplayError::NotInitialized);
@@ -180,9 +188,13 @@ where
         }
         let mut stream = PixelStream::new(window);
         let mut encoded = [0_u8; MAX_PIXEL_CHUNK_PIXELS * BYTES_PER_PIXEL];
-        for row in frame.chunks_exact(usize::from(DISPLAY_WIDTH)) {
+        let mut turned = [Rgb565::BLACK; DISPLAY_WIDTH as usize];
+        for row in frame.chunks_exact(usize::from(DISPLAY_WIDTH)).rev() {
+            for (to, from) in turned.iter_mut().zip(row.iter().rev()) {
+                *to = *from;
+            }
             let written = stream
-                .encode_chunk(row, &mut encoded)
+                .encode_chunk(&turned, &mut encoded)
                 .map_err(|_| DisplayError::PixelStream)?;
             self.write(true, &encoded[..written])?;
         }
@@ -461,5 +473,42 @@ mod tests {
             .map(|(_, bytes)| bytes[0])
             .collect();
         assert_eq!(commands, vec![0x2a, 0x2b, 0x2c]);
+    }
+
+    #[test]
+    fn a_frame_is_sent_half_a_turn_round() {
+        let (mut display, transfers, _writes) = display();
+        display.initialize().unwrap();
+        transfers.lock().unwrap().clear();
+        let width = usize::from(DISPLAY_WIDTH);
+        let mut frame = vec![Rgb565::BLACK; DISPLAY_PIXEL_COUNT as usize];
+        // The top left corner, the rest of the top row's first pixels, and
+        // the bottom right corner.
+        frame[0] = Rgb565::RED;
+        frame[1] = Rgb565::GREEN;
+        frame[width] = Rgb565::WHITE;
+        frame[DISPLAY_PIXEL_COUNT as usize - 1] = Rgb565::BLUE;
+        display.draw_frame(&frame).unwrap();
+
+        let sent: Vec<u8> = transfers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(data, _)| *data)
+            .skip(2)
+            .flat_map(|(_, bytes)| bytes.clone())
+            .collect();
+        assert_eq!(sent.len(), full_frame_bytes());
+        let pixel = |index: usize| {
+            Rgb565::from_raw(u16::from_be_bytes([
+                sent[index * BYTES_PER_PIXEL],
+                sent[index * BYTES_PER_PIXEL + 1],
+            ]))
+        };
+        let last = DISPLAY_PIXEL_COUNT as usize - 1;
+        assert_eq!(pixel(0), Rgb565::BLUE);
+        assert_eq!(pixel(last), Rgb565::RED);
+        assert_eq!(pixel(last - 1), Rgb565::GREEN);
+        assert_eq!(pixel(last - width), Rgb565::WHITE);
     }
 }

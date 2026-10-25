@@ -92,6 +92,15 @@ that fails to come up never stops the fan, it is reported on stderr and shown as
 absent. Still open before the panel gate: the panel lines handoff (unexport the
 vendor sysfs lines 259/262/260 and provision the operator configuration).
 
+Every frame is sent from its last pixel to its first (2026-10-25: the operator
+saw the panel upside down). The configuration's MADCTL 0x70 comes from
+Waveshare's `LCD_1IN3_SetAttributes`, which the vendor's `kvmd-main` carries
+but never calls: it initializes the panel through `spilcdInit` with MADCTL 0x00
+and turns its picture with `Paint_SetRotate(270)`, a quarter turn the other way
+from what 0x70 does. Half a turn of the frame puts the picture the vendor's way
+up without the address offset that a MADCTL mirroring the controller's 320-line
+side would need.
+
 ## Implemented slice 3 (2026-09-16): activity LED
 
 `led` module and its reviewed configuration section: the activity LED runtime
