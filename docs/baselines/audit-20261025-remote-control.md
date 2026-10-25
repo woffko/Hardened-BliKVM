@@ -72,6 +72,46 @@ do not outlive a reboot.
   at the operator's word, each with the board's state read before and after
   and differing only in the slot; no unit failed.
 
-## Release
+## Release 0.1.0-beta.10 (2026-10-25)
 
-Recorded below when 0.1.0-beta.10 is published.
+Published as a pre-release at the operator's word, tag `v0.1.0-beta.10` on
+`3adbe43`, from which every file was built. Before it, two more changes:
+`rustls-webpki` 0.103.16 and `tokio` 1.53.3 (`214076c`, update runtime
+dev45, `docs/third-party-rust.md`), and the GUI walk closing its menus without
+a key or a press on the screen, which since RC4 asked for remote control and
+made slot 102's walks fail (`2e3a1be`). The documentation's screenshots were
+admitted through the source boundary by folder and name (`3adbe43`).
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.10-seq106.tar` (slot 106) | `b1224ed3b10648dfc21e3d08eeaeeed8f2f57f8a7a1d9d0e55b862db0befa062` |
+| `hardened-blikvm-system-0.1.0-beta.10-seq10.tar` (RAW sequence 10, update runtime `0.1.0~dev45`) | `d40143b105f47798689dee433dbed74eb50b575e11ebdf12680f69487c583cf5` |
+| `hardened-blikvm-h616-sd.img.zst` | `f2fd7dd12ac46b4727576c00e6b1f5a45bc110c9671f92109240d439f1f9a8d5` |
+| `hardened-blikvm-h616-sd.img` (unpacked) | `dcc6b193d496c90d8a348d5601a6a18a36fc7151cba376dde1d214998cc6b4d9` |
+| `hardened-blikvm-agent.exe` | `5b1a359e060cbef876850a849e72807c917357bcd532e009a84f3814321b91fb` |
+| `IMAGE-INFO.txt` | `605c6dfa2f30ef2536f3ad0d2cefc777a0c0bb4b6f93ab4e03622f1ecf3b83c4` |
+
+The digests GitHub reports for the six uploaded files equal these. The card
+image's first partition equals the system root the RAW bundle was made from
+(`adb27b80…8444`), and the bundle's manifest verifies with the system key.
+
+What was checked:
+
+- `scripts/check.sh` on `3adbe43`: passed.
+- Slot 106 installed and confirmed on beta.9's system with dev45 put in by
+  hand; then the GUI walks at a desktop's and a phone's size, H.264 and VP8
+  over WebRTC, the H.264 picture over QUIC and the phone's touch reach
+  passed.
+- The image fetched from that board with the operator's pages closed, and
+  assembled.
+- RAW sequence 10 installed from sequence 9 (about 5 minutes to upload and
+  verify, 35 to write and start) and confirmed; it carried the certificate,
+  the host keys, the account, slot 106, the host name, the session lock and
+  SSH. The board's state after it differed from before only in its
+  temporary IPv6 addresses, the system's version and sequence, and an
+  encoder not yet started. Root's home was saved before and put back after,
+  and the copy removed.
+
+The board was left on slot 106 and system sequence 10 (floor 11), its
+settings and switches as found. beta.9's release notes now say it is
+superseded.
