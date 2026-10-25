@@ -9,7 +9,8 @@ uses a platform-neutral core and explicit hardware adapters so that security,
 API, update, and recovery invariants remain testable across platforms.
 
 The canonical GitHub repository is
-[`woffko/Hardened-BliKVM`](https://github.com/woffko/Hardened-BliKVM).
+[`woffko/Hardened-BliKVM`](https://github.com/woffko/Hardened-BliKVM); the
+project's page is <https://woffko.github.io/Hardened-BliKVM/>.
 Private device credentials, runtime configuration and hardware receipts are
 excluded from Git. This source repository is not a complete device image.
 
