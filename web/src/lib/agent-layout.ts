@@ -3,8 +3,10 @@
  * (docs/design/target-agent-v1.md): the desktop the target spreads the
  * range over is the box around every active monitor, and the captured
  * screen is the monitor the agent marks as the board's, from the box's top
- * left corner. Without a monitor marked, or with one that does not make a
- * layout, there is none: the manual layout, if any, stays.
+ * left corner. One monitor, or every monitor showing one picture, is the
+ * whole desktop, whichever is the board's. Monitors extended without one
+ * marked, or with one that does not make a layout, say none: the manual
+ * layout, if any, stays.
  */
 import { isScreenArea, type ScreenArea } from './screen-area.ts';
 
@@ -24,6 +26,23 @@ export type AgentMonitor = {
   scale: number;
   board: boolean;
 };
+
+/** A layout the agent's monitors make: part of a desktop, or the whole one. */
+export type AgentLayout = ScreenArea | 'whole';
+
+export function layoutFromMonitors(monitors: AgentMonitor[]): AgentLayout | null {
+  const now = displaysNow(monitors);
+  if (now === 'unknown') return null;
+  if (monitors.length === 1 || now === 'duplicate') return 'whole';
+  const area = areaFromMonitors(monitors);
+  if (!area) return null;
+  const whole =
+    area.screen.x === 0 &&
+    area.screen.y === 0 &&
+    area.screen.width === area.desktop.width &&
+    area.screen.height === area.desktop.height;
+  return whole ? 'whole' : area;
+}
 
 export function areaFromMonitors(monitors: AgentMonitor[]): ScreenArea | null {
   const board = monitors.filter((monitor) => monitor.board);

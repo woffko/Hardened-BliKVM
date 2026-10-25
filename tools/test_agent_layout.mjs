@@ -129,3 +129,33 @@ test("the monitors' mode as the agent's monitors show it", { skip }, () => {
     "extend",
   );
 });
+
+test("the layout the agent's monitors make for the mouse", { skip }, () => {
+  const left = monitor(0, 0, 2560, 1440);
+  const right = monitor(2560, 0, 2560, 1440, true);
+  // Extended with the board's monitor known: its part of the desktop.
+  assert.deepEqual(layout.layoutFromMonitors([left, right]), {
+    desktop: { width: 5120, height: 1440 },
+    screen: { x: 2560, y: 0, width: 2560, height: 1440 },
+  });
+  // Extended without it: none, the kept layout stays.
+  assert.equal(
+    layout.layoutFromMonitors([left, monitor(2560, 0, 2560, 1440)]),
+    null,
+  );
+  // Duplicated, whichever is marked or none: the whole desktop, never part
+  // of a wider one.
+  assert.equal(
+    layout.layoutFromMonitors([left, monitor(0, 0, 2560, 1440)]),
+    "whole",
+  );
+  assert.equal(
+    layout.layoutFromMonitors([left, monitor(0, 0, 2560, 1440, true)]),
+    "whole",
+  );
+  // One monitor, the board's or not marked: the whole desktop.
+  assert.equal(layout.layoutFromMonitors([right]), "whole");
+  assert.equal(layout.layoutFromMonitors([left]), "whole");
+  // Nothing read: nothing said.
+  assert.equal(layout.layoutFromMonitors([]), null);
+});

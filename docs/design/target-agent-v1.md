@@ -214,12 +214,24 @@ through the owner; the platform names the feature `target_agent`.
 - The page keeps the agent's state, and while an agent is connected and
   remote control holds the lease, reads its monitors and layouts (at once
   and every 15 s); nothing is asked of the agent without the lease.
-- The absolute mouse uses the agent's layout while it knows the board's
-  monitor: the desktop is the box around the active monitors, the screen
-  the board's monitor in it (`web/src/lib/agent-layout.ts`); the layout
-  kept on the board otherwise (`docs/design/screen-area-v1.md`). So with
-  the monitors extended the mouse keeps to the board's monitor, and
-  duplicated or with the board's monitor alone it spans the picture.
+- The absolute mouse uses the agent's layout while its monitors make one
+  (`web/src/lib/agent-layout.ts`): extended, the desktop is the box around
+  the active monitors and the screen the board's monitor in it, once that
+  is known; one monitor, or monitors duplicated, is the whole desktop,
+  whichever is the board's (the board captures one monitor, which shows
+  all of the desktop). Otherwise the layout kept on the board applies
+  (`docs/design/screen-area-v1.md`). So with the monitors extended the
+  mouse keeps to the board's monitor, and duplicated or with one monitor
+  it spans the picture.
+- The page keeps the agent's layout on the board when it differs from the
+  kept one (`web/src/hooks/useScreenArea.ts`), each layout tried once, so
+  the mouse stays right after the agent is gone (2026-10-25: with the agent
+  not running, a layout kept from two extended monitors put the mouse off
+  the duplicated ones). Since the monitors are read only under the lease,
+  a page that only watches writes nothing; a device probe that reads them
+  under the lease may write the board's layout and restores it. While the
+  agent's layout applies, the Mouse menu's Desktop entry says it is the
+  agent's and offers no layout of its own.
 - The toolbar's Monitors menu, while an agent is connected (asked for by
   the operator at gate 3, so as not to open the settings each time): the
   mode the monitors are in as the agent's monitors show it (one desktop

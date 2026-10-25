@@ -24,6 +24,19 @@ const whole = (value: unknown, least: number) =>
   value <= MAX_DESKTOP_PIXELS;
 
 /** Whether `value` is a layout: whole pixels, the screen inside the desktop. */
+/** Whether two layouts are the same; null is the whole desktop. */
+export function sameScreenArea(a: ScreenArea | null, b: ScreenArea | null): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.desktop.width === b.desktop.width &&
+    a.desktop.height === b.desktop.height &&
+    a.screen.x === b.screen.x &&
+    a.screen.y === b.screen.y &&
+    a.screen.width === b.screen.width &&
+    a.screen.height === b.screen.height
+  );
+}
+
 export function isScreenArea(value: unknown): value is ScreenArea {
   if (typeof value !== 'object' || value === null) return false;
   const { desktop, screen } = value as Partial<ScreenArea>;

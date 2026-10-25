@@ -1,7 +1,7 @@
 import { atom } from 'jotai';
 
 import type { AgentKeyboard, TargetAgentState } from '@/api/target-agent.ts';
-import { areaFromMonitors, type AgentMonitor } from '@/lib/agent-layout.ts';
+import { layoutFromMonitors, type AgentMonitor } from '@/lib/agent-layout.ts';
 import { getAgentLayoutSync, setAgentLayoutSync } from '@/lib/localstorage.ts';
 
 // The target agent's switch, channel and connected agent, as the board says
@@ -39,8 +39,9 @@ export const agentLayoutSyncAtom = atom(
 );
 
 // The absolute mouse's layout from the agent's monitors while it is
-// connected and one of them is the board's (docs/design/target-agent-v1.md).
+// connected and they make one (docs/design/target-agent-v1.md): part of a
+// desktop, or 'whole'; null while they say none.
 export const agentScreenAreaAtom = atom((get) => {
   const monitors = get(agentMonitorsAtom);
-  return get(targetAgentAtom)?.agent && monitors ? areaFromMonitors(monitors) : null;
+  return get(targetAgentAtom)?.agent && monitors ? layoutFromMonitors(monitors) : null;
 });

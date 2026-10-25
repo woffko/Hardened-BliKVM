@@ -323,7 +323,11 @@ const en = {
         rightOfTwo: 'Right of two',
         apply: 'Apply',
         tip: "A target with more than one monitor spreads the absolute mouse over its whole desktop. Give the desktop's size and where this screen lies in it, in the target's pixels (as its display settings show them).",
-        failed: 'The layout could not be saved'
+        failed: 'The layout could not be saved',
+        fromAgentWhole: 'From the target agent: this screen is the whole desktop',
+        fromAgentPart: 'From the target agent: part of {{width}}×{{height}}, at {{x}},{{y}}',
+        fromAgentTip:
+          "The agent reads the target's monitors and the board keeps their layout. One monitor, or monitors duplicated, is the whole desktop."
       },
       sensitivityDesc:
         'Use this for desktop relative mode. Lower values reduce drift from host mouse acceleration.',

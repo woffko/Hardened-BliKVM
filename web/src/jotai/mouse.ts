@@ -29,7 +29,9 @@ export const scrollIntervalAtom = atom(0);
 export const screenAreaAtom = atom<ScreenArea | null>(null);
 
 // The layout the absolute mouse uses: the target agent's while it is
-// connected and knows the board's monitor, the board's kept one otherwise.
-export const effectiveScreenAreaAtom = atom(
-  (get) => get(agentScreenAreaAtom) ?? get(screenAreaAtom)
-);
+// connected and its monitors make one, the board's kept one otherwise.
+export const effectiveScreenAreaAtom = atom((get) => {
+  const agent = get(agentScreenAreaAtom);
+  if (agent === 'whole') return null;
+  return agent ?? get(screenAreaAtom);
+});

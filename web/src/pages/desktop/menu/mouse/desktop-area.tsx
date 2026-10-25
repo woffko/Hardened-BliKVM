@@ -8,6 +8,7 @@ import { isScreenArea, type ScreenArea } from '@/lib/screen-area.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
 import { screenAreaAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom } from '@/jotai/screen.ts';
+import { agentScreenAreaAtom } from '@/jotai/target-agent.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 
 type Typed = Record<'desktopWidth' | 'desktopHeight' | 'x' | 'y' | 'width' | 'height', string>;
@@ -39,10 +40,13 @@ const areaOf = (typed: Typed): ScreenArea | null => {
 // (docs/design/screen-area-v1.md): a target that extends its desktop over
 // more than one monitor spreads the absolute mouse over all of them. The
 // whole desktop, or the desktop's size and this screen's place in it, in
-// the target's pixels; the board keeps it for every browser.
+// the target's pixels; the board keeps it for every browser. While the
+// target agent's monitors make a layout, it is theirs, and nothing is
+// offered: duplicated monitors are one screen, not part of a desktop.
 export const DesktopArea = () => {
   const { t } = useTranslation();
   const [area, setArea] = useAtom(screenAreaAtom);
+  const agent = useAtomValue(agentScreenAreaAtom);
   const resolution = useAtomValue(resolutionAtom);
   const [typed, setTyped] = useState<Typed>(() =>
     typedOf(
@@ -125,7 +129,28 @@ export const DesktopArea = () => {
     </div>
   );
 
-  const content = (
+  const fromAgent = agent !== null && (
+    <div className="flex flex-col">
+      {entry(
+        'agent',
+        true,
+        agent === 'whole'
+          ? t('mouse.desktop.fromAgentWhole')
+          : t('mouse.desktop.fromAgentPart', {
+              width: agent.desktop.width,
+              height: agent.desktop.height,
+              x: agent.screen.x,
+              y: agent.screen.y
+            }),
+        () => undefined
+      )}
+      <div className="max-w-[280px] px-2 pb-1 pt-1 text-xs text-neutral-400">
+        {t('mouse.desktop.fromAgentTip')}
+      </div>
+    </div>
+  );
+
+  const content = fromAgent || (
     <div className="flex flex-col">
       {entry('whole', area === null, t('mouse.desktop.whole'), () => save(null))}
       {entry(

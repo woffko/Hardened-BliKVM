@@ -55,6 +55,9 @@ layout means the screen is the whole desktop, as before.
   numbers typed in; "Left of two" and "Right of two" fill them for two
   monitors of this screen's size side by side. The fields keep their keys
   from the target.
+- While the target agent's monitors make a layout, the mouse uses theirs
+  and the page keeps it on the board; the Desktop entry then says it is the
+  agent's and offers nothing of its own (`docs/design/target-agent-v1.md`).
 
 ## Tests
 

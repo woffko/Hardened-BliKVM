@@ -152,9 +152,16 @@ try {
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.route("**/api/hid/screen-area", (route) =>
-    route.fulfill({ json: { code: 0, data: { area: null } } }),
-  );
+  // The board keeps no layout until the page writes the agent's.
+  let keptArea = null;
+  const areaWrites = [];
+  await page.route("**/api/hid/screen-area", (route) => {
+    if (route.request().method() === "POST") {
+      keptArea = route.request().postDataJSON().area;
+      areaWrites.push(keptArea);
+    }
+    return route.fulfill({ json: { code: 0, data: { area: keptArea } } });
+  });
   await page.route("**/api/hid/mode", (route) =>
     route.fulfill({ json: { code: 0, data: { mode: "normal" } } }),
   );
@@ -371,6 +378,32 @@ try {
   assert.ok(right >= 5110 && right <= 5119, `right edge on ${right}`);
   const left = await pointAt(0, 0.5);
   assert.equal(left, 2560, `left edge on ${left}`);
+  // The board keeps the agent's layout, so the mouse stays right once the
+  // agent is gone; the Mouse menu's Desktop entry says it is the agent's and
+  // offers no layout of its own.
+  const rightOfTwo = {
+    desktop: { width: 5120, height: 1440 },
+    screen: { x: 2560, y: 0, width: 2560, height: 1440 },
+  };
+  assert.ok(
+    await eventually(
+      () => JSON.stringify(areaWrites.at(-1)) === JSON.stringify(rightOfTwo),
+    ),
+    JSON.stringify(areaWrites),
+  );
+  const desktopEntry = async (text) => {
+    await page.locator("svg.lucide-mouse").first().click();
+    await page.getByText("Desktop", { exact: true }).hover();
+    await page.getByText(text, { exact: true }).waitFor();
+    assert.equal(
+      await page.locator("[data-desktop-area-beside]").count(),
+      0,
+      "a layout of the page's own was offered",
+    );
+    await page.locator("svg.lucide-mouse").first().click();
+    await page.getByText(text, { exact: true }).waitFor({ state: "hidden" });
+  };
+  await desktopEntry("From the target agent: part of 5120×1440, at 2560,0");
 
   // The Keyboard menu shows the target's layout.
   await page.locator("svg.lucide-keyboard").first().click();
@@ -542,10 +575,17 @@ try {
   await pointAt(0.25, 0.25);
   const onlyMiddle = (await pointAt(0.5, 0.5)) / 2;
   assert.ok(Math.abs(onlyMiddle - 1280) <= 2, `middle on ${onlyMiddle}`);
+  // One monitor is the whole desktop: the board keeps that, and the menu
+  // offers no part of a wider one.
+  assert.ok(
+    await eventually(() => areaWrites.length > 0 && areaWrites.at(-1) === null),
+    JSON.stringify(areaWrites),
+  );
+  await desktopEntry("From the target agent: this screen is the whole desktop");
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left}; with the left monitor chosen as the board's, middle ${chosenMiddle}, right edge ${chosenRight}; only the board's monitor from the Monitors menu, kept, middle ${onlyMiddle} of 2560)`,
+    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left}; with the left monitor chosen as the board's, middle ${chosenMiddle}, right edge ${chosenRight}; only the board's monitor from the Monitors menu, kept, middle ${onlyMiddle} of 2560; each layout kept on the board, ${areaWrites.length} writes, and the Desktop entry the agent's)`,
   );
 } finally {
   await browser.close();
