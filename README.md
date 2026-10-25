@@ -37,7 +37,11 @@ find.
   layout for phones with an on-screen keyboard and a row of extra keys, the
   ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
   storage). Remote control is taken by the first click, tap or key on the
-  screen after a confirmation, and given back from the Mouse menu.
+  screen after a confirmation, and given back from the Mouse menu; a window
+  that loses focus gives the keyboard and mouse back and takes them again
+  with its next input, without asking. No key or move is dropped on the way:
+  what meets a lease that ended (a QUIC session that opened again) is sent
+  again with a new one, or control turns off with a notice.
 - **Video**, chosen in the Screen menu: MJPEG (the capture passed through),
   H.264 and VP8 (libvpx) over WebRTC with a choice of quality, and H.264
   over the QUIC transport. H.264 is encoded by the H616's video engine
@@ -62,16 +66,20 @@ find.
   (WebTransport on UDP 443) for the keyboard, the mouse and the H.264
   picture: a group of pictures on a stream of its own, what the path loses
   sent again, and the H.264 bitrate fitted to the narrowest path of the
-  sessions that watch. QUIC has a switch on the board, off by default, and a
-  choice in each browser (Settings > System > Network > Transport,
+  sessions that watch. A session that is lost opens again by itself, with
+  remote control kept and the last frame shown meanwhile; the board's
+  journal says why each one ended, from the gateway's side (with the path's
+  round trip, MTU and losses) and from the page's. QUIC has a switch on the
+  board, off by default, and a choice in each browser (Settings > System >
+  Network > Transport,
   [`docs/design/quic-transport-v1.md`](docs/design/quic-transport-v1.md)).
 - **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
   system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
   of the main connection), a firewall with four modes and a confirmation that
   rolls back by itself, time, system log, Tailscale, account (a new password
   needs the current one), session lock,
-  and the board's display going dark after a time without activity (its
-  button lights it again).
+  and the board's display (the vendor's status screen, the vendor's way up)
+  going dark after a time without activity (its button lights it again).
 - **Updates**: signed application slots with a health check and automatic
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write
@@ -80,7 +88,9 @@ find.
   switch on, the board's mouse device carries a vendor collection that a
   small agent on the target talks to, and a read-only drive carries the
   agent. The page then knows the target's Windows, its monitors (the
-  absolute mouse kept on the captured one without a layout set by hand) and
+  absolute mouse kept on the captured one without a layout set by hand; one
+  monitor, or monitors duplicated, is the whole desktop; the agent's layout
+  is kept on the board for when the agent is not running) and
   its keyboard layouts, and at the operator's action under remote control
   switches the layout (also to the on-screen keyboard's language and to
   the letters typed on a phone; the on-screen keyboard does not follow a
@@ -103,6 +113,18 @@ find.
 Not there: audio, and updates fetched from a feed (they are uploaded). The
 time, NTP, remote system log and autostart script settings are shown
 read-only.
+
+## Screenshots
+
+![The remote desktop with the toolbar](docs/screenshots/02-desktop.png)
+
+| | |
+| --- | --- |
+| ![Monitors menu with the target agent](docs/screenshots/11-monitors-menu.png) | ![System settings: network and transport](docs/screenshots/25-settings-system.png) |
+| ![Firewall modes](docs/screenshots/28-settings-system-firewall.png) | ![A phone in landscape with the extra keys](docs/screenshots/42-phone-keyboard-key-row.png) |
+
+Every menu and settings page is in [`docs/screenshots.md`](docs/screenshots.md)
+(anonymized: documentation addresses, made-up names, a drawn target screen).
 
 ## How it is put together
 
@@ -148,6 +170,7 @@ and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
 agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261025-remote-control.md`](docs/baselines/audit-20261025-remote-control.md),
 [`audit-20261020-code-review.md`](docs/baselines/audit-20261020-code-review.md),
 [`audit-20261018-security-review.md`](docs/baselines/audit-20261018-security-review.md),
 [`audit-20261017-review.md`](docs/baselines/audit-20261017-review.md),
