@@ -71,11 +71,19 @@ export class HidLeaseSession {
    * The broker admits a lease only while the session's target attestation is
    * live, and that attestation expires long before a lease acquired once would
    * end. The session therefore refreshes it before it acquires or renews.
+   * `onLost` hears of a lease that ended under the session (a renewal or a
+   * report refused), so whoever keeps the session does not keep a dead one.
    */
   constructor(
     private readonly attest: () => Promise<void>,
-    private readonly transport: LeaseTransport = httpsLease
+    private readonly transport: LeaseTransport = httpsLease,
+    private readonly onLost: () => void = () => undefined
   ) {}
+
+  /** Whether the session holds a lease now. */
+  isLive(): boolean {
+    return this.leaseId !== null;
+  }
 
   async start(ttlSeconds: number): Promise<void> {
     const generation = ++this.generation;
@@ -182,6 +190,7 @@ export class HidLeaseSession {
   private invalidateLease(): void {
     this.leaseId = null;
     this.clearRenewTimer();
+    this.onLost();
   }
 
   private clearRenewTimer(): void {

@@ -689,6 +689,13 @@ the lease like a client that vanished.
   refuses (another session controls the target) turns control off at once,
   with a notice. A lease taken over HTTPS stays there when a
   session opens, and Settings say which of the two carries the input.
+  A lease that ends under the page is forgotten at once, so nothing goes
+  out on it: a renewal the board refuses ends it, and so does the end of
+  the QUIC session that carried it (the server has released it, and the
+  target's confirmation with it, which the page then asks again). The next
+  input, the Monitors menu's hold or an agent call takes a lease anew, and
+  the target agent's reads wait for it (code audit of 2026-11-06, AUD-05:
+  "Keep these monitors" was refused on a lease the page still showed).
 - **The gateway** serves one input stream per session: the stream the page
   opens after its control stream. It passes one request to the server at a
   time and writes the server's answer back under the page's number; if the
