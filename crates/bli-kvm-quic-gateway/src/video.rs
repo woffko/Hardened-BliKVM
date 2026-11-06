@@ -226,6 +226,8 @@ impl Group {
 #[derive(Default)]
 struct Groups {
     current: Option<Group>,
+    /// The frames sent that the page has not said it received.
+    unreceived: Unreceived,
     finishing: Vec<StreamEnd>,
     /// The newest group's key frame: its capture time and when it was sent.
     key: Option<(u64, Instant)>,
@@ -239,25 +241,20 @@ impl Groups {
     /// The next group starts with its key frame, sent now. The one before is
     /// finished, unless the page is behind it, or the transport has not
     /// taken all of it: then it is reset, with every earlier one still on
-    /// its way. True if it was.
-    fn start(&mut self, next: Group, behind: bool, now: Instant) -> bool {
+    /// its way, and their frames are forgotten.
+    fn start(&mut self, next: Group, behind: bool, now: Instant) {
         self.finishing
             .retain(|stream| !stream.closed.load(Ordering::Acquire));
-        let reset = match self.current.take() {
+        match self.current.take() {
             Some(earlier) if behind || earlier.taken.load(Ordering::Acquire) < earlier.handed => {
                 earlier.stream.reset();
                 self.give_up();
-                true
             }
-            Some(earlier) => {
-                self.finish(earlier);
-                false
-            }
-            None => false,
-        };
+            Some(earlier) => self.finish(earlier),
+            None => {}
+        }
         self.key = Some((next.handed, now));
         self.current = Some(next);
-        reset
     }
 
     /// The group under way gets no more frames: its writer finishes its
@@ -281,7 +278,9 @@ impl Groups {
             .map(|(_, sent)| now.saturating_duration_since(sent))
     }
 
-    /// Every stream still under way is reset.
+    /// Every stream still under way is reset, and its frames will not
+    /// arrive: they no longer count as on their way (code audit of
+    /// 2026-11-06, AUD-12: a new picture and a failed stream kept them).
     fn give_up(&mut self) {
         if let Some(current) = self.current.take() {
             current.stream.reset();
@@ -290,6 +289,7 @@ impl Groups {
             stream.reset();
         }
         self.key = None;
+        self.unreceived.forget();
     }
 }
 
@@ -378,7 +378,6 @@ pub async fn serve(
     let mut needs_key = true;
     let mut announced: Option<(u32, u16, u16)> = None;
     let mut groups = Groups::default();
-    let mut unreceived = Unreceived::default();
     let mut share = PathShare::new(*control.share.borrow(), Instant::now());
     let mut silent = false;
     let tell = |percent: Option<u8>| {
@@ -400,7 +399,7 @@ pub async fn serve(
         let header = &record.header;
         let now = Instant::now();
         let received = control.page_received.load(Ordering::Acquire);
-        let lag = unreceived.lag(received, now);
+        let lag = groups.unreceived.lag(received, now);
         let heard = control.page_heard.load(Ordering::Acquire);
         match (
             silent,
@@ -472,10 +471,8 @@ pub async fn serve(
                     && (share.queued()
                         || lag > MAX_PAGE_LAG
                         || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT));
-                if groups.start(next, behind, now) {
-                    unreceived.forget();
-                }
-                unreceived.sent(header.capture_micros, now, size);
+                groups.start(next, behind, now);
+                groups.unreceived.sent(header.capture_micros, now, size);
                 needs_key = false;
                 counters.key_frames.fetch_add(1, Ordering::Relaxed);
                 counters.frames_sent.fetch_add(1, Ordering::Relaxed);
@@ -490,13 +487,12 @@ pub async fn serve(
                         // A key frame on its way too long.
                         Some(waited) => waited > MAX_KEY_WAIT,
                         // More on its way than a key frame, for too long.
-                        None => lag > MAX_PAGE_LAG && unreceived.bytes > current.key_bytes,
+                        None => lag > MAX_PAGE_LAG && groups.unreceived.bytes > current.key_bytes,
                     };
                 if given_up {
                     // The path does not carry the picture: what is queued is
                     // dropped and the picture starts again from a key frame.
                     groups.give_up();
-                    unreceived.forget();
                     tell(share.gave_up(now));
                     counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                     counters.groups_abandoned.fetch_add(1, Ordering::Relaxed);
@@ -519,7 +515,7 @@ pub async fn serve(
                 bytes.extend_from_slice(&record.data);
                 let size = bytes.len();
                 if current.push(bytes, header.capture_micros) {
-                    unreceived.sent(header.capture_micros, now, size);
+                    groups.unreceived.sent(header.capture_micros, now, size);
                     counters.frames_sent.fetch_add(1, Ordering::Relaxed);
                 } else {
                     // The group's stream failed: the chain is broken.
@@ -549,6 +545,23 @@ pub async fn serve(
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    #[test]
+    fn groups_given_up_forget_their_unreceived_frames() {
+        // Code audit of 2026-11-06, AUD-12: a new picture, and a group whose
+        // stream failed, gave the groups up but kept their frames as on
+        // their way, so the page's lag grew from them and a later key frame
+        // was reset as behind.
+        let sent = Instant::now();
+        let mut groups = Groups::default();
+        groups.unreceived.sent(1_000, sent, 4_096);
+        groups.give_up();
+        assert_eq!(
+            groups.unreceived.lag(0, sent + Duration::from_secs(1)),
+            Duration::ZERO
+        );
+        assert_eq!(groups.unreceived.bytes, 0);
+    }
 
     #[test]
     fn a_new_pictures_key_frame_is_not_left_out_for_the_old_ones() {

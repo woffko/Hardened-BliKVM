@@ -513,6 +513,12 @@ path's live limit.
   than a key frame, waiting is the shorter way.
 - **A page that gives the picture up** has its groups' streams reset: what
   the transport still holds of them is not sent for nobody.
+- **Groups given up** in any way (a new picture, a group's stream that
+  failed, a page too far behind) no longer count their frames as on their
+  way to the page: a new picture and a failed stream used to keep them, so
+  the page's lag grew from frames that could not arrive and the next key
+  frame's group was reset as behind (code audit of 2026-11-06, AUD-12;
+  test `groups_given_up_forget_their_unreceived_frames`).
 - **A silent page**, one that has said nothing for a second (a ping, a
   frame received), is frozen in the background or gone with its session
   still open until the transport gives it up. What it has not received is
