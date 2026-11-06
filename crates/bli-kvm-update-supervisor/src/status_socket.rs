@@ -128,7 +128,12 @@ fn serve_connection(
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let mut prefix = [0_u8; 4];
-    stream.read_exact(&mut prefix)?;
+    // A client that leaves before its first byte asked nothing (code audit
+    // of 2026-11-06, AUD-07); a request cut short later is still refused.
+    if !read_first(stream, &mut prefix[..1])? {
+        return Ok(());
+    }
+    stream.read_exact(&mut prefix[1..])?;
     let length = u32::from_be_bytes(prefix) as usize;
     if length == 0 || length > MAX_UPDATE_MESSAGE_BYTES {
         return Err(UpdateProtocolError::InvalidLength.into());
@@ -164,8 +169,29 @@ fn serve_connection(
         request_id: request.request_id,
         response,
     };
-    stream.write_all(&encode_frame(&encode_response(&response)?)?)?;
-    Ok(())
+    match stream.write_all(&encode_frame(&encode_response(&response)?)?) {
+        // A client gone before its answer is no failure of this instance.
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+            ) =>
+        {
+            Ok(())
+        }
+        written => Ok(written?),
+    }
+}
+
+/// Reads the first byte; false if the client closed before it.
+fn read_first(stream: &mut UnixStream, byte: &mut [u8]) -> std::io::Result<bool> {
+    loop {
+        match stream.read(byte) {
+            Ok(count) => return Ok(count != 0),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn read_status(path: &Path) -> Result<ApplicationUpdateStatus, SupervisorCliError> {
@@ -263,6 +289,41 @@ mod tests {
         );
         assert!(matches!(result, Err(StatusSocketError::PeerRejected)));
         assert!(!called.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_client_that_leaves_is_no_failure() {
+        // Code audit of 2026-11-06, AUD-07: a client gone before its request,
+        // or before its answer, failed the unit's instance (exit 96).
+        let uid = nix::unistd::geteuid().as_raw();
+        if uid == 0 {
+            return;
+        }
+        let (client, mut server) = UnixStream::pair().unwrap();
+        drop(client);
+        let left = serve_connection(&mut server, uid, || Err(SupervisorCliError::InvalidConfig));
+        assert!(left.is_ok(), "{left:?}");
+
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let request = UpdateRequestEnvelope {
+            schema_version: 1,
+            request_id: 18,
+            request: UpdateReadRequest::Status {},
+        };
+        client
+            .write_all(&encode_frame(&encode_request(&request).unwrap()).unwrap())
+            .unwrap();
+        drop(client);
+        let left = serve_connection(&mut server, uid, || Err(SupervisorCliError::InvalidConfig));
+        assert!(left.is_ok(), "{left:?}");
+
+        // A request cut short is still refused.
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        client.write_all(&[0, 0]).unwrap();
+        drop(client);
+        assert!(
+            serve_connection(&mut server, uid, || Err(SupervisorCliError::InvalidConfig)).is_err()
+        );
     }
 
     #[test]

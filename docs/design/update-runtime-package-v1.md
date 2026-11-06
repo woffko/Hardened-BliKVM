@@ -84,7 +84,11 @@ validation does not require files that those versions never shipped.
 
 The status worker uses the kernel peer UID and the existing supervisor
 credential, with `ProtectSystem=strict` and no writable paths or apply/recovery
-dependencies. Packaging does not enable its socket, alter server environment,
+dependencies. A client that leaves before its first byte, or before its answer
+(a broken pipe or a reset), ends the connection with success; every other error
+is still exit 96. Before, each such client left a failed
+`hardened-blikvm-update-status@` instance (code audit of 2026-11-06, AUD-07;
+test `a_client_that_leaves_is_no_failure`). Packaging does not enable its socket, alter server environment,
 replace a signed application slot, or restart the serving stack. Installing
 dev6 over the retained operational dev5 requires a separate rollback-bound
 upgrade gate preserving initialized state and existing service enablement;
