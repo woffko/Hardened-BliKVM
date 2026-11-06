@@ -9,7 +9,9 @@ does not name or a record with no backup to write.
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -18,6 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools/image/restore_raw_backup.py"
@@ -110,6 +113,48 @@ class RestoreRawBackupTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not the one the record names", result.stderr)
         self.assertEqual(self.root_of(card), before)
+
+
+class ClaimedRootTests(unittest.TestCase):
+    """A root partition in use is never written (code audit of 2026-11-06, AUD-14)."""
+
+    def setUp(self) -> None:
+        spec = importlib.util.spec_from_file_location("restore_raw_backup", TOOL)
+        self.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.tool)
+        self.work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.work)
+
+    @unittest.skipUnless(shutil.which("zstd"), "needs zstd")
+    def test_a_root_partition_in_use_is_refused_and_left_unchanged(self) -> None:
+        original = os.urandom(64 * 1024)
+        (self.work / "original").write_bytes(original)
+        backup = self.work / "root.backup.zst"
+        subprocess.run(["zstd", "-q", "-o", str(backup), str(self.work / "original")], check=True)
+        partition = self.work / "partition"
+        partition.write_bytes(b"the mounted root" * 4096)
+        before = partition.read_bytes()
+        real_open = os.open
+
+        def claimed(path, flags, *args, **kwargs):
+            if flags & os.O_EXCL:
+                raise OSError(errno.EBUSY, os.strerror(errno.EBUSY), str(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        with (
+            mock.patch.object(self.tool, "is_block", return_value=True),
+            mock.patch.object(self.tool.os, "open", side_effect=claimed),
+        ):
+            with self.assertRaises(self.tool.Refused) as refused:
+                self.tool.write_back(
+                    self.work / "card",
+                    {"node": str(partition), "start": 0},
+                    backup,
+                    len(original),
+                    hashlib.sha256(original).hexdigest(),
+                )
+        self.assertIn("the root partition is mounted or in use", str(refused.exception))
+        self.assertEqual(partition.read_bytes(), before)
 
 
 if __name__ == "__main__":
