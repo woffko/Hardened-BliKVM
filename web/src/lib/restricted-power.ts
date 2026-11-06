@@ -61,11 +61,31 @@ export function resetFocusConfirmation(): void {
   confirmedAtMs = 0;
 }
 
+/** The board's words for an action without a current confirmation of the target. */
+const FOCUS_REQUIRED = 'a current focus confirmation is required';
+
+/** What the board said of a refused request, if it said anything. */
+export function refusalOf(error: unknown): string | null {
+  const msg = (error as { response?: { data?: { msg?: unknown } } } | null)?.response?.data?.msg;
+  return typeof msg === 'string' ? msg : null;
+}
+
 export async function performPowerAction(
   platformId: string,
   action: 'power_short' | 'power_long' | 'reset'
 ): Promise<api.PowerResult> {
   await ensureFocus(platformId);
-  const response = await api.submitPowerAction(newOperationId(), action);
-  return response.data;
+  try {
+    const response = await api.submitPowerAction(newOperationId(), action);
+    return response.data;
+  } catch (error) {
+    if (!refusalOf(error)?.includes(FOCUS_REQUIRED)) throw error;
+    // The board forgot the confirmation while this page still held it (a
+    // session's transport that ended, a lock; code audit of 2026-11-06,
+    // AUD-10): it is made again and the action sent once more.
+    resetFocusConfirmation();
+    await ensureFocus(platformId);
+    const response = await api.submitPowerAction(newOperationId(), action);
+    return response.data;
+  }
 }
