@@ -66,15 +66,31 @@ impl FocusChallengeStore {
             .map(|(_, bindings, _)| *bindings)
     }
 
-    /// Keeps a confirmed session's bindings alive while its lease is live.
-    pub(crate) fn extend_bindings(&mut self, session_token: &str, expires_at: Instant) {
+    /// Keeps a confirmed session's bindings alive while its lease is live,
+    /// until at least `expires_at`. Bindings the confirmation's time already
+    /// swept are added back, those of the live lease, within the store's
+    /// bound (code audit of 2026-11-06, AUD-03: keeping only an entry still
+    /// there did nothing once it had lapsed). Stored bindings are kept: they
+    /// are the newest confirmation.
+    pub(crate) fn keep_bindings(
+        &mut self,
+        session_token: &str,
+        bindings: FocusBindings,
+        expires_at: Instant,
+    ) {
         if let Some((_, _, stored)) = self
             .bindings
             .iter_mut()
             .find(|(token, _, _)| token == session_token)
         {
-            *stored = expires_at;
+            *stored = (*stored).max(expires_at);
+            return;
         }
+        if self.bindings.len() >= MAX_CHALLENGES {
+            self.bindings.remove(0);
+        }
+        self.bindings
+            .push((session_token.to_owned(), bindings, expires_at));
     }
 
     pub(crate) fn clear(&mut self, session_token: &str) {
@@ -535,8 +551,9 @@ pub(crate) async fn serve_lease(
             );
             match live {
                 Some((_, bindings)) if continuing => {
-                    state.focus.lock().await.extend_bindings(
+                    state.focus.lock().await.keep_bindings(
                         &session.token,
+                        bindings,
                         now + Duration::from_secs(u64::from(ATTESTATION_TTL_SECONDS)),
                     );
                     bindings
@@ -592,13 +609,21 @@ pub(crate) async fn serve_lease(
                     .focus
                     .lock()
                     .await
-                    .extend_bindings(&session.token, expires_at);
+                    .keep_bindings(&session.token, bindings, expires_at);
             } else if let Some(ttl) = requested_ttl {
+                // A renewal keeps the lease and, as a report does, the
+                // confirmed bindings for its time.
+                let expires_at = now + Duration::from_secs(u64::from(ttl));
                 state
                     .hid_ws_leases
                     .lock()
                     .await
-                    .extend(&session.token, now + Duration::from_secs(u64::from(ttl)));
+                    .extend(&session.token, expires_at);
+                state
+                    .focus
+                    .lock()
+                    .await
+                    .keep_bindings(&session.token, bindings, expires_at);
             }
         }
         ControlResponse::Rejected { .. }
@@ -857,6 +882,35 @@ mod tests {
         assert!(valid_operation_id("0123456789abcdef0123456789abcdef"));
         assert!(!valid_operation_id("0123456789ABCDEF0123456789ABCDEF"));
         assert!(!valid_operation_id("short"));
+    }
+
+    #[test]
+    fn swept_bindings_are_kept_again_for_a_live_lease() {
+        // Code audit of 2026-11-06, AUD-03: once the confirmation's 30 s had
+        // swept the bindings, keeping them for a live lease did nothing.
+        let now = Instant::now();
+        let bindings = FocusBindings {
+            session_binding: 7,
+            target_binding: [3; 32],
+            focus_binding: [4; 16],
+        };
+        let mut store = FocusChallengeStore::new();
+        store.remember_bindings("token-a", bindings, now);
+        let later = now + CHALLENGE_TTL + Duration::from_secs(1);
+        assert_eq!(store.bindings("token-a", later), None);
+        store.keep_bindings("token-a", bindings, later + Duration::from_secs(60));
+        assert_eq!(store.bindings("token-a", later), Some(bindings));
+        // A shorter keep does not cut a longer one, and the store stays
+        // bounded.
+        store.keep_bindings("token-a", bindings, later + Duration::from_secs(1));
+        assert_eq!(
+            store.bindings("token-a", later + Duration::from_secs(30)),
+            Some(bindings)
+        );
+        for index in 0..(MAX_CHALLENGES + 5) {
+            store.keep_bindings(&format!("token-{index}"), bindings, later + CHALLENGE_TTL);
+        }
+        assert_eq!(store.bindings.len(), MAX_CHALLENGES);
     }
 
     #[test]

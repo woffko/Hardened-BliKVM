@@ -417,6 +417,13 @@ session everywhere: the broker refreshes the lease to the reviewed maximum on
 every accepted report, and the server extends both the lease entry and the
 confirmed bindings. Proved with a report-only client: 45 reports over 90 s with
 zero failures and a clean release.
+The code audit of 2026-11-06 (AUD-03) found that extension doing nothing once the
+confirmation's 30 s had swept the bindings: the lease went on, but the ATX
+buttons, which read the bindings, asked for a new confirmation. The server now keeps them as an upsert (`keep_bindings`): a swept
+entry is added back from the live lease's bindings, within the store's bound,
+on a report, on a renewal and where a live lease stands in for a lapsed
+confirmation; a shorter keep never cuts a longer one. Test:
+`swept_bindings_are_kept_again_for_a_live_lease` (before: `None`).
 The interface tree and both binaries were redeployed (web backup at
 `/var/lib/hardened-blikvm-gadget/web-pre-hid-lease-fix`). Note for a later review: the
 mouse jiggler writes the same relative-mouse function the leased pointer uses,
