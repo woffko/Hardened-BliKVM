@@ -199,7 +199,10 @@ state directory (`/var/lib/hardened-blikvm-gadget/system-switches.json`, with
 the image they were recorded under, `/etc/hardened-blikvm-image`); that
 directory is carried. At its start, when the image is another one than the
 record names, the owner sets them as recorded; under the same image the record
-only follows the board, so the owner never undoes a change made otherwise. It
+only follows the board, so the owner never undoes a change made otherwise. A
+switch it could not set leaves the record under the old image, so the next
+start sets it again (code audit of 2026-11-06, AUD-11.4: one failed
+`systemctl` kept SSH as the new image had it, for good). It
 records its own changes at once and the Tailscale daemon's enablement whenever
 it reads it. The SD image builder leaves the record out: a new card records its
 own at its first start. The update runtime is not involved, so this works for
