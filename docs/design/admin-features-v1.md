@@ -146,7 +146,14 @@ and are socket-activated per connection.
     against the pinned release's size and SHA-256 and copies it into
     `/run/hardened-blikvm-picoclaw-exec`, root's; the unit starts that copy,
     so whoever can write the installed file cannot choose what runs, and a
-    file that differs is not started. `hardened-blikvm-picoclaw.service` runs
+    file that differs is not started. The configuration helper's
+    `picoclaw onboard` (the first preparation, which writes the default
+    configuration) runs a copy checked the same way, made in that helper
+    unit's private `/tmp` and removed afterwards; it used to run the
+    installed file itself (code audit of 2026-11-06, AUD-01; tests
+    `a_runtime_that_is_not_the_pinned_release_is_not_onboarded` and
+    `onboarding_runs_the_checked_copy_and_removes_it`; the unit is
+    unchanged). `hardened-blikvm-picoclaw.service` runs
     `picoclaw gateway` as
     the dedicated `hardened-blikvm-picoclaw` user with a sandbox in which only
     its home (`/var/lib/hardened-blikvm-picoclaw`) is writable. It has network
