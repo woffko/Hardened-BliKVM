@@ -180,7 +180,16 @@ and are socket-activated per connection.
     the server drops manual HID input, as the reference does;
   - chat: the browser's `/api/picoclaw/gateway/ws` is relayed to the local
     gateway (`ws://127.0.0.1:18790/pico/ws`) with the gateway token, one
-    assistant session at a time (30-minute lock renewed by traffic).
+    assistant session at a time (30-minute lock renewed by traffic). The
+    lock knows the connection that took it, by a number from a counter: a
+    relay renews, watches and releases only its own connection's lock and
+    clears only its own active entry, while the browser's
+    `DELETE /api/picoclaw/runtime/session` still releases by session. The
+    browser may give a session's lock back and open the same session again
+    before the old relay has ended; the old one's end released the new one's
+    lock and unblocked manual input under a running assistant (code audit of
+    2026-11-06, AUD-04; test
+    `an_old_connection_does_not_release_a_new_one_of_its_session`).
 
 ## Other helper duties (plan phase B)
 
