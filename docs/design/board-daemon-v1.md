@@ -157,7 +157,8 @@ Device > Display, `GET`/`POST /api/vm/oled` with the reference's `exist` and
   the button once a sample (a second on the board), and the policy wants a
   debounced press held for its hold time: the button is held for two to
   three seconds before the display lights (the operator's check on slot 84,
-  2026-10-11).
+  2026-10-11). Since 2026-11-06 the button is read on every turn of the
+  sampling thread (below), and a press held for its hold lights it.
 - The status the daemon answers keeps its fields: the update runtime's
   health check reads it strictly (`board_readiness.rs`), so the display's
   state is not in it; a dark display reports `displayBacklightOn: false`,
@@ -220,3 +221,23 @@ Confirmed order for the gate (every step reversible):
 
 The serial switch stays hidden with a capability note: no transport exists on
 this revision, and inventing one would be guessing.
+
+## The LED and the button on a fast turn (2026-11-06)
+
+The code audit of 2026-11-06 (AUD-06) found the sampling thread turning once a
+sample (a second on the board): the activity LED, whose pulse is 100 ms, was lit
+for the whole second or not at all, and the display button was held two to three
+seconds. The thread now turns every 20 ms (or at the sample interval when that is
+shorter). The LED and the button are driven on every turn, with the turn's time;
+the temperature and the RTC are read, the fan sampled, and the ATX LEDs and the
+display updated only when a sample is due (`SampleCadence`), as before. The
+readings are still taken before the state's lock.
+
+The button runtime used to normalize the line's level by `active_high` before
+the policy, which normalizes it again: an active-low button was inverted twice
+and never seen pressed. The runtime now hands the policy the level as read.
+
+Tests: `the_activity_led_lights_its_pulse_once_a_period` and
+`a_press_held_for_its_hold_wakes_the_display_once` (the sampling thread's turns
+with the reviewed configuration on a played clock), and
+`an_active_low_button_wakes_once_on_a_press`.

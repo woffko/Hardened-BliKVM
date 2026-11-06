@@ -38,7 +38,6 @@ pub struct ButtonRuntime<G: GpioDriver> {
     driver: G,
     line: LineRequest,
     engine: ButtonPolicyEngine,
-    active_high: bool,
     wakeups: u64,
 }
 
@@ -66,7 +65,6 @@ impl<G: GpioDriver> ButtonRuntime<G> {
             driver,
             line,
             engine,
-            active_high: config.active_high,
             wakeups: 0,
         })
     }
@@ -81,7 +79,10 @@ impl<G: GpioDriver> ButtonRuntime<G> {
             .driver
             .read_line(&self.line)
             .map_err(|_| ButtonError::Line)?;
-        let level = if raw == self.active_high {
+        // The level as read; the policy knows which one is pressed (code
+        // audit of 2026-11-06, AUD-06: normalizing it here as well inverted
+        // an active-low button).
+        let level = if raw {
             ButtonLevel::High
         } else {
             ButtonLevel::Low
@@ -188,6 +189,35 @@ mod tests {
         levels.lock().unwrap().extend([true, true, true, true]);
         let mut events = Vec::new();
         for now in [200_u64, 400, 1_200, 1_400] {
+            events.push(button.tick(now).unwrap());
+        }
+        assert_eq!(
+            events.iter().filter(|event| event.is_some()).count(),
+            1,
+            "one wake cycle expected: {events:?}"
+        );
+        assert_eq!(button.wakeups(), 1);
+    }
+
+    #[test]
+    fn an_active_low_button_wakes_once_on_a_press() {
+        // Idle high, pressed low (code audit of 2026-11-06, AUD-06: the
+        // level was inverted twice, so a press was never seen).
+        let mut low = config();
+        low.active_high = false;
+        let driver = MockDriver {
+            levels: Arc::new(Mutex::new(vec![true])),
+        };
+        let levels = Arc::clone(&driver.levels);
+        let mut button =
+            ButtonRuntime::new(driver, button_line(&low), &low, 0, ButtonLevel::High).unwrap();
+        assert_eq!(button.tick(100).unwrap(), None);
+        levels
+            .lock()
+            .unwrap()
+            .extend([false, false, false, false, true, true]);
+        let mut events = Vec::new();
+        for now in [200_u64, 400, 1_200, 1_400, 1_600, 1_800] {
             events.push(button.tick(now).unwrap());
         }
         assert_eq!(

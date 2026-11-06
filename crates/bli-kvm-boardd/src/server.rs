@@ -479,12 +479,12 @@ where
     }
 
     /// Drive the LED pulse forward; called by the sampling thread.
-    pub fn tick_led(&mut self) {
+    pub fn tick_led(&mut self, now_ms: u64) {
         let Some(led) = self.led.as_mut() else {
             return;
         };
         let enabled = led.enabled();
-        let _ = led.set_enabled(enabled, crate::board_millis());
+        let _ = led.set_enabled(enabled, now_ms);
     }
 
     pub fn draw_display_test(&mut self) -> Result<(), BoarddError> {
