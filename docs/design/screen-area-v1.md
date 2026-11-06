@@ -66,7 +66,9 @@ layout means the screen is the whole desktop, as before.
   left, on the right, smaller and lower than its neighbour) every seventh
   pixel of the picture lands on its own pixel of the screen as the target
   reads the range, and the corners on the screen's own first and last
-  pixel; the report's bytes.
+  pixel; the report's bytes; the agent's layout written again when the
+  agent comes back and after a failed write, and not over an area the
+  operator kept.
 - `crates/bli-kvm-server/src/screen_area.rs` and the server's route test:
   the checks, the file, a refusal without CSRF or for a screen outside its
   desktop leaving the layout, the whole desktop again.

@@ -84,3 +84,43 @@ export function mapToDesktop(
     y: axis(y, max, area.screen.y, area.screen.height, area.desktop.height)
   };
 }
+
+/** What the page does with the target agent's layout at one look. */
+export type LayoutStep = {
+  /** The layout to write to the board, if one is to be; null is the whole desktop. */
+  write?: { area: ScreenArea | null };
+  /** The key of the layout last tried. */
+  tried: string | null;
+};
+
+/**
+ * The agent's layout (null while it gives none, 'whole' for the whole
+ * desktop) against the one the board keeps: each layout is written once, so
+ * an area the operator then keeps on the board stands. Once the agent's
+ * layout goes, the one tried is forgotten, so the agent's return writes it
+ * again (code audit of 2026-11-06, AUD-16).
+ */
+export function layoutStep(
+  agent: ScreenArea | 'whole' | null,
+  kept: ScreenArea | null,
+  tried: string | null
+): LayoutStep {
+  if (agent === null) return { tried: null };
+  const wanted = agent === 'whole' ? null : agent;
+  if (sameScreenArea(wanted, kept)) return { tried };
+  const key = JSON.stringify(wanted);
+  if (tried === key) return { tried };
+  return { write: { area: wanted }, tried: key };
+}
+
+/**
+ * The key last tried once the write of `written` answered: a write the board
+ * did not take is forgotten, so the layout is tried again.
+ */
+export function afterLayoutWrite(
+  tried: string | null,
+  written: string,
+  applied: boolean
+): string | null {
+  return applied || tried !== written ? tried : null;
+}
