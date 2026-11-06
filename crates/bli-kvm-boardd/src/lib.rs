@@ -83,7 +83,6 @@ pub fn build_state(
     let mut state = BoarddState::new(
         supervisor,
         FanModeName::Auto,
-        0,
         config.fan.minimum_duty_percent,
         config.fan.maximum_duty_percent,
         pwm_enabled,
@@ -534,7 +533,6 @@ mod turn_tests {
         let state = BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,

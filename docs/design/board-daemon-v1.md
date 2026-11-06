@@ -241,3 +241,31 @@ Tests: `the_activity_led_lights_its_pulse_once_a_period` and
 `a_press_held_for_its_hold_wakes_the_display_once` (the sampling thread's turns
 with the reviewed configuration on a played clock), and
 `an_active_low_button_wakes_once_on_a_press`.
+
+## The manual fan duty through the supervisor (2026-11-06)
+
+The code audit of 2026-11-06 (AUD-02) found the manual duty written to the
+actuator past the supervisor (`actuator_mut`, slice 1), so the supervisor kept
+its last automatic command: back in Auto, a policy that wanted that command
+again (a hot board at maximum, before and after a low manual duty) wrote
+nothing, and the fan stayed at the manual duty while the status reported the
+automatic one. The manual duty also started at 0, so Manual before any duty
+stopped the fan.
+
+- The supervisor's `apply_manual` applies the operator's command and records
+  it. It is refused unless the supervisor is active (not before its start,
+  not while maximum cooling is latched or the actuation is uncertain); a
+  command that fails latches maximum cooling, as an automatic one does.
+- The daemon's manual duty starts at the reviewed maximum; Manual applies it
+  first and changes the mode only once the fan took it. Back in Auto the next
+  sample writes the policy's command whenever it differs from the manual one.
+- The status reports the duty the fan was last told in either mode.
+- `actuator_mut` stays only for the worker drain after the shutdown's
+  failsafe.
+
+Tests: `manual_mode_straight_after_start_keeps_the_fan_running` (before:
+`Off` applied) and `auto_after_manual_writes_the_policys_command` (before: the
+fan stayed at 20 % at 85 °C), and the supervisor's
+`a_manual_command_is_recorded_and_replaced_by_the_next_evaluation` and
+`a_failed_manual_command_latches_maximum_cooling`. Not tried on the board:
+fan settings are not changed there.

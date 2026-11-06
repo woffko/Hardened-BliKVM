@@ -216,7 +216,6 @@ where
     pub fn new(
         supervisor: FanSupervisor<A>,
         mode: FanModeName,
-        manual_duty: u8,
         minimum_duty: u8,
         maximum_duty: u8,
         pwm_enabled: bool,
@@ -240,7 +239,9 @@ where
             atx_leds,
             supervisor,
             mode,
-            manual_duty,
+            // Manual before any duty runs the fan at its maximum, never
+            // stopped (code audit of 2026-11-06, AUD-02).
+            manual_duty: maximum_duty,
             minimum_duty,
             maximum_duty,
             pwm_enabled,
@@ -379,13 +380,10 @@ where
                     "actuation_uncertain"
                 }
             },
-            fan_duty_percent: if self.mode == FanModeName::Manual {
-                self.manual_duty
-            } else {
-                match state.applied_command {
-                    Some(FanCommand::DutyPercent(percent)) => percent.get(),
-                    _ => 0,
-                }
+            // What the fan was last told, in either mode.
+            fan_duty_percent: match state.applied_command {
+                Some(FanCommand::DutyPercent(percent)) => percent.get(),
+                _ => 0,
             },
             fan_pwm: self.pwm_enabled,
             fan_pwm_period_ms: self.pwm_period_ms,
@@ -518,10 +516,13 @@ where
             }
             _ => {}
         }
-        self.mode = mode;
         if mode == FanModeName::Manual {
+            // A duty the fan cannot take leaves the mode as it was.
             self.apply_manual_duty()?;
         }
+        // Back in Auto the next sample writes the policy's command: the
+        // supervisor knows the manual duty it replaces.
+        self.mode = mode;
         Ok(())
     }
 
@@ -551,9 +552,11 @@ where
                 FanDutyPercent::new(self.manual_duty).ok_or(BoarddError::InvalidValue)?,
             )
         };
+        // Through the supervisor, which records it (code audit of
+        // 2026-11-06, AUD-02).
         self.supervisor
-            .actuator_mut()
-            .apply(command)
+            .apply_manual(command)
+            .map(|_| ())
             .map_err(|_| BoarddError::BackendUnavailable)
     }
 
@@ -986,6 +989,10 @@ mod tests {
         }
     }
 
+    fn duty(percent: u8) -> FanCommand {
+        FanCommand::DutyPercent(FanDutyPercent::new(percent).unwrap())
+    }
+
     fn policy() -> FanPolicyConfig {
         FanPolicyConfig {
             turn_off_millidegrees: 45_000,
@@ -1008,7 +1015,6 @@ mod tests {
         BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,
@@ -1128,7 +1134,6 @@ mod tests {
         BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,
@@ -1188,7 +1193,6 @@ mod tests {
         BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,
@@ -1267,7 +1271,6 @@ mod tests {
         BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,
@@ -1391,7 +1394,6 @@ mod tests {
         let mut state = BoarddState::new(
             supervisor,
             FanModeName::Auto,
-            0,
             20,
             100,
             true,
@@ -1563,6 +1565,42 @@ mod tests {
         state.note_thermal(Err("unavailable"));
         assert_eq!(state.sample(3_000), Ok(()));
         assert_eq!(state.status().thermal_error, Some("unavailable"));
+    }
+
+    #[test]
+    fn manual_mode_straight_after_start_keeps_the_fan_running() {
+        // Code audit of 2026-11-06, AUD-02: the manual duty started at 0, so
+        // Manual before any duty stopped the fan.
+        let mut state = state();
+        state.set_mode(FanModeName::Manual).unwrap();
+        let applied = &state.supervisor.actuator().applied;
+        assert!(
+            !applied.contains(&FanCommand::Off),
+            "the fan was stopped: {applied:?}"
+        );
+        assert_eq!(applied.last(), Some(&duty(100)));
+        assert_eq!(state.status().fan_duty_percent, 100);
+    }
+
+    #[test]
+    fn auto_after_manual_writes_the_policys_command() {
+        // Code audit of 2026-11-06, AUD-02: a manual duty went past the
+        // supervisor, which still thought the fan ran at its last automatic
+        // command and so did not write it again.
+        let mut state = state();
+        state.note_thermal(Ok(85_000));
+        assert_eq!(state.sample(1_000), Ok(()));
+        state.set_mode(FanModeName::Manual).unwrap();
+        state.set_manual_duty(20).unwrap();
+        assert_eq!(state.supervisor.actuator().applied.last(), Some(&duty(20)));
+        state.set_mode(FanModeName::Auto).unwrap();
+        assert_eq!(state.sample(2_000), Ok(()));
+        assert_eq!(
+            state.supervisor.actuator().applied.last(),
+            Some(&duty(100)),
+            "the hot board kept the manual duty"
+        );
+        assert_eq!(state.status().fan_duty_percent, 100);
     }
 
     #[test]
