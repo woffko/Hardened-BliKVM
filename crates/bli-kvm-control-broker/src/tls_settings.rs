@@ -51,9 +51,17 @@ impl TlsRunner for SystemTlsRunner {
             return Err("the configuration directory must be a real directory".into());
         }
         let temporary = path.with_extension("conf.new");
-        std::fs::write(&temporary, text).map_err(|error| {
-            format!("the temporary configuration could not be written: {error}")
-        })?;
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&temporary).map_err(|error| {
+                format!("the temporary configuration could not be written: {error}")
+            })?;
+            file.write_all(text.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| {
+                    format!("the temporary configuration could not be written: {error}")
+                })?;
+        }
         std::fs::set_permissions(
             &temporary,
             std::os::unix::fs::PermissionsExt::from_mode(0o600),
@@ -63,15 +71,12 @@ impl TlsRunner for SystemTlsRunner {
             .map_err(|error| format!("the configuration could not be replaced: {error}"))
     }
 
+    // Killed past the owner's deadline for system commands, its output
+    // bounded (code audit of 2026-11-06, AUD-08).
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        let mut command = Command::new(program);
+        command.args(args);
+        crate::firewall_process::run(command, crate::tailscale::SYSTEM_COMMAND_TIMEOUT, 64 * 1024)
     }
 }
 

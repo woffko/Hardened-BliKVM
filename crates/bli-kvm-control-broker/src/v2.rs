@@ -42,16 +42,20 @@ fn share_atx(engine: AtxTransitionEngine) -> SharedAtx {
 }
 
 /// The settings whose commands wait on systemd for seconds (a unit's
-/// restart, hostnamed): the server runs them on a blocking worker behind
-/// this lock of their own, so the shared state's lock, which HID leases and
-/// their expiry wait on, is never held for them (code audit of 2026-10-20,
-/// AUD-07).
+/// restart, hostnamed), on a program (openssl, nginx) or on another daemon:
+/// the server runs them on a blocking worker behind this lock of their own,
+/// so the shared state's lock, which HID leases and their expiry wait on, is
+/// never held for them (code audit of 2026-10-20, AUD-07; mDNS, TLS and the
+/// board's status from the audit of 2026-11-06, AUD-08).
 #[derive(Default)]
 pub struct SystemSettings {
     video_settings: Option<crate::video_settings::VideoSettingsState>,
     hostname: Option<crate::hostname_settings::HostnameSettings>,
     ssh: Option<crate::ssh_settings::SshSettings>,
     quic: Option<crate::quic_settings::QuicSettings>,
+    mdns: Option<crate::device_settings::MdnsState>,
+    tls: Option<crate::tls_settings::TlsState>,
+    board_status: Option<crate::board_status::BoardStatusClient>,
 }
 
 pub type SharedSystemSettings = std::sync::Arc<std::sync::Mutex<SystemSettings>>;
@@ -68,6 +72,11 @@ impl SystemSettings {
                 | PlatformControlRequestV2::SshState {}
                 | PlatformControlRequestV2::Quic { .. }
                 | PlatformControlRequestV2::QuicState {}
+                | PlatformControlRequestV2::Mdns { .. }
+                | PlatformControlRequestV2::MdnsState {}
+                | PlatformControlRequestV2::TlsState {}
+                | PlatformControlRequestV2::TlsSet { .. }
+                | PlatformControlRequestV2::BoardStatus {}
         )
     }
 
@@ -110,7 +119,67 @@ impl SystemSettings {
                 .quic
                 .as_mut()
                 .map_or_else(disabled, |quic| quic.state()),
+            PlatformControlRequestV2::Mdns { enabled } => self
+                .mdns
+                .as_mut()
+                .map_or_else(disabled, |mdns| mdns.handle(*enabled)),
+            PlatformControlRequestV2::MdnsState {} => {
+                self.mdns
+                    .as_ref()
+                    .map_or_else(disabled, |mdns| ControlResponse::MdnsState {
+                        enabled: mdns.current(),
+                    })
+            }
+            PlatformControlRequestV2::TlsState {} => self.tls_state(),
+            PlatformControlRequestV2::TlsSet { enabled } => self
+                .tls
+                .as_mut()
+                .map_or_else(disabled, |tls| tls.set(*enabled)),
+            PlatformControlRequestV2::BoardStatus {} => self.board_status(),
             _ => disabled(),
+        }
+    }
+
+    fn tls_state(&mut self) -> ControlResponse {
+        let Some(tls) = self.tls.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let enabled = match tls.enabled() {
+            Ok(enabled) => enabled,
+            Err(reason) => {
+                eprintln!("tls: state read failed: {reason}");
+                return reject(ControlRejectionCode::BackendRejected);
+            }
+        };
+        let certificate = tls.certificate().unwrap_or_default();
+        ControlResponse::TlsState {
+            enabled,
+            subject: certificate.subject,
+            issuer: certificate.issuer,
+            not_after: certificate.not_after,
+            fingerprint_sha256: certificate.fingerprint_sha256,
+        }
+    }
+
+    fn board_status(&self) -> ControlResponse {
+        // The operator configuration is the capability: an unattached client
+        // is resolved from the environment on first use, so the proxy works on
+        // every board-profile entry point.
+        let resolved = self
+            .board_status
+            .clone()
+            .or_else(crate::board_status::board_status_client_from_environment);
+        let Some(client) = resolved.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        match client.read() {
+            Ok(status) => ControlResponse::BoardStatus {
+                power_led_present: status.power_led_present,
+                power_led_on: status.power_led_on,
+                hdd_led_present: status.hdd_led_present,
+                hdd_led_on: status.hdd_led_on,
+            },
+            Err(_) => reject(ControlRejectionCode::BackendUnavailable),
         }
     }
 }
@@ -133,7 +202,6 @@ pub struct ControlV2State {
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
     system_settings: SharedSystemSettings,
-    mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
     display_sleep: Option<crate::device_settings::DisplaySleepState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
@@ -148,14 +216,12 @@ pub struct ControlV2State {
     system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
     wifi: Option<crate::network_settings::SharedWifi>,
-    tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::SharedFirewall>,
     /// The mode runtime of `firewall`, kept apart so finding it never waits
     /// on the firewall's lock.
     firewall_modes: Option<crate::firewall_runtime::SharedModeRuntime>,
     system_log: Option<crate::system_log_settings::SystemLogState>,
     tailscale: Option<crate::tailscale::TailscaleState>,
-    board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
 }
@@ -179,7 +245,6 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             system_settings: SharedSystemSettings::default(),
-            mdns: None,
             mouse_jiggler: None,
             display_sleep: None,
             hid_only: None,
@@ -188,12 +253,10 @@ impl ControlV2State {
             system_switches: None,
             ipv4: None,
             wifi: None,
-            tls: None,
             firewall: None,
             firewall_modes: None,
             system_log: None,
             tailscale: None,
-            board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
         }
@@ -224,7 +287,7 @@ impl ControlV2State {
 
     /// Attach the reviewed device toggles to the board state.
     pub fn with_device_settings(&mut self, mdns: crate::device_settings::MdnsState) {
-        self.mdns = Some(mdns);
+        self.system_settings_mut().mdns = Some(mdns);
     }
 
     /// Attach the reviewed Tailscale surface to the board state.
@@ -253,7 +316,7 @@ impl ControlV2State {
 
     /// Attach the reviewed HTTPS surface to the board state.
     pub fn with_tls(&mut self, tls: crate::tls_settings::TlsState) {
-        self.tls = Some(tls);
+        self.system_settings_mut().tls = Some(tls);
     }
 
     /// Attach the reviewed WiFi surface to the board state.
@@ -340,6 +403,9 @@ impl ControlV2State {
             PlatformControlRequestV2::Quic { enabled } => {
                 self.note_switch(crate::system_switches::Switch::Quic, *enabled);
             }
+            PlatformControlRequestV2::Mdns { enabled } => {
+                self.note_switch(crate::system_switches::Switch::Mdns, *enabled);
+            }
             _ => {}
         }
     }
@@ -402,7 +468,7 @@ impl ControlV2State {
         &mut self,
         mut switches: crate::system_switches::SystemSwitches,
     ) -> crate::system_switches::Reconciled {
-        let reconciled = switches.reconcile(self.mdns.as_mut());
+        let reconciled = switches.reconcile(self.system_settings_mut().mdns.as_mut());
         self.system_switches = Some(switches);
         reconciled
     }
@@ -596,7 +662,6 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             system_settings: SharedSystemSettings::default(),
-            mdns: None,
             mouse_jiggler: None,
             display_sleep: None,
             hid_only: None,
@@ -605,12 +670,10 @@ impl ControlV2State {
             system_switches: None,
             ipv4: None,
             wifi: None,
-            tls: None,
             firewall: None,
             firewall_modes: None,
             system_log: None,
             tailscale: None,
-            board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
         }
@@ -651,7 +714,7 @@ impl ControlV2State {
 
     /// Attach the read-only board status proxy to the board daemon.
     pub fn attach_board_status(&mut self, client: crate::board_status::BoardStatusClient) {
-        self.board_status = Some(client);
+        self.system_settings_mut().board_status = Some(client);
     }
 
     #[cfg(feature = "system-action-profile")]
@@ -711,34 +774,6 @@ impl ControlV2State {
             Ok(mut firewall) => firewall.dispatch(request),
             Err(_) => reject(ControlRejectionCode::BackendRejected),
         }
-    }
-
-    fn handle_tls_state(&mut self) -> ControlResponse {
-        let Some(tls) = self.tls.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        let enabled = match tls.enabled() {
-            Ok(enabled) => enabled,
-            Err(reason) => {
-                eprintln!("tls: state read failed: {reason}");
-                return reject(ControlRejectionCode::BackendRejected);
-            }
-        };
-        let certificate = tls.certificate().unwrap_or_default();
-        ControlResponse::TlsState {
-            enabled,
-            subject: certificate.subject,
-            issuer: certificate.issuer,
-            not_after: certificate.not_after,
-            fingerprint_sha256: certificate.fingerprint_sha256,
-        }
-    }
-
-    fn handle_tls_set(&mut self, enabled: bool) -> ControlResponse {
-        let Some(tls) = self.tls.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        tls.set(enabled)
     }
 
     fn handle_wifi(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
@@ -900,48 +935,6 @@ impl ControlV2State {
         }
     }
 
-    fn handle_mdns(&mut self, enabled: bool) -> ControlResponse {
-        let Some(state) = self.mdns.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        let response = state.handle(enabled);
-        if matches!(response, ControlResponse::Applied) {
-            self.note_switch(crate::system_switches::Switch::Mdns, enabled);
-        }
-        response
-    }
-
-    fn handle_mdns_state(&self) -> ControlResponse {
-        let Some(state) = self.mdns.as_ref() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        ControlResponse::MdnsState {
-            enabled: state.current(),
-        }
-    }
-
-    fn handle_board_status(&self) -> ControlResponse {
-        // The operator configuration is the capability: an unattached client
-        // is resolved from the environment on first use, so the proxy works on
-        // every board-profile entry point.
-        let resolved = self
-            .board_status
-            .clone()
-            .or_else(crate::board_status::board_status_client_from_environment);
-        let Some(client) = resolved.as_ref() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        match client.read() {
-            Ok(status) => ControlResponse::BoardStatus {
-                power_led_present: status.power_led_present,
-                power_led_on: status.power_led_on,
-                hdd_led_present: status.hdd_led_present,
-                hdd_led_on: status.hdd_led_on,
-            },
-            Err(_) => reject(ControlRejectionCode::BackendUnavailable),
-        }
-    }
-
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {
@@ -1044,13 +1037,16 @@ impl ControlV2State {
             | PlatformControlRequestV2::Ssh { .. }
             | PlatformControlRequestV2::SshState {}
             | PlatformControlRequestV2::Quic { .. }
-            | PlatformControlRequestV2::QuicState {} => {
+            | PlatformControlRequestV2::QuicState {}
+            | PlatformControlRequestV2::Mdns { .. }
+            | PlatformControlRequestV2::MdnsState {}
+            | PlatformControlRequestV2::TlsState {}
+            | PlatformControlRequestV2::TlsSet { .. }
+            | PlatformControlRequestV2::BoardStatus {} => {
                 let response = self.system_settings_mut().dispatch(request);
                 self.note_system_setting(request, &response);
                 response
             }
-            PlatformControlRequestV2::Mdns { enabled } => self.handle_mdns(*enabled),
-            PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
             PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
             PlatformControlRequestV2::DisplaySleep { seconds } => {
@@ -1103,8 +1099,6 @@ impl ControlV2State {
             | PlatformControlRequestV2::WifiRadio { .. }
             | PlatformControlRequestV2::WifiPreferred { .. }
             | PlatformControlRequestV2::WifiPreferredConfirm {} => self.handle_wifi(request),
-            PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
-            PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
             PlatformControlRequestV2::FirewallState {}
             | PlatformControlRequestV2::FirewallRules { .. }
             | PlatformControlRequestV2::FirewallBaseline { .. } => self.handle_firewall(request),
@@ -1118,7 +1112,6 @@ impl ControlV2State {
             PlatformControlRequestV2::TailscaleAction { action } => {
                 self.handle_tailscale_action(action)
             }
-            PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)
             }

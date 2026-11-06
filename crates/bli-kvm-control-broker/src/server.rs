@@ -1812,6 +1812,76 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_mdns_switch_leaves_hid_leases_answered() {
+        // systemd-resolved taking two seconds to restart (code audit of
+        // 2026-11-06, AUD-08).
+        struct SlowRestart;
+        impl crate::video_settings::VideoRestartRunner for SlowRestart {
+            fn restart(&mut self, _unit: &str) -> Result<(), String> {
+                std::thread::sleep(Duration::from_secs(2));
+                Ok(())
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let conf = directory.path().join("resolved.conf");
+        std::fs::write(&conf, "[Resolve]\nMulticastDNS=no\n").unwrap();
+        let mut state = ControlV2State::serving();
+        state.with_device_settings(crate::device_settings::MdnsState::open(
+            &conf,
+            "systemd-resolved.service",
+            Box::new(SlowRestart),
+            true,
+        ));
+        let v2 = Arc::new(TokioMutex::new(state));
+        let envelope = |id: u64, request: PlatformControlRequestV2| {
+            encode_request_v2(&ControlRequestEnvelopeV2 {
+                schema_version: CONTROL_SCHEMA_VERSION_V2,
+                request_id: id,
+                operation_id: format!("{id:032x}"),
+                request,
+            })
+            .unwrap()
+        };
+        let switch = envelope(1, PlatformControlRequestV2::Mdns { enabled: true });
+        let slow = tokio::spawn({
+            let v2 = Arc::clone(&v2);
+            async move { respond(&switch, &v2).await }
+        });
+        sleep(Duration::from_millis(100)).await;
+        let lease = envelope(
+            2,
+            PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Acquire {
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    ttl_seconds: 30,
+                },
+            },
+        );
+        let started = std::time::Instant::now();
+        let answer = timeout(TEST_START_WAIT * 2, respond(&lease, &v2))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "the lease waited {:?} behind the mDNS switch",
+            started.elapsed()
+        );
+        assert!(matches!(answer.response, ControlResponse::Rejected { .. }));
+        assert_eq!(
+            slow.await.unwrap().unwrap().response,
+            ControlResponse::Applied
+        );
+        // The switch is noted as before, and read back as switched.
+        let state = envelope(3, PlatformControlRequestV2::MdnsState {});
+        assert_eq!(
+            respond(&state, &v2).await.unwrap().response,
+            ControlResponse::MdnsState { enabled: true }
+        );
+    }
+
     #[tokio::test]
     async fn a_peer_the_owner_does_not_admit_is_closed_unanswered() {
         // SAFETY: geteuid has no preconditions.
