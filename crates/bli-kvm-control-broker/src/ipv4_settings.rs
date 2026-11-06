@@ -549,13 +549,23 @@ impl Ipv4Settings {
                 ""
             }
         );
-        if addressing_changed || in_window {
+        if addressing_changed {
             // A change inside a window, the resolvers' alone included, keeps
             // the window's revert and starts its time again.
             self.arm_revert(device, uuid, before);
-        } else if let Err(error) = self.write_journal(None) {
-            // A change of the resolvers alone needs no confirmation.
-            eprintln!("network: the revert journal could not be written: {error}");
+        } else {
+            // A change of the resolvers alone needs no confirmation, and a
+            // change back to the addressing the window opened with ends the
+            // window, as Wi-Fi's does (code audit of 2026-11-06, AUD-11.1).
+            if in_window {
+                self.pending
+                    .lock()
+                    .expect("pending poisoned")
+                    .remove(&device);
+            }
+            if let Err(error) = self.write_journal(None) {
+                eprintln!("network: the revert journal could not be written: {error}");
+            }
         }
         self.info()
     }
@@ -1028,6 +1038,35 @@ mod tests {
         ipv4.set(&manual(Some("192.0.2.200")));
         assert_eq!(ipv4.confirm(), ControlResponse::Applied);
         assert!(journal.read::<RevertRecord>().is_none());
+    }
+
+    #[test]
+    fn a_change_back_to_the_first_addressing_ends_the_window() {
+        // The window ends as Wi-Fi's does, and the resolvers set with the
+        // change back stay (code audit of 2026-11-06, AUD-11.1).
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let first = Snapshot {
+            method: "manual".into(),
+            addresses: "192.0.2.10/24".into(),
+            gateway: "192.0.2.5".into(),
+            dns: "192.0.2.53".into(),
+            ignore_auto_dns: "yes".into(),
+        };
+        let profile = Arc::new(Mutex::new(first.clone()));
+        let mut ipv4 =
+            settings(&profile, Duration::from_millis(2_000)).with_journal(journal.clone());
+        ipv4.set(&manual(Some("192.0.2.50")));
+        assert!(ipv4.revert_in_seconds() > 0);
+        let mut back = manual(Some("192.0.2.10"));
+        back.dns = vec!["192.0.2.54".into()];
+        ipv4.set(&back);
+        assert_eq!(ipv4.revert_in_seconds(), 0, "the window is still open");
+        assert!(journal.read::<RevertRecords>().is_none());
+        std::thread::sleep(Duration::from_millis(4_000));
+        let now = profile.lock().unwrap().clone();
+        assert_eq!(now.addresses, "192.0.2.10/24");
+        assert_eq!(now.dns, "192.0.2.54", "the change back was reverted");
     }
 
     #[test]
