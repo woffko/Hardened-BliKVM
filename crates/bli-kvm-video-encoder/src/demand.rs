@@ -69,6 +69,9 @@ pub struct Demand {
     /// 2: software), and how many `engine` lines came.
     engine: AtomicU8,
     engine_lines: AtomicU64,
+    /// The encoder was to force a key frame and could not make it: the
+    /// reader lets the next capture through, changed or not.
+    key_retry: AtomicBool,
 }
 
 impl Demand {
@@ -82,6 +85,7 @@ impl Demand {
             kbps: std::sync::atomic::AtomicU32::new(0),
             engine: AtomicU8::new(0),
             engine_lines: AtomicU64::new(0),
+            key_retry: AtomicBool::new(false),
         })
     }
 
@@ -117,6 +121,7 @@ impl Demand {
             kbps: std::sync::atomic::AtomicU32::new(0),
             engine: AtomicU8::new(0),
             engine_lines: AtomicU64::new(0),
+            key_retry: AtomicBool::new(false),
         });
         let accepting = Arc::clone(&demand);
         let open = Arc::new(AtomicUsize::new(0));
@@ -238,6 +243,21 @@ impl Demand {
     /// Bumped by every new viewer, who needs a key frame to start.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+
+    /// The encoder could not make a key frame it was to force.
+    pub fn retry_key(&self) {
+        self.key_retry.store(true, Ordering::Release);
+    }
+
+    /// Whether a missed key frame waits for a capture.
+    pub fn key_retry_pending(&self) -> bool {
+        self.key_retry.load(Ordering::Acquire)
+    }
+
+    /// A capture was let through for it.
+    pub fn clear_key_retry(&self) {
+        self.key_retry.store(false, Ordering::Release);
     }
 
     /// Blocks until a viewer is connected or `stop` is set.
