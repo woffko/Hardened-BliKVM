@@ -75,6 +75,9 @@ enum RevertRecords {
 pub struct Ipv4Settings {
     runner: Runner,
     pending: PendingReverts,
+    /// Set while the start's revert of the last owner's change is still
+    /// being tried: a change made meanwhile would be undone by its next try.
+    reconciling: Arc<std::sync::atomic::AtomicBool>,
     generation: u64,
     revert_after: Duration,
     journal: Option<RevertJournal>,
@@ -141,6 +144,7 @@ impl Ipv4Settings {
         Self {
             runner: Arc::new(Mutex::new(runner)),
             pending: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+            reconciling: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             generation: 0,
             revert_after: REVERT_AFTER,
             journal: None,
@@ -169,6 +173,8 @@ impl Ipv4Settings {
             RevertRecords::Many(records) => records,
         };
         let runner = Arc::clone(&self.runner);
+        let reconciling = Arc::clone(&self.reconciling);
+        reconciling.store(true, std::sync::atomic::Ordering::SeqCst);
         std::thread::spawn(move || {
             for attempt in 0..12 {
                 if attempt > 0 {
@@ -179,10 +185,13 @@ impl Ipv4Settings {
                     eprintln!("network: the revert journal could not be written: {error}");
                 }
                 if records.is_empty() {
-                    return;
+                    break;
                 }
             }
-            eprintln!("network: the unconfirmed IPv4 change could not be reverted");
+            if !records.is_empty() {
+                eprintln!("network: the unconfirmed IPv4 change could not be reverted");
+            }
+            reconciling.store(false, std::sync::atomic::Ordering::SeqCst);
         });
         true
     }
@@ -452,6 +461,11 @@ impl Ipv4Settings {
     pub fn set(&mut self, change: &Ipv4Change) -> ControlResponse {
         // Whatever happens, the next reading is fresh.
         self.cache = None;
+        // The start's revert is not done: it would undo this change (code
+        // audit of 2026-11-06, AUD-11.2).
+        if self.reconciling.load(std::sync::atomic::Ordering::SeqCst) {
+            return reject(ControlRejectionCode::PendingUnreconciled);
+        }
         if change.validate().is_err() {
             return reject(ControlRejectionCode::InvalidState);
         }
@@ -1107,6 +1121,44 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+    }
+
+    #[test]
+    fn no_change_is_taken_while_the_start_still_reverts() {
+        // A revert left by the last owner, which NetworkManager refuses at
+        // first: until it is done an edit would be undone by its next try
+        // (code audit of 2026-11-06, AUD-11.2).
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        let mut last = settings(&profile, Duration::from_secs(3600)).with_journal(journal.clone());
+        last.set(&manual(Some("192.0.2.200")));
+        drop(last);
+
+        let nm = FakeNm::wired(&profile);
+        let fail = Arc::clone(&nm.fail_modify);
+        fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut next = Ipv4Settings::open(Box::new(nm)).with_journal(journal.clone());
+        assert!(next.reconcile());
+        std::thread::sleep(Duration::from_millis(300));
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            next.set(&manual(Some("192.0.2.77"))),
+            reject(ControlRejectionCode::PendingUnreconciled)
+        );
+        // Once the revert is done, changes are taken again.
+        for _ in 0..80 {
+            if journal.read::<RevertRecords>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+        assert!(matches!(
+            next.set(&manual(Some("192.0.2.77"))),
+            ControlResponse::NetworkInfo { .. }
+        ));
     }
 
     #[test]
