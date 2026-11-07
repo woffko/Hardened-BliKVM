@@ -44,8 +44,9 @@ const STREAM = await (async () => {
   ]);
 })();
 
-/** The layout the played board keeps, and what the page wrote to it. */
-const board = { area: null, writes: [] };
+/** The layout the played board keeps, what the page wrote to it, and how
+ * long the board takes to answer a write. */
+const board = { area: null, writes: [], answerDelayMs: 0 };
 
 async function open({ mobile = false, language = null } = {}) {
   const context = await browser.newContext({
@@ -98,6 +99,10 @@ async function open({ mobile = false, language = null } = {}) {
       const { area } = route.request().postDataJSON();
       board.writes.push(area);
       board.area = area;
+      if (board.answerDelayMs > 0)
+        await new Promise((resolve) =>
+          setTimeout(resolve, board.answerDelayMs),
+        );
     }
     await route.fulfill({ json: { code: 0, data: { area: board.area } } });
   });
@@ -207,10 +212,16 @@ try {
       `read back after a reload: ${right}`,
     );
     await openEntry(page, "Desktop");
+    // The board takes its time to answer: the page maps with the cleared
+    // layout once it has the answer, not once the board has the write.
+    board.answerDelayMs = 600;
     await page.locator('[data-desktop-area-entry="whole"]').click();
-    for (let attempt = 0; attempt < 40 && board.area !== null; attempt += 1) {
-      await page.waitForTimeout(50);
-    }
+    // The entry's mark: the page has the answer (screen_area_contract:217
+    // failed when a point went out before it, 2026-10-21 and 2026-11-07).
+    await page
+      .locator('[data-desktop-area-entry="whole"] svg')
+      .waitFor({ state: "visible" });
+    board.answerDelayMs = 0;
     assert.equal(board.area, null);
     await page.keyboard.press("Escape");
     const [plainX] = await pointAt(page, sent, 1, 0.5);
