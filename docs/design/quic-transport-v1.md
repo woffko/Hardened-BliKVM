@@ -651,7 +651,11 @@ the lease like a client that vanished.
   `{"status": 200, "body": {"code": 0, "msg": "success", "data": {...}}}`. A
   request without a current confirmation of the target gets the words HTTPS
   gives (`a current focus confirmation is required`); what is no lease
-  request gets 422; a session whose web session has ended gets 401.
+  request gets 422; a session whose web session has ended gets 401. The page
+  then goes to the login and asks for no lease until it loads again, over
+  either transport: each queued report used to ask anew, and a lease
+  refused so was asked again at once (three acquires instead of one when the
+  login's answer was slow; `quic_input_contract.mjs` now makes it slow).
 - **The web session** is checked for every request, and the request counts
   as its activity for the idle lock, as a request over HTTPS does; neither
   lengthens the session, which ends at the session lock's time from its

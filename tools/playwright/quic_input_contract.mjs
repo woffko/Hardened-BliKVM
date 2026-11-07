@@ -382,6 +382,13 @@ try {
       body: { code: -401, msg: "unauthorized" },
     });
     board.loggedOut = true;
+    // The server's answer that sends the page to the login takes its time:
+    // a lease refused as unauthorized is not asked for again meanwhile
+    // (two acquires went out once in forty runs).
+    await page.route("**/api/transport", async (route) => {
+      await sleep(1500);
+      await route.fallback();
+    });
     await enableControl(page);
     await page.keyboard.press("KeyA");
     await until("the page asks for a login", () =>
