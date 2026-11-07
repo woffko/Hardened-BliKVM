@@ -42,6 +42,13 @@ this plan (1: everything, then the release at the operator's word; 2: N8
 fixed; 3: the optional items left out); the operator may still change any
 of them before its item is done.
 
+Changed by the operator on 2026-11-07, at gate A: the display button's
+hold stays the reviewed 1000 ms after its 50 ms debounce, so N7's press on
+the board is a little over a second, not "about 1 s" (a press of about a
+second did not wake the panel, one of 1.5 to 2 s woke it once; the vendor's
+program wakes after about 0.5 s). The operator chose to accept that over a
+shorter hold.
+
 1. **Scope and release.** Phases A, Y and T, then a release 0.1.0-beta.11
    (slot 107, update runtime `0.1.0~dev46`, card image, RAW sequence 11) at
    the operator's word. The alternative is phase A alone as a slot, the
@@ -113,7 +120,9 @@ In order of what the operator notices.
   lines and the example configuration: one lit window of 100 ± 20 ms per
   2 s period, and one wake after a 1.1 s hold (today none); an active-low
   button wakes once on a press (today never). On the board: the operator
-  presses the display button for about 1 s and looks at the LED.
+  presses the display button for a little over a second (the hold is
+  1000 ms after a 50 ms debounce; changed on 2026-11-07, see Decisions) and
+  looks at the LED.
 - **N8. Manual fan mode through the supervisor** (AUD-02, decision 2).
   `crates/bli-kvm-fan-supervisor`: `apply_manual(command)`, refused unless
   the supervisor is active, records what it applied; `boardd/server.rs`: the
@@ -222,5 +231,6 @@ build, and with decision 1 an image and a RAW bundle.
 - The decisions above.
 - Consent for slot 107, for update runtime dev46 and the encoder, and with
   decision 1 for the image fetch (pages closed) and the RAW install.
-- A press of the display button of about 1 s after slot 107 (N7).
+- A press of the display button of a little over a second after slot 107
+  (N7).
 - The release, at the operator's word.
