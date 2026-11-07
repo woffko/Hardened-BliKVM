@@ -3788,19 +3788,22 @@ mod tests {
         use tokio::net::{TcpListener, TcpStream};
         use tokio::time::{Duration, timeout};
 
+        // The account's setup and login (password hashing, slow on a loaded
+        // host) are not what the bound is about: it covers the HTTP exchange,
+        // whose upload the server discards for up to 5 s after the logout.
+        let root = tempdir().unwrap();
+        let socket = root.path().join("upload.sock");
+        let worker = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(socket),
+            update_activation_socket: Some(root.path().join("activation.sock")),
+            update_writes_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
         timeout(Duration::from_secs(10), async {
-            let root = tempdir().unwrap();
-            let socket = root.path().join("upload.sock");
-            let worker = UnixListener::bind(&socket).unwrap();
-            let app = app_with_options(ServerOptions {
-                state_dir: root.path().join("account"),
-                update_status_socket: Some(root.path().join("status.sock")),
-                update_upload_socket: Some(socket),
-                update_activation_socket: Some(root.path().join("activation.sock")),
-                update_writes_enabled: true,
-                ..ServerOptions::default()
-            });
-            let (cookie, csrf) = setup_and_login(&app).await;
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
