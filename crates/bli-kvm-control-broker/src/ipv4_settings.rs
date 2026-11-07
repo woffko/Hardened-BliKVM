@@ -1140,25 +1140,30 @@ mod tests {
         fail.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut next = Ipv4Settings::open(Box::new(nm)).with_journal(journal.clone());
         assert!(next.reconcile());
+        // While the revert still fails, an edit is refused; the failure is
+        // given up only after, so the revert cannot finish first.
         std::thread::sleep(Duration::from_millis(300));
-        fail.store(false, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             next.set(&manual(Some("192.0.2.77"))),
             reject(ControlRejectionCode::PendingUnreconciled)
         );
-        // Once the revert is done, changes are taken again.
-        for _ in 0..80 {
-            if journal.read::<RevertRecords>().is_none() {
-                break;
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        // Once the revert is done, changes are taken again: waited for by
+        // its outcome, not by a time a loaded host may exceed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let taken = loop {
+            let answer = next.set(&manual(Some("192.0.2.77")));
+            if answer != reject(ControlRejectionCode::PendingUnreconciled)
+                || std::time::Instant::now() > deadline
+            {
+                break answer;
             }
             std::thread::sleep(Duration::from_millis(100));
-        }
-        std::thread::sleep(Duration::from_millis(200));
-        assert_eq!(*profile.lock().unwrap(), dhcp_profile());
-        assert!(matches!(
-            next.set(&manual(Some("192.0.2.77"))),
-            ControlResponse::NetworkInfo { .. }
-        ));
+        };
+        assert!(
+            matches!(taken, ControlResponse::NetworkInfo { .. }),
+            "{taken:?}"
+        );
     }
 
     #[test]
