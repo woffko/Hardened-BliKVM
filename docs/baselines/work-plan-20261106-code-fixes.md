@@ -47,7 +47,7 @@ hold stays the reviewed 1000 ms after its 50 ms debounce, so N7's press on
 the board is a little over a second, not "about 1 s" (a press of about a
 second did not wake the panel, one of 1.5 to 2 s woke it once; the vendor's
 program wakes after about 0.5 s). The operator chose to accept that over a
-shorter hold.
+shorter hold; a press of about 1.2 s then woke the panel.
 
 1. **Scope and release.** Phases A, Y and T, then a release 0.1.0-beta.11
    (slot 107, update runtime `0.1.0~dev46`, card image, RAW sequence 11) at
