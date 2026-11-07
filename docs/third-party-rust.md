@@ -369,3 +369,12 @@ RUSTSEC-2026-0385 in `ctutils` 0.4.2, still reached only through
 which is in a program the board runs, so it is not reachable on a board.
 The local registry now has 0.4.7 and 0.4.8; the next dependency update
 takes one of them.
+
+## `ctutils` 0.4.8 (2026-11-07)
+
+`ctutils` is taken from 0.4.2 to 0.4.8 from the local registry without
+fetching (its `cmov` 0.5.4 and `subtle` 2.6.1 were already in the lock), so
+RUSTSEC-2026-0385 of beta.10 and beta.11 is gone. It is still reached only
+through the diagnostic journal's crates, whose tests pass with it. `cargo
+audit --deny warnings`, run without fetching (the local database of
+2026-11-06, 1,422 advisories), reports nothing; the lock keeps 317 packages.
