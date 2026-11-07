@@ -303,7 +303,12 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   reviewed front configuration with a marker block inside the port-80 server
   (test the configuration, reload the unit, restore the file on failure) and
   serves the public certificate view through `openssl`, with `GET`/`POST
-  /api/vm/tls` on the server. The network section is complete; the remaining
+  /api/vm/tls` on the server. A redirect on port 80 outside that block (the
+  shipped configuration's, or one written by hand) counts as HTTPS on but
+  is not the owner's to remove: switching off is then refused and nothing
+  is written. It used to answer applied, rewrite and reload nginx, and leave
+  port 80 redirecting (code audit of 2026-11-06, AUD-17.3; test
+  `switching_off_a_redirect_it_did_not_write_is_refused`). The network section is complete; the remaining
   P2 work is the firewall (fail-closed while `nft` is absent, baseline model
   and write/restore gate with the operator's approval), systemLog
   `remote`/`save`/`test`, the extra cards (fan curve, activity LED, ATX LEDs)

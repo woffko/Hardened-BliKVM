@@ -146,6 +146,16 @@ impl TlsState {
         }
         let _ = next;
         let rendered = render_conf(&previous, enabled);
+        if parse_conf(&rendered).0 != enabled {
+            // A redirect outside the owner's markers (the shipped one, or one
+            // written by hand) is left as it is, so the switch would not
+            // happen: refused, nothing written (code audit of 2026-11-06,
+            // AUD-17.3).
+            eprintln!(
+                "tls: port 80 redirects to HTTPS outside the owner's block; the configuration is left as it is"
+            );
+            return reject(ControlRejectionCode::InvalidState);
+        }
         if let Err(reason) = self.runner.write_conf(&self.conf_path, &rendered) {
             eprintln!("tls: configuration write failed: {reason}");
             return reject(ControlRejectionCode::BackendRejected);
@@ -298,6 +308,37 @@ mod tests {
         // A commented-out redirect does not count.
         let commented = "http {\n    server {\n        listen 80;\n        # return 308 https://$host$request_uri;\n    }\n}\n";
         assert!(!parse_conf(commented).0);
+    }
+
+    #[test]
+    fn switching_off_a_redirect_it_did_not_write_is_refused() {
+        // Code audit of 2026-11-06, AUD-17.3: a redirect outside the owner's
+        // markers (the shipped one, or one written by hand) stays when the
+        // marker block is removed, so switching off answered Applied,
+        // rewrote and reloaded nginx, and port 80 still sent every client to
+        // HTTPS.
+        let unmarked = BASE.replace(
+            "        server_name _;\n",
+            "        server_name _;\n        return 308 https://$host$request_uri;\n",
+        );
+        let (mut state, calls) = fixture(&unmarked, false);
+        assert!(state.enabled().unwrap());
+        assert_eq!(
+            state.set(false),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "{:?}",
+            calls.lock().unwrap()
+        );
+        assert!(state.enabled().unwrap());
+        // The owner's own redirect still switches off.
+        let (mut state, _) = fixture(&render_conf(BASE, true), false);
+        assert_eq!(state.set(false), ControlResponse::Applied);
+        assert!(!state.enabled().unwrap());
     }
 
     #[test]
