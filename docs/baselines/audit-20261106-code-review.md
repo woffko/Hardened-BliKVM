@@ -139,3 +139,26 @@ probes only, the board's settings left as found.
   found; the probes passed again, and after the GUI walks no status instance
   had failed (N13). N8 and N12 were not tried on the board: fan settings are
   not changed there, and PicoClaw is not installed.
+- **Gate T (host tools).** The tests of N16 and N17 pass. The card image of
+  0.1.0-beta.11, taken from the board after gate Y with KVM pages closed
+  and built at `82b9d64` with N16's cleanup, has an empty
+  `/var/lib/hardened-blikvm`; it carries dev46, the N14 encoder, slot 107 as
+  current, the system sequence 11, packaging's `nginx.conf`, no host keys
+  and an empty home for root (img `13d43769…6f06`, root `679aec46…eb49`; the
+  compressed image unpacks to the image, whose first partition is the root).
+- **The phone keys contract.** `tools/playwright/mobile_keys_contract.mjs`
+  failed in about half its runs whatever the load, on this branch and at
+  `7c0dff1` before any fix: its Mac section counted the release of every key
+  that taking control and opening the keys send as `Cmd+C`'s own report.
+  `82b9d64` counts an action's reports from a quiet point; 10 of 10 runs
+  passed.
+- **The RAW system update of sequence 11** (0.1.0-beta.11, at the operator's
+  word), built from that image's root, was installed from beta.10's system
+  (sequence 10, with dev46 staged) by beta.10's boot step: back after
+  1990 s, it kept the certificate, the host keys, the account, slot 107, the
+  host name, the session lock and SSH, and the state differed only in the
+  temporary IPv6 addresses, the system's version and sequence and an encoder
+  not started yet; confirmed (the floor is now 12). Root's home was saved
+  before and put back after (the update carries only its SSH keys). The
+  RAW switch was found on and left on. The watching probes passed on the new
+  system.

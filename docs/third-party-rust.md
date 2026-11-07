@@ -354,3 +354,18 @@ from `bli-kvm-diagnostic-journal` and the diagnostic crates that use it;
 none of them is in a program the board runs (the application bundle, the
 update runtime, the image's units or the agent), so it is not reachable on
 a board. The next dependency update takes 0.4.4.
+
+## RustSec scan for 0.1.0-beta.11 (2026-11-07)
+
+An application, an update runtime, a card image and a RAW system update,
+with the fixes of the code audit of 2026-11-06. The lock is unchanged since
+beta.10 (317 packages).
+
+`cargo audit --deny warnings`, run without fetching (the database as
+fetched on 2026-10-30, 1,395 advisories), reports the one of beta.10:
+RUSTSEC-2026-0385 in `ctutils` 0.4.2, still reached only through
+`universal-hash`, `poly1305` and `chacha20poly1305` from
+`bli-kvm-diagnostic-journal` and the diagnostic crates that use it, none of
+which is in a program the board runs, so it is not reachable on a board.
+The local registry now has 0.4.7 and 0.4.8; the next dependency update
+takes one of them.
