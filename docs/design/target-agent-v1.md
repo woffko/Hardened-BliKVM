@@ -227,7 +227,14 @@ through the owner; the platform names the feature `target_agent`.
   kept one (`web/src/hooks/useScreenArea.ts`), each layout tried once, so
   the mouse stays right after the agent is gone (2026-10-25: with the agent
   not running, a layout kept from two extended monitors put the mouse off
-  the duplicated ones). Since the monitors are read only under the lease,
+  the duplicated ones). The layout tried is forgotten when the agent's
+  layout goes and when the board did not take the write, so the agent's
+  return, or the next look after a failure, writes it again; one the board
+  took is not written again while the agent says the same, so an area the
+  operator then keeps stands (`layoutStep` and `afterLayoutWrite` in
+  `web/src/lib/screen-area.ts`; code audit of 2026-11-06, AUD-16: the key
+  stayed, and the agent's return with the same layout wrote nothing).
+  Since the monitors are read only under the lease,
   a page that only watches writes nothing; a device probe that reads them
   under the lease may write the board's layout and restores it. While the
   agent's layout applies, the Mouse menu's Desktop entry says it is the

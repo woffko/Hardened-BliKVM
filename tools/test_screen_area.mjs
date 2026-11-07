@@ -132,3 +132,58 @@ test("the absolute report carries the desktop's position", { skip }, () => {
   assert.equal(bytes[5], 3);
   assert.equal(pixelOf(bytes[1] | (bytes[2] << 8), 5120), 0);
 });
+
+/** One monitor kept on the board by the operator: the right half of LEFT's desktop. */
+const KEPT = {
+  desktop: { width: 5120, height: 1440 },
+  screen: { x: 2560, y: 0, width: 2560, height: 1440 },
+};
+
+test(
+  "the agent's layout is written again when the agent comes back",
+  { skip },
+  () => {
+    // Code audit of 2026-11-06, AUD-16: the key of the layout tried stayed
+    // when the agent left, so the same layout was never written again.
+    let step = area.layoutStep(LEFT, null, null);
+    assert.deepEqual(step.write, { area: LEFT });
+    let tried = area.afterLayoutWrite(step.tried, step.tried, true);
+    step = area.layoutStep(LEFT, LEFT, tried);
+    assert.equal(step.write, undefined);
+    tried = step.tried;
+    // The agent leaves; meanwhile the board keeps another area.
+    step = area.layoutStep(null, LEFT, tried);
+    tried = step.tried;
+    step = area.layoutStep(null, KEPT, tried);
+    tried = step.tried;
+    step = area.layoutStep(LEFT, KEPT, tried);
+    assert.deepEqual(
+      step.write,
+      { area: LEFT },
+      "the layout was not written again",
+    );
+  },
+);
+
+test(
+  "a layout whose write failed is tried again, one the board took is not",
+  { skip },
+  () => {
+    let step = area.layoutStep(LEFT, null, null);
+    let tried = area.afterLayoutWrite(step.tried, step.tried, false);
+    step = area.layoutStep(LEFT, null, tried);
+    assert.deepEqual(
+      step.write,
+      { area: LEFT },
+      "the failed layout was not tried again",
+    );
+    tried = area.afterLayoutWrite(step.tried, step.tried, true);
+    // The operator then keeps another area while the agent still says
+    // LEFT: each layout is written once, so the operator's stands.
+    step = area.layoutStep(LEFT, KEPT, tried);
+    assert.equal(step.write, undefined);
+    // The whole desktop is a layout of its own.
+    step = area.layoutStep("whole", KEPT, step.tried);
+    assert.deepEqual(step.write, { area: null });
+  },
+);

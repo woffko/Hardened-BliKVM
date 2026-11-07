@@ -360,7 +360,12 @@ side).
   that is due and for a viewer that has just come, so a still screen, which
   gives the encoder a frame only every 2 s, answers at once. A WebRTC
   viewer on a still screen gains the same: its first picture no longer
-  waits for the periodic frame.
+  waits for the periodic frame. A key frame the encoder was to force and
+  could not make (a failed hardware encode returns nothing) lets the next
+  capture through as well, at the same spacing: the capture loop had taken
+  the new viewer already, and held a still screen until the refresh 2 s on
+  (code audit of 2026-11-06, AUD-12; `KeyAdmission` in `gate.rs`, test
+  `a_forced_key_frame_that_was_missed_lets_the_next_capture_through`).
 - The unit may run 40 tasks (16 before): six threads of the process, six of
   x264, one for every viewer's demand, two for every client of the frame
   socket. An encoder for another size is made after the old one is gone.

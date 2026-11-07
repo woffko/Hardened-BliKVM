@@ -513,6 +513,12 @@ path's live limit.
   than a key frame, waiting is the shorter way.
 - **A page that gives the picture up** has its groups' streams reset: what
   the transport still holds of them is not sent for nobody.
+- **Groups given up** in any way (a new picture, a group's stream that
+  failed, a page too far behind) no longer count their frames as on their
+  way to the page: a new picture and a failed stream used to keep them, so
+  the page's lag grew from frames that could not arrive and the next key
+  frame's group was reset as behind (code audit of 2026-11-06, AUD-12;
+  test `groups_given_up_forget_their_unreceived_frames`).
 - **A silent page**, one that has said nothing for a second (a ping, a
   frame received), is frozen in the background or gone with its session
   still open until the transport gives it up. What it has not received is
@@ -689,6 +695,13 @@ the lease like a client that vanished.
   refuses (another session controls the target) turns control off at once,
   with a notice. A lease taken over HTTPS stays there when a
   session opens, and Settings say which of the two carries the input.
+  A lease that ends under the page is forgotten at once, so nothing goes
+  out on it: a renewal the board refuses ends it, and so does the end of
+  the QUIC session that carried it (the server has released it, and the
+  target's confirmation with it, which the page then asks again). The next
+  input, the Monitors menu's hold or an agent call takes a lease anew, and
+  the target agent's reads wait for it (code audit of 2026-11-06, AUD-05:
+  "Keep these monitors" was refused on a lease the page still showed).
 - **The gateway** serves one input stream per session: the stream the page
   opens after its control stream. It passes one request to the server at a
   time and writes the server's answer back under the page's number; if the

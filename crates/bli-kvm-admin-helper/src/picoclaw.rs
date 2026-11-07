@@ -22,6 +22,10 @@ use bli_kvm_admin_helper::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+/// Where onboarding puts its checked copy of the runtime: the helper unit's
+/// private `/tmp`, which the runtime and its installer cannot reach.
+pub const ONBOARD_COPY_DIRECTORY: &str = "/tmp/hardened-blikvm-picoclaw-onboard";
+
 /// Packaged agent profiles (`AGENT.md`, `AGENT_KVM.md`).
 pub const PROFILE_DIRECTORY: &str = "/usr/share/hardened-blikvm/picoclaw";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
@@ -53,6 +57,15 @@ pub struct Picoclaw {
     home: PathBuf,
     binary: PathBuf,
     profiles: PathBuf,
+    copy: CheckedCopy,
+}
+
+/// The release the installed runtime must be before onboarding runs it, and
+/// where the checked copy that runs is put.
+pub struct CheckedCopy {
+    pub directory: PathBuf,
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 fn regular_file(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
@@ -298,6 +311,7 @@ impl Picoclaw {
         state: impl Into<PathBuf>,
         binary: impl Into<PathBuf>,
         profiles: impl Into<PathBuf>,
+        copy: CheckedCopy,
     ) -> Self {
         let state = state.into();
         Self {
@@ -305,6 +319,7 @@ impl Picoclaw {
             state,
             binary: binary.into(),
             profiles: profiles.into(),
+            copy,
         }
     }
 
@@ -451,10 +466,27 @@ impl Picoclaw {
     }
 
     /// `picoclaw onboard` creates the default configuration and workspace.
+    /// The installed file is written by the installer's account, so what
+    /// runs is a copy checked against the pinned release's size and digest,
+    /// made in this unit's private `/tmp` and removed afterwards (code audit
+    /// of 2026-11-06, AUD-01: the installed file itself was run).
     fn onboard(&self) -> io::Result<()> {
+        crate::picoclaw_exec::prepare(
+            &self.binary,
+            &self.copy.directory,
+            &self.copy.sha256,
+            self.copy.bytes,
+        )?;
+        let program = self.copy.directory.join(crate::picoclaw_exec::COPY);
+        let onboarded = self.run_onboard(&program);
+        let _ = fs::remove_file(&program);
+        onboarded
+    }
+
+    fn run_onboard(&self, program: &Path) -> io::Result<()> {
         fs::create_dir_all(&self.home)?;
         fs::set_permissions(&self.home, fs::Permissions::from_mode(0o700))?;
-        let mut child = Command::new(&self.binary)
+        let mut child = Command::new(program)
             .arg("onboard")
             .env_clear()
             .env("HOME", &self.state)
@@ -892,17 +924,29 @@ mod tests {
         fs::create_dir(&profiles).unwrap();
         fs::write(profiles.join("AGENT.md"), "---\nname: pico\n---\n").unwrap();
         fs::write(profiles.join("AGENT_KVM.md"), "---\nname: pico-kvm\n---\n").unwrap();
-        // A stand-in for `picoclaw onboard` that writes a minimal config.
+        // A stand-in for `picoclaw onboard` that writes a minimal config,
+        // and the path it ran from.
         let binary = dir.path().join("picoclaw");
-        fs::write(
-            &binary,
-            "#!/bin/sh\nmkdir -p \"$PICOCLAW_HOME/workspace\"\nprintf '{\"agents\":{\"defaults\":{\"model\":\"x\"}},\"model_list\":[]}' > \"$PICOCLAW_HOME/config.json\"\n",
-        )
-        .unwrap();
+        let script = "#!/bin/sh\nmkdir -p \"$PICOCLAW_HOME/workspace\"\nprintf '{\"agents\":{\"defaults\":{\"model\":\"x\"}},\"model_list\":[]}' > \"$PICOCLAW_HOME/config.json\"\nprintf '%s' \"$0\" > \"$PICOCLAW_HOME/ran-from\"\n";
+        fs::write(&binary, script).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
-        let picoclaw = Picoclaw::new(dir.path().join("state"), binary, profiles);
+        // Pinned to the stand-in, as the helper is to the release.
+        let copy = CheckedCopy {
+            directory: dir.path().join("copy"),
+            sha256: sha256_hex(script.as_bytes()),
+            bytes: script.len() as u64,
+        };
+        let picoclaw = Picoclaw::new(dir.path().join("state"), binary, profiles, copy);
         fs::create_dir(dir.path().join("state")).unwrap();
         (dir, picoclaw)
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -958,6 +1002,49 @@ mod tests {
         assert!(picoclaw.profile("other").is_err());
         picoclaw.reset().unwrap();
         assert_eq!(picoclaw.facts().unwrap(), PicoclawFacts::default());
+    }
+
+    #[test]
+    fn a_runtime_that_is_not_the_pinned_release_is_not_onboarded() {
+        // Code audit of 2026-11-06, AUD-01: the installer's account writes the
+        // installed file, and onboarding ran it as it was.
+        let (dir, _) = setup();
+        let picoclaw = Picoclaw::new(
+            dir.path().join("state"),
+            dir.path().join("picoclaw"),
+            dir.path().join("profiles"),
+            CheckedCopy {
+                directory: dir.path().join("copy"),
+                sha256: bli_kvm_admin_helper::PICOCLAW_BINARY_SHA256.into(),
+                bytes: bli_kvm_admin_helper::PICOCLAW_BINARY_BYTES,
+            },
+        );
+        assert!(
+            picoclaw
+                .prepare(TOKEN, "http://127.0.0.1:18080/internal/picoclaw/mcp")
+                .is_err()
+        );
+        assert!(!picoclaw.config_path().exists(), "the stand-in was run");
+        assert!(
+            !dir.path()
+                .join("copy")
+                .join(crate::picoclaw_exec::COPY)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn onboarding_runs_the_checked_copy_and_removes_it() {
+        let (dir, picoclaw) = setup();
+        picoclaw
+            .prepare(TOKEN, "http://127.0.0.1:18080/internal/picoclaw/mcp")
+            .unwrap();
+        let copy = dir.path().join("copy").join(crate::picoclaw_exec::COPY);
+        assert_eq!(
+            fs::read_to_string(picoclaw.home.join("ran-from")).unwrap(),
+            copy.to_str().unwrap()
+        );
+        assert!(!copy.exists(), "the copy was left");
     }
 
     #[test]

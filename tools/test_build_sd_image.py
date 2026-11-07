@@ -160,12 +160,43 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertNotIn("StateDirectory=", unit)
         self.assertNotIn("hardened-blikvm-quic ", self.script.split('known_state="', 1)[1].split('"', 1)[0])
 
+    def test_the_cleanup_removes_dotfiles_and_checks_the_account_directory(self) -> None:
+        # Code audit of 2026-11-06, AUD-15: "dir"/* left dotfiles in the
+        # web account's directory, and nothing checked it.
+        definition = next(
+            line.strip()
+            for line in self.script.splitlines()
+            if line.strip().startswith("empty_state() {")
+        )
+        with tempfile.TemporaryDirectory() as work:
+            state = Path(work) / "var/lib/hardened-blikvm"
+            (state / "sessions").mkdir(parents=True)
+            (state / ".account-x").write_text("x", encoding="utf-8")
+            (state / "sessions/.s").write_text("s", encoding="utf-8")
+            (state / "account.json").write_text("{}", encoding="utf-8")
+            subprocess.run(
+                ["sh", "-eu", "-c", definition + '\nempty_state "$1" "$2"', "sh", str(state), str(Path(work) / "absent")],
+                check=True,
+            )
+            self.assertEqual(list(state.iterdir()), [])
+        for directory in (
+            "var/lib/hardened-blikvm",
+            "var/lib/tailscale",
+            "var/lib/hardened-blikvm-picoclaw",
+            "var/lib/hardened-blikvm-picoclaw-runtime",
+            "var/lib/hardened-blikvm-admin/scripts",
+            "var/lib/hardened-blikvm-tailscale",
+        ):
+            self.assertIn(f'"$staging/{directory}"', self.script, directory)
+            self.assertNotIn(f'"$staging/{directory}"/*', self.script, directory)
+        self.assertIn("source board state remains in var/lib/hardened-blikvm", self.script)
+
     def test_optional_feature_state_is_removed_and_var_lib_is_an_allowlist(self) -> None:
         for path in (
             '"$staging/var/lib/private/hardened-blikvm-picoclaw"',
-            '"$staging/var/lib/hardened-blikvm-picoclaw"/*',
-            '"$staging/var/lib/hardened-blikvm-admin/scripts"/*',
-            '"$staging/var/lib/hardened-blikvm-tailscale"/*',
+            '"$staging/var/lib/hardened-blikvm-picoclaw"',
+            '"$staging/var/lib/hardened-blikvm-admin/scripts"',
+            '"$staging/var/lib/hardened-blikvm-tailscale"',
         ):
             self.assertIn(path, self.script, path)
         self.assertIn("feature state remains in $state", self.script)

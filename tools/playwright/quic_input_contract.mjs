@@ -330,6 +330,49 @@ try {
     await finish(page, context);
   }
 
+  // The session is lost and comes back with no input on the way: the server
+  // released its lease with it, so the next key takes a lease anew over the
+  // new session rather than sending on the old one (code audit of
+  // 2026-11-06, AUD-09).
+  {
+    const { context, page, errors } = await openConnected();
+    await enableControl(page);
+    await page.keyboard.press("KeyA");
+    await until("the report reaches the link", () =>
+      keys(overQuic()).length >= 2 ? true : null,
+    );
+    await board.stopGateway();
+    board.startGateway();
+    await board.gatewayOnTheLink();
+    // Settings are not opened: closing them lets the keys go, which is input.
+    await until("the page's session is open again", () =>
+      board.sessions.length >= 1 ? true : null,
+    );
+    await sleep(500);
+    const back = overQuic().length;
+    await page.keyboard.press("KeyB");
+    await until("the key reaches the link", () =>
+      keys(overQuic().slice(back)).includes(5) ? true : null,
+    ).catch((error) => {
+      throw new Error(
+        `${error.message}: over the link ${JSON.stringify(actions(overQuic().slice(back)))}, over HTTPS ${JSON.stringify(actions(overHttps()))}`,
+      );
+    });
+    const after = actions(overQuic().slice(back));
+    assert.ok(
+      after.indexOf("acquire") !== -1 &&
+        after.indexOf("acquire") < after.indexOf("report"),
+      `the key went on the lost session's lease: ${after.join()}`,
+    );
+    assert.equal(
+      await controlIsOn(page),
+      true,
+      "the lost session took control",
+    );
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
   // The web session has ended: the input stream says so, and the page asks
   // the server, which sends it to the login.
   {

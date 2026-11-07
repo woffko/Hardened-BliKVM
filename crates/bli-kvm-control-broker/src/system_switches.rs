@@ -230,8 +230,13 @@ impl SystemSwitches {
                 failed.push("mdns".to_string());
             }
         }
-        let record = self.observe(image, mdns.as_deref(), Some(&recorded));
-        self.store(&record);
+        // A switch that could not be set keeps the record of the old image,
+        // so the next start sets it again rather than taking the new image's
+        // default as the operator's (code audit of 2026-11-06, AUD-11.4).
+        if failed.is_empty() {
+            let record = self.observe(image, mdns.as_deref(), Some(&recorded));
+            self.store(&record);
+        }
         Reconciled::Restored { failed }
     }
 
@@ -655,6 +660,15 @@ mod tests {
         );
         assert_eq!(board.systemd.enabled(QUIC_UNIT), Some(true));
         assert_eq!(board.record()["tailscaled"], true);
+        // The failed restore is tried again at the next start, not recorded
+        // as the new image's (code audit of 2026-11-06, AUD-11.4).
+        board.systemd.refuse.lock().unwrap().clear();
+        assert_eq!(
+            board.switches().reconcile(None),
+            Reconciled::Restored { failed: vec![] }
+        );
+        assert_eq!(board.systemd.enabled(SSH_UNIT), Some(false));
+        assert_eq!(board.record()["ssh"], false);
     }
 
     #[test]

@@ -83,7 +83,6 @@ pub fn build_state(
     let mut state = BoarddState::new(
         supervisor,
         FanModeName::Auto,
-        0,
         config.fan.minimum_duty_percent,
         config.fan.maximum_duty_percent,
         pwm_enabled,
@@ -242,6 +241,75 @@ pub fn run_once(config_path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// How often the sampling thread turns: the activity LED's pulse (100 ms in
+/// the reviewed configuration) and the display button's hold (1 s) need far
+/// finer steps than the temperature's sample (code audit of 2026-11-06,
+/// AUD-06: the LED lit for a second or not at all, and the button had to be
+/// held two to three seconds).
+const SAMPLER_TICK_MS: u64 = 20;
+
+/// When the next temperature sample is due.
+pub(crate) struct SampleCadence {
+    interval_ms: u64,
+    next_ms: Option<u64>,
+}
+
+impl SampleCadence {
+    pub(crate) fn new(interval_ms: u64) -> Self {
+        Self {
+            interval_ms,
+            next_ms: None,
+        }
+    }
+
+    /// Whether a sample is due at `now_ms`; the next one is counted from it.
+    pub(crate) fn due(&mut self, now_ms: u64) -> bool {
+        if self.next_ms.is_some_and(|next| now_ms < next) {
+            return false;
+        }
+        self.next_ms = Some(now_ms.saturating_add(self.interval_ms));
+        true
+    }
+}
+
+/// What a due sample read: the SoC's temperature and the external RTC.
+pub(crate) struct Readings {
+    pub(crate) thermal: Result<i32, &'static str>,
+    pub(crate) rtc: Result<(i64, i64), &'static str>,
+}
+
+/// One turn of the sampling thread at `now_ms`: the LED and the display
+/// button at every turn; the readings, the fan, the ATX LEDs and the display
+/// when a sample was due.
+pub(crate) fn board_turn<A>(
+    state: &mut BoarddState<A>,
+    now_ms: u64,
+    readings: Option<Readings>,
+) -> std::io::Result<()>
+where
+    A: bli_kvm_fan_supervisor::FanActuator,
+    A::Error: std::fmt::Debug,
+{
+    let due = readings.is_some();
+    if let Some(readings) = readings {
+        state.note_thermal(readings.thermal);
+        state.note_external_rtc(readings.rtc);
+        let _ = state.sample(now_ms);
+        // A failed background actuator is fatal in either fan mode. Stop
+        // admission rather than serving stale supervisor health.
+        state
+            .ensure_fan_runtime()
+            .map_err(|_| std::io::Error::other("boardd fan runtime failed"))?;
+    }
+    state.tick_led(now_ms);
+    state.tick_button(now_ms);
+    if due {
+        state.tick_atx_leds();
+        state.tick_display(now_ms);
+    }
+    Ok(())
+}
+
 /// Serve the control surface and sample the temperature until interrupted.
 pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
     run_serve_until(config_path, Arc::new(AtomicBool::new(false)))
@@ -263,37 +331,28 @@ pub fn run_serve_until(
         // after reset until the first full frame, which otherwise shows garbage.
         let _ = board.draw_display_status();
     }
-    let interval = std::time::Duration::from_millis(config.sample_interval_ms);
+    let tick = std::time::Duration::from_millis(SAMPLER_TICK_MS.min(config.sample_interval_ms));
+    let mut cadence = SampleCadence::new(config.sample_interval_ms);
     let sampler_state = Arc::clone(&state);
     let sample_stop = Arc::clone(&stopping);
     let serving = (|| -> Result<(), Box<dyn Error>> {
-        let sampler = sampler::Sampler::spawn(Arc::clone(&stopping), interval, move || {
-            let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees();
-            let rtc = bli_kvm_platform_bli::read_h616_external_rtc();
-            {
-                let mut state = sampler_state
-                    .lock()
-                    .map_err(|_| std::io::Error::other("boardd state poisoned"))?;
-                if sample_stop.load(Ordering::SeqCst) {
-                    return Ok(());
-                }
-                state.note_thermal(thermal.map_err(|error| error.class()));
-                state.note_external_rtc(
-                    rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
-                        .map_err(|error| error.class()),
-                );
-                let _ = state.sample(board_millis());
-                // A failed background actuator is fatal in either fan mode.
-                // Stop admission rather than serving stale supervisor health.
-                state
-                    .ensure_fan_runtime()
-                    .map_err(|_| std::io::Error::other("boardd fan runtime failed"))?;
-                state.tick_led();
-                state.tick_button(board_millis());
-                state.tick_atx_leds();
-                state.tick_display(board_millis());
+        let sampler = sampler::Sampler::spawn(Arc::clone(&stopping), tick, move || {
+            let now = board_millis();
+            // The readings are taken before the state's lock, as before.
+            let readings = cadence.due(now).then(|| Readings {
+                thermal: bli_kvm_platform_bli::read_h616_temperature_millidegrees()
+                    .map_err(|error| error.class()),
+                rtc: bli_kvm_platform_bli::read_h616_external_rtc()
+                    .map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
+                    .map_err(|error| error.class()),
+            });
+            let mut state = sampler_state
+                .lock()
+                .map_err(|_| std::io::Error::other("boardd state poisoned"))?;
+            if sample_stop.load(Ordering::SeqCst) {
+                return Ok(());
             }
-            Ok(())
+            board_turn(&mut state, now, readings)
         })?;
         let listener =
             server::serve_until(&config.socket, &state, || stopping.load(Ordering::SeqCst));
@@ -372,5 +431,169 @@ mod shutdown_tests {
                 fail_cleanup
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    //! The sampling thread's turns with the reviewed configuration
+    //! (`packaging/boardd.json.example`), on lines driven by a shared clock
+    //! (code audit of 2026-11-06, AUD-06).
+    use super::*;
+    use bli_kvm_fan_policy::FanCommand;
+    use bli_kvm_fan_supervisor::FanActuator;
+    use std::sync::atomic::AtomicU64;
+
+    #[derive(Default)]
+    struct NoFan;
+
+    impl FanActuator for NoFan {
+        type Error = std::io::Error;
+
+        fn apply(&mut self, _command: FanCommand) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    /// A line on a shared clock: what is written is recorded with its time,
+    /// and what is read is high between `high_from` and `high_until`.
+    struct ClockedLine {
+        clock: Arc<AtomicU64>,
+        written: Arc<Mutex<Vec<(u64, bool)>>>,
+        high_from: u64,
+        high_until: u64,
+    }
+
+    impl bli_kvm_platform_bli::GpioDriver for ClockedLine {
+        type Error = std::io::Error;
+
+        fn request_line(&mut self, _request: &LineRequest) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn write_line(&mut self, _request: &LineRequest, active: bool) -> Result<(), Self::Error> {
+            let now = self.clock.load(Ordering::SeqCst);
+            self.written.lock().unwrap().push((now, active));
+            Ok(())
+        }
+
+        fn read_line(&mut self, _request: &LineRequest) -> Result<bool, Self::Error> {
+            let now = self.clock.load(Ordering::SeqCst);
+            Ok((self.high_from..self.high_until).contains(&now))
+        }
+
+        fn release_line(&mut self, _request: &LineRequest) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn example() -> BoarddConfig {
+        BoarddConfig::from_path(Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/boardd.json.example"
+        )))
+        .unwrap()
+    }
+
+    /// A board of the example configuration with its LED and button on the
+    /// clock; the button is pressed between `pressed`.
+    fn board(
+        clock: &Arc<AtomicU64>,
+        led_written: &Arc<Mutex<Vec<(u64, bool)>>>,
+        pressed: (u64, u64),
+    ) -> (BoarddState<NoFan>, BoarddConfig) {
+        let config = example();
+        let mut supervisor = FanSupervisor::new(config.fan.policy_config(), 0, NoFan).unwrap();
+        let _ = supervisor.initialize();
+        let led = led::LedRuntime::new(
+            ClockedLine {
+                clock: Arc::clone(clock),
+                written: Arc::clone(led_written),
+                high_from: 0,
+                high_until: 0,
+            },
+            led::activity_led_line(&config.led),
+            &config.led,
+            0,
+        )
+        .unwrap();
+        let button = button::ButtonRuntime::new(
+            ClockedLine {
+                clock: Arc::clone(clock),
+                written: Arc::default(),
+                high_from: pressed.0,
+                high_until: pressed.1,
+            },
+            button::button_line(&config.button),
+            &config.button,
+            0,
+            button::ButtonLevel::High,
+        )
+        .unwrap();
+        let state = BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            20,
+            100,
+            true,
+            40,
+            269,
+            None,
+            Some(Box::new(led)),
+            Some(Box::new(button)),
+            None,
+        );
+        (state, config)
+    }
+
+    /// Turns from 0 to `until` at the thread's tick.
+    fn turn(state: &mut BoarddState<NoFan>, config: &BoarddConfig, clock: &AtomicU64, until: u64) {
+        let tick = SAMPLER_TICK_MS.min(config.sample_interval_ms);
+        let mut cadence = SampleCadence::new(config.sample_interval_ms);
+        let mut now = 0;
+        while now <= until {
+            clock.store(now, Ordering::SeqCst);
+            let readings = cadence.due(now).then_some(Readings {
+                thermal: Ok(40_000),
+                rtc: Err("absent"),
+            });
+            board_turn(state, now, readings).unwrap();
+            now += tick;
+        }
+    }
+
+    #[test]
+    fn the_activity_led_lights_its_pulse_once_a_period() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, config) = board(&clock, &written, (0, 0));
+        turn(&mut state, &config, &clock, 6_100);
+        let changes = written.lock().unwrap().clone();
+        let lit: Vec<(u64, u64)> = changes
+            .windows(2)
+            .filter(|pair| pair[0].1 && !pair[1].1)
+            .map(|pair| (pair[0].0, pair[1].0 - pair[0].0))
+            .collect();
+        assert!(lit.len() >= 3, "lit windows {lit:?} from {changes:?}");
+        for (start, length) in &lit {
+            assert!(
+                (80..=120).contains(length),
+                "lit {length} ms at {start} ms (pulse {} ms): {lit:?}",
+                config.led.pulse_ms
+            );
+        }
+        for pair in lit.windows(2) {
+            assert_eq!(pair[1].0 - pair[0].0, config.led.period_ms, "{lit:?}");
+        }
+    }
+
+    #[test]
+    fn a_press_held_for_its_hold_wakes_the_display_once() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let written = Arc::new(Mutex::new(Vec::new()));
+        // Held 1.1 s: the configured hold is 1 s.
+        let (mut state, config) = board(&clock, &written, (500, 1_600));
+        turn(&mut state, &config, &clock, 3_000);
+        assert_eq!(state.status().button_wakeups, 1);
     }
 }

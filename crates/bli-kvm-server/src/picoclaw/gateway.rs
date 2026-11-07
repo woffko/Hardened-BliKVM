@@ -117,24 +117,24 @@ pub(crate) async fn connect_gateway(
                 PicoclawError::new(RUNTIME_UNAVAILABLE, reason).into_response()
             })
     };
-    let upstream = match open_session(picoclaw, &session_id, connect).await {
-        Ok(upstream) => upstream,
+    let (upstream, connection) = match open_session(picoclaw, &session_id, connect).await {
+        Ok(opened) => opened,
         Err(response) => return response,
     };
     let Some(guard) = state.options.shutdown.register_upgrade() else {
-        picoclaw.release(&session_id);
+        picoclaw.release_connection(connection);
         return (StatusCode::SERVICE_UNAVAILABLE, "server is stopping").into_response();
     };
     let release = super::ReleaseOnDrop {
         picoclaw: state.picoclaw.clone().expect("checked by enabled()"),
-        session_id: session_id.clone(),
+        connection,
     };
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
             let _guard = guard;
             let _release = release;
-            relay(state, socket, upstream, session_id, session).await;
+            relay(state, socket, upstream, session_id, connection, session).await;
         })
         .into_response()
 }
@@ -145,16 +145,17 @@ pub(crate) async fn connect_gateway(
 /// the lock meanwhile wins, and this upstream is dropped. So does another
 /// connection of the same session that got it first: two relays of one
 /// session would share one lock, and the first to end would release it
-/// under the other (code audit of 2026-10-20, AUD-19.1).
+/// under the other (code audit of 2026-10-20, AUD-19.1). The lock's
+/// connection number comes back with the upstream.
 async fn open_session<T>(
     picoclaw: &Picoclaw,
     session_id: &str,
     connect: impl std::future::Future<Output = Result<T, Response>>,
-) -> Result<T, Response> {
+) -> Result<(T, u64), Response> {
     let upstream = connect.await?;
     match picoclaw.acquire(session_id) {
-        Ok(true) => Ok(upstream),
-        Ok(false) => Err(lock_held(
+        Ok(Some(connection)) => Ok((upstream, connection)),
+        Ok(None) => Err(lock_held(
             session_id.to_string(),
             "session is already connected",
         )),
@@ -182,6 +183,7 @@ async fn relay(
     browser: WebSocket,
     upstream: Upstream,
     session_id: String,
+    connection: u64,
     operator: Session,
 ) {
     let Some(picoclaw) = state.picoclaw.clone() else {
@@ -194,6 +196,7 @@ async fn relay(
     let (close_tx, mut close_rx) = watch::channel::<Option<(u16, String)>>(None);
     *picoclaw.active.lock().await = Some(Active {
         session_id: session_id.clone(),
+        connection,
         operator: operator.clone(),
         upstream: to_upstream.clone(),
         downstream: to_browser.clone(),
@@ -224,7 +227,7 @@ async fn relay(
                 if !crate::admin_features::switches().picoclaw {
                     break (CLOSE_RUNTIME_UNAVAILABLE, "picoclaw is switched off".to_string());
                 }
-                if picoclaw.owner().as_deref() != Some(session_id.as_str()) {
+                if !picoclaw.holds(connection) {
                     break (CLOSE_TAKEN_OVER, "session lock lost".to_string());
                 }
             }
@@ -247,7 +250,7 @@ async fn relay(
             }
             message = browser_rx.next() => match message {
                 Some(Ok(Message::Text(text))) => {
-                    if !picoclaw.renew(&session_id) {
+                    if !picoclaw.renew_connection(connection) {
                         break (CLOSE_TAKEN_OVER, "session lock lost".to_string());
                     }
                     if upstream_tx
@@ -264,7 +267,7 @@ async fn relay(
             },
             message = upstream_rx.next() => match message {
                 Some(Ok(tungstenite::Message::Text(text))) => {
-                    if !picoclaw.renew(&session_id) {
+                    if !picoclaw.renew_connection(connection) {
                         break (CLOSE_TAKEN_OVER, "session lock lost".to_string());
                     }
                     if browser_tx.send(Message::Text(text.as_str().into())).await.is_err() {
@@ -291,15 +294,16 @@ async fn relay(
         .await;
     let _ = browser_tx.send(close_message(code, &reason)).await;
     {
+        // Only this connection's: a newer one of the same session may run.
         let mut active = picoclaw.active.lock().await;
         if active
             .as_ref()
-            .is_some_and(|active| active.session_id == session_id)
+            .is_some_and(|active| active.connection == connection)
         {
             *active = None;
         }
     }
-    picoclaw.release(&session_id);
+    picoclaw.release_connection(connection);
     super::kvm::release_all(&state, &operator).await;
     if code == CLOSE_UPSTREAM_CLOSED {
         super::set_error(&picoclaw, &reason);

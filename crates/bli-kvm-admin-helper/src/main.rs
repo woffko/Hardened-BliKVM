@@ -473,13 +473,23 @@ fn remove_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
 }
 
 /// The PicoClaw configuration helper, as the runtime's own user. It only
-/// touches that user's files and starts nothing, so the web server's switch
-/// check covers it; the runtime start and its KVM access are re-checked.
+/// touches that user's files and starts nothing but the onboarding, from a
+/// copy checked against the pinned release (code audit of 2026-11-06,
+/// AUD-01), so the web server's switch check covers it; the runtime start and
+/// its KVM access are re-checked.
 fn serve_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let request: AdminRequest = read_line(stream)?;
-    let store =
-        picoclaw::Picoclaw::new(PICOCLAW_STATE, PICOCLAW_BINARY, picoclaw::PROFILE_DIRECTORY);
+    let store = picoclaw::Picoclaw::new(
+        PICOCLAW_STATE,
+        PICOCLAW_BINARY,
+        picoclaw::PROFILE_DIRECTORY,
+        picoclaw::CheckedCopy {
+            directory: picoclaw::ONBOARD_COPY_DIRECTORY.into(),
+            sha256: PICOCLAW_BINARY_SHA256.into(),
+            bytes: PICOCLAW_BINARY_BYTES,
+        },
+    );
     let reply = match request {
         AdminRequest::PicoclawState {} => store.facts().map(|facts| AdminReply::Picoclaw { facts }),
         AdminRequest::PicoclawPrepare {

@@ -5,7 +5,7 @@
 //! state without giving any other component direct line access.
 
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
     time::Duration,
@@ -28,6 +28,9 @@ pub struct BoardStatusClient {
     timeout: Duration,
 }
 
+/// The longest status line the daemon answers with.
+const MAX_LINE_BYTES: usize = 16 * 1024;
+
 impl BoardStatusClient {
     pub fn new(socket: impl Into<PathBuf>, timeout: Duration) -> Self {
         Self {
@@ -49,12 +52,13 @@ impl BoardStatusClient {
             .write_all(b"{\"request\":\"status\"}\n")
             .map_err(|_| BoardStatusError::Unavailable)?;
         writer.flush().map_err(|_| BoardStatusError::Unavailable)?;
-        let mut reader = BufReader::new(stream);
+        // At most one line's worth is read, whatever the daemon sends.
+        let mut reader = BufReader::new(stream.take(MAX_LINE_BYTES as u64 + 1));
         let mut line = String::new();
         let read = reader
             .read_line(&mut line)
             .map_err(|_| BoardStatusError::Unavailable)?;
-        if read == 0 || read > 16 * 1024 {
+        if read == 0 || read > MAX_LINE_BYTES {
             return Err(BoardStatusError::Unavailable);
         }
         let payload: Value =

@@ -157,7 +157,8 @@ Device > Display, `GET`/`POST /api/vm/oled` with the reference's `exist` and
   the button once a sample (a second on the board), and the policy wants a
   debounced press held for its hold time: the button is held for two to
   three seconds before the display lights (the operator's check on slot 84,
-  2026-10-11).
+  2026-10-11). Since 2026-11-06 the button is read on every turn of the
+  sampling thread (below), and a press held for its hold lights it.
 - The status the daemon answers keeps its fields: the update runtime's
   health check reads it strictly (`board_readiness.rs`), so the display's
   state is not in it; a dark display reports `displayBacklightOn: false`,
@@ -220,3 +221,51 @@ Confirmed order for the gate (every step reversible):
 
 The serial switch stays hidden with a capability note: no transport exists on
 this revision, and inventing one would be guessing.
+
+## The LED and the button on a fast turn (2026-11-06)
+
+The code audit of 2026-11-06 (AUD-06) found the sampling thread turning once a
+sample (a second on the board): the activity LED, whose pulse is 100 ms, was lit
+for the whole second or not at all, and the display button was held two to three
+seconds. The thread now turns every 20 ms (or at the sample interval when that is
+shorter). The LED and the button are driven on every turn, with the turn's time;
+the temperature and the RTC are read, the fan sampled, and the ATX LEDs and the
+display updated only when a sample is due (`SampleCadence`), as before. The
+readings are still taken before the state's lock.
+
+The button runtime used to normalize the line's level by `active_high` before
+the policy, which normalizes it again: an active-low button was inverted twice
+and never seen pressed. The runtime now hands the policy the level as read.
+
+Tests: `the_activity_led_lights_its_pulse_once_a_period` and
+`a_press_held_for_its_hold_wakes_the_display_once` (the sampling thread's turns
+with the reviewed configuration on a played clock), and
+`an_active_low_button_wakes_once_on_a_press`.
+
+## The manual fan duty through the supervisor (2026-11-06)
+
+The code audit of 2026-11-06 (AUD-02) found the manual duty written to the
+actuator past the supervisor (`actuator_mut`, slice 1), so the supervisor kept
+its last automatic command: back in Auto, a policy that wanted that command
+again (a hot board at maximum, before and after a low manual duty) wrote
+nothing, and the fan stayed at the manual duty while the status reported the
+automatic one. The manual duty also started at 0, so Manual before any duty
+stopped the fan.
+
+- The supervisor's `apply_manual` applies the operator's command and records
+  it. It is refused unless the supervisor is active (not before its start,
+  not while maximum cooling is latched or the actuation is uncertain); a
+  command that fails latches maximum cooling, as an automatic one does.
+- The daemon's manual duty starts at the reviewed maximum; Manual applies it
+  first and changes the mode only once the fan took it. Back in Auto the next
+  sample writes the policy's command whenever it differs from the manual one.
+- The status reports the duty the fan was last told in either mode.
+- `actuator_mut` stays only for the worker drain after the shutdown's
+  failsafe.
+
+Tests: `manual_mode_straight_after_start_keeps_the_fan_running` (before:
+`Off` applied) and `auto_after_manual_writes_the_policys_command` (before: the
+fan stayed at 20 % at 85 °C), and the supervisor's
+`a_manual_command_is_recorded_and_replaced_by_the_next_evaluation` and
+`a_failed_manual_command_latches_maximum_cooling`. Not tried on the board:
+fan settings are not changed there.

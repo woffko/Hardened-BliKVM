@@ -134,7 +134,12 @@ sudo tools/image/restore_raw_backup.py /dev/sdX
 The tool reads the update's record and `root.backup.zst` from the second
 partition, checks the backup against the record, writes it over the first
 partition and reads it back; it refuses a record with no backup to write
-(code audit of 2026-10-20, AUD-01). At the next boot the board restores the
+(code audit of 2026-10-20, AUD-01). It claims the root partition's block
+device exclusively (`O_EXCL`) before it writes, and a partition that is
+mounted or in use refuses with "the root partition is mounted or in use"
+instead of being written under its file system (code audit of 2026-11-06,
+AUD-14; test `test_a_root_partition_in_use_is_refused_and_left_unchanged`).
+At the next boot the board restores the
 same backup once more and records the update as rolled back. A recovery boot
 from the data partition, which would make this automatic, is a design of its
 own.
@@ -199,7 +204,10 @@ state directory (`/var/lib/hardened-blikvm-gadget/system-switches.json`, with
 the image they were recorded under, `/etc/hardened-blikvm-image`); that
 directory is carried. At its start, when the image is another one than the
 record names, the owner sets them as recorded; under the same image the record
-only follows the board, so the owner never undoes a change made otherwise. It
+only follows the board, so the owner never undoes a change made otherwise. A
+switch it could not set leaves the record under the old image, so the next
+start sets it again (code audit of 2026-11-06, AUD-11.4: one failed
+`systemctl` kept SSH as the new image had it, for good). It
 records its own changes at once and the Tailscale daemon's enablement whenever
 it reads it. The SD image builder leaves the record out: a new card records its
 own at its first start. The update runtime is not involved, so this works for

@@ -67,6 +67,8 @@ where
     ActuationUncertain,
     #[error("fan failsafe retry is not required")]
     RetryNotRequired,
+    #[error("fan maximum cooling is latched; a manual command is refused")]
+    FailsafeLatched,
     #[error("fan policy evaluation failed")]
     Policy(#[source] FanPolicyError),
     #[error("fan policy evaluation and the maximum-cooling fallback both failed")]
@@ -125,12 +127,45 @@ where
         &self.actuator
     }
 
-    /// Manual actuation path: the operator took over from the automatic curve,
-    /// so the caller applies a reviewed duty directly instead of a policy
-    /// decision. Automatic evaluations replace it again as soon as the mode
-    /// returns to automatic.
+    /// The actuator itself, for the worker drain after `prepare_shutdown`.
+    /// A manual command goes through `apply_manual`, so the supervisor knows
+    /// what the fan runs at.
     pub fn actuator_mut(&mut self) -> &mut A {
         &mut self.actuator
+    }
+
+    /// Applies the operator's reviewed command in place of the automatic
+    /// curve, and records it, so the next automatic evaluation writes its own
+    /// command when it differs (code audit of 2026-11-06, AUD-02: a manual
+    /// duty written past the supervisor was never replaced). Refused unless
+    /// the supervisor is active; a command that fails latches maximum
+    /// cooling, as an automatic one does.
+    pub fn apply_manual(
+        &mut self,
+        command: FanCommand,
+    ) -> Result<FanSupervisorOutcome, FanSupervisorError<A::Error>> {
+        match self.status {
+            FanSupervisorStatus::Uninitialized => {
+                return Err(FanSupervisorError::NotInitialized);
+            }
+            FanSupervisorStatus::ActuationUncertain => {
+                return Err(FanSupervisorError::ActuationUncertain);
+            }
+            FanSupervisorStatus::FailsafeLatched => {
+                return Err(FanSupervisorError::FailsafeLatched);
+            }
+            FanSupervisorStatus::Active => {}
+        }
+        if self.applied_command == Some(command) {
+            return Ok(self.outcome(FanSupervisorAction::NoChange, None));
+        }
+        match self.actuator.apply(command) {
+            Ok(()) => {
+                self.applied_command = Some(command);
+                Ok(self.outcome(FanSupervisorAction::CommandApplied, None))
+            }
+            Err(command_error) => Err(self.latch_after_failed(command_error)),
+        }
     }
 
     pub fn initialize(&mut self) -> Result<FanSupervisorOutcome, FanSupervisorError<A::Error>> {
@@ -200,23 +235,25 @@ where
                 self.applied_command = Some(decision.command);
                 Ok(self.outcome(FanSupervisorAction::CommandApplied, Some(decision)))
             }
-            Err(command_error) => {
-                let failsafe = failsafe_command();
-                match self.actuator.apply(failsafe) {
-                    Ok(()) => {
-                        self.applied_command = Some(failsafe);
-                        self.status = FanSupervisorStatus::FailsafeLatched;
-                        Err(FanSupervisorError::CommandFailedFailsafeApplied(
-                            command_error,
-                        ))
-                    }
-                    Err(failsafe_error) => {
-                        self.status = FanSupervisorStatus::ActuationUncertain;
-                        Err(FanSupervisorError::CommandAndFailsafeFailed {
-                            command_error,
-                            failsafe_error,
-                        })
-                    }
+            Err(command_error) => Err(self.latch_after_failed(command_error)),
+        }
+    }
+
+    /// A command failed: maximum cooling, latched, or uncertain if that
+    /// fails as well.
+    fn latch_after_failed(&mut self, command_error: A::Error) -> FanSupervisorError<A::Error> {
+        let failsafe = failsafe_command();
+        match self.actuator.apply(failsafe) {
+            Ok(()) => {
+                self.applied_command = Some(failsafe);
+                self.status = FanSupervisorStatus::FailsafeLatched;
+                FanSupervisorError::CommandFailedFailsafeApplied(command_error)
+            }
+            Err(failsafe_error) => {
+                self.status = FanSupervisorStatus::ActuationUncertain;
+                FanSupervisorError::CommandAndFailsafeFailed {
+                    command_error,
+                    failsafe_error,
                 }
             }
         }
@@ -337,6 +374,58 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn a_manual_command_is_recorded_and_replaced_by_the_next_evaluation() {
+        let mut supervisor = FanSupervisor::new(config(), 0, MockActuator::default()).unwrap();
+        assert!(matches!(
+            supervisor.apply_manual(duty(60)),
+            Err(FanSupervisorError::NotInitialized)
+        ));
+        supervisor.initialize().unwrap();
+        let manual = supervisor.apply_manual(duty(60)).unwrap();
+        assert_eq!(manual.action, FanSupervisorAction::CommandApplied);
+        assert_eq!(supervisor.state().applied_command, Some(duty(60)));
+        // Back in automatic mode, a hot board gets the curve's duty again.
+        let hot = supervisor
+            .evaluate(1_000, FanObservation::TemperatureMillidegrees(70_000))
+            .unwrap();
+        assert_eq!(hot.action, FanSupervisorAction::CommandApplied);
+        assert_eq!(
+            supervisor.actuator().attempts,
+            vec![duty(100), duty(60), duty(100)]
+        );
+    }
+
+    #[test]
+    fn a_failed_manual_command_latches_maximum_cooling() {
+        let mut supervisor = FanSupervisor::new(
+            config(),
+            0,
+            MockActuator::with_results([Ok(()), Err(MockError(1)), Ok(())]),
+        )
+        .unwrap();
+        supervisor.initialize().unwrap();
+        assert!(matches!(
+            supervisor.apply_manual(duty(60)),
+            Err(FanSupervisorError::CommandFailedFailsafeApplied(MockError(
+                1
+            )))
+        ));
+        assert_eq!(
+            supervisor.state().status,
+            FanSupervisorStatus::FailsafeLatched
+        );
+        assert_eq!(supervisor.state().applied_command, Some(duty(100)));
+        assert!(matches!(
+            supervisor.apply_manual(duty(60)),
+            Err(FanSupervisorError::FailsafeLatched)
+        ));
+        assert_eq!(
+            supervisor.actuator().attempts,
+            vec![duty(100), duty(60), duty(100)]
+        );
     }
 
     #[test]

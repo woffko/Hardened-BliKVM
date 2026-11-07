@@ -499,6 +499,7 @@ const en = {
       powerLong: 'Power (long click)',
       resetConfirm: 'Proceed reset operation?',
       powerConfirm: 'Proceed power operation?',
+      failed: 'The power button was not pressed: {{reason}}',
       okBtn: 'Yes',
       cancelBtn: 'No'
     },

@@ -80,7 +80,8 @@ find.
   rolls back by itself, time, system log, Tailscale, account (a new password
   needs the current one), session lock,
   and the board's display (the vendor's status screen, the vendor's way up)
-  going dark after a time without activity (its button lights it again).
+  going dark after a time without activity (its button, held for a second,
+  lights it again).
 - **Updates**: signed application slots with a health check and automatic
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write
@@ -171,6 +172,7 @@ and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
 agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261106-code-review.md`](docs/baselines/audit-20261106-code-review.md),
 [`audit-20261025-remote-control.md`](docs/baselines/audit-20261025-remote-control.md),
 [`audit-20261020-code-review.md`](docs/baselines/audit-20261020-code-review.md),
 [`audit-20261018-security-review.md`](docs/baselines/audit-20261018-security-review.md),

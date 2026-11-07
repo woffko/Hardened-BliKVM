@@ -100,7 +100,8 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertRegex(
             hook,
             r"new HidLeaseSession\(\s*\(\) => ensureFocus\(platformId\),"
-            r"\s*overQuic \? quicLease : httpsLease\s*\)",
+            r"\s*overQuic \? quicLease : httpsLease,"
+            r"\s*\(\) => \{\s*if \(sharedSession === session\) dropSharedSession\(\);\s*\}\s*\)",
         )
         # The lease's transport is chosen once, when control is enabled.
         self.assertEqual(hook.count("quicSession.isOpen()"), 1)
@@ -115,7 +116,8 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertRegex(
             lease,
             r"constructor\(\s*private readonly attest: \(\) => Promise<void>,"
-            r"\s*private readonly transport: LeaseTransport = httpsLease\s*\) \{\}",
+            r"\s*private readonly transport: LeaseTransport = httpsLease,"
+            r"\s*private readonly onLost: \(\) => void = \(\) => undefined\s*\) \{\}",
         )
         focus = (ROOT / "web/src/lib/restricted-power.ts").read_text()
         self.assertIn("FOCUS_TTL_MS = 15_000", focus)

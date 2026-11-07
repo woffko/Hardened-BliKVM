@@ -89,6 +89,47 @@ impl FrameGate {
     }
 }
 
+/// When the reader lets a captured frame through the gate, changed or not, so
+/// that the encoder can make a key frame of it: a viewer that has just come
+/// (a new demand generation), a key frame a client of the frame socket asked
+/// for, or one the encoder was to force and could not make (`retry`). Two are
+/// at least `spacing` apart. On a still screen they would otherwise wait for
+/// the periodic refresh.
+#[derive(Debug)]
+pub struct KeyAdmission {
+    generation: u64,
+    last: Option<Instant>,
+    spacing: Duration,
+}
+
+impl KeyAdmission {
+    pub fn new(generation: u64, spacing: Duration) -> Self {
+        Self {
+            generation,
+            last: None,
+            spacing,
+        }
+    }
+
+    /// Whether the frame captured at `now` is let through. A missed forced
+    /// key frame (`retry`) waits like the others: the reader used to have
+    /// taken the new generation already, and held the still screen until the
+    /// refresh (code audit of 2026-11-06, AUD-12).
+    pub fn admits(&mut self, generation: u64, asked: bool, retry: bool, now: Instant) -> bool {
+        let waiting = generation != self.generation || asked || retry;
+        if waiting
+            && self
+                .last
+                .is_none_or(|at| now.saturating_duration_since(at) >= self.spacing)
+        {
+            self.generation = generation;
+            self.last = Some(now);
+            return true;
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +202,37 @@ mod tests {
                 assert!(key_due(Some(key), refresh, every), "{spacing:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_forced_key_frame_that_was_missed_lets_the_next_capture_through() {
+        // Code audit of 2026-11-06, AUD-12: the encoder could not make the
+        // key frame a new viewer needed, and on a still screen the reader
+        // held every capture back until the refresh, two seconds on.
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut gate = FrameGate::new(GatePolicy::new(30, Duration::from_secs(2)).unwrap());
+        let mut admission = KeyAdmission::new(0, Duration::from_millis(250));
+        let still = b"one still picture";
+        assert_eq!(gate.admit(still, at(0)), FrameDecision::Encode);
+        assert_eq!(gate.admit(still, at(100)), FrameDecision::Unchanged);
+        // A viewer comes.
+        assert!(admission.admits(1, false, false, at(200)));
+        gate.reset();
+        assert_eq!(gate.admit(still, at(200)), FrameDecision::Encode);
+        // 60 ms on, the encoder could not make its key frame: the next
+        // capture after the spacing is let through.
+        assert!(!admission.admits(1, false, true, at(300)));
+        assert_eq!(gate.admit(still, at(300)), FrameDecision::Unchanged);
+        assert!(
+            admission.admits(1, false, true, at(500)),
+            "the capture was held until the refresh"
+        );
+        gate.reset();
+        assert_eq!(gate.admit(still, at(500)), FrameDecision::Encode);
+        // Nothing waiting: held again.
+        assert!(!admission.admits(1, false, false, at(800)));
+        assert_eq!(gate.admit(still, at(800)), FrameDecision::Unchanged);
     }
 
     #[test]

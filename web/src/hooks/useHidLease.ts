@@ -13,7 +13,7 @@ import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { leaseEndedAtom } from '@/jotai/restricted-control.ts';
 import { submenuOpenCountAtom } from '@/jotai/settings.ts';
-import { leaseTransportAtom } from '@/jotai/transport.ts';
+import { leaseTransportAtom, quicStatusAtom } from '@/jotai/transport.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 const LEASE_TTL_SECONDS = 30;
@@ -50,6 +50,19 @@ const MENU_CLOSING_MS = 150;
 let menuClosedAt = -Infinity;
 getDefaultStore().sub(submenuOpenCountAtom, () => {
   if (getDefaultStore().get(submenuOpenCountAtom) === 0) menuClosedAt = performance.now();
+});
+
+// A QUIC session that ends releases the lease it carried on the server
+// (docs/design/quic-transport-v1.md), and the target's confirmation with it:
+// the page forgets both, so the next input, hold or agent call takes them
+// anew rather than using a lease that is gone (code audit of 2026-11-06,
+// AUD-05 and AUD-09).
+getDefaultStore().sub(quicStatusAtom, () => {
+  const store = getDefaultStore();
+  if (store.get(quicStatusAtom).state === 'connected') return;
+  if (store.get(leaseTransportAtom) !== 'quic') return;
+  dropSharedSession();
+  resetFocusConfirmation();
 });
 
 /** Whether a pointer's press now only closes a menu. */
@@ -147,15 +160,20 @@ export function useHidLease() {
       await ensureFocus(current.platform.id);
       if (generation !== queueGeneration) return null;
 
+      // A session whose lease ended under it is no session.
+      if (sharedSession && !sharedSession.isLive()) dropSharedSession();
       if (!sharedSession) {
         const platformId = current.platform.id;
         // The transport is chosen when the lease is taken: the QUIC session
         // if one is open, HTTPS otherwise. A lease lost on the way is taken
         // again by the next report, which chooses anew.
         const overQuic = quicSession.isOpen();
-        const session = new HidLeaseSession(
+        const session: HidLeaseSession = new HidLeaseSession(
           () => ensureFocus(platformId),
-          overQuic ? quicLease : httpsLease
+          overQuic ? quicLease : httpsLease,
+          () => {
+            if (sharedSession === session) dropSharedSession();
+          }
         );
         startingSession = session;
         try {

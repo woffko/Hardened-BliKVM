@@ -226,6 +226,8 @@ pub struct WifiState {
     revert_after: Duration,
     /// The unconfirmed main-connection change, kept across a restart.
     journal: Option<RevertJournal>,
+    /// Set while the start's revert of that change is still being tried.
+    reconciling: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// What an unconfirmed main-connection change must restore.
@@ -309,6 +311,7 @@ impl WifiState {
             generation: 0,
             revert_after: PREFERENCE_REVERT_AFTER,
             journal: None,
+            reconciling: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -330,16 +333,23 @@ impl WifiState {
             return false;
         };
         let runner = Arc::clone(&self.runner);
+        let reconciling = Arc::clone(&self.reconciling);
+        reconciling.store(true, std::sync::atomic::Ordering::SeqCst);
         std::thread::spawn(move || {
+            let mut reverted = false;
             for attempt in 0..12 {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 if Self::apply_record(&runner, &journal, &record) {
-                    return;
+                    reverted = true;
+                    break;
                 }
             }
-            eprintln!("wifi: the unconfirmed main connection change could not be reverted");
+            if !reverted {
+                eprintln!("wifi: the unconfirmed main connection change could not be reverted");
+            }
+            reconciling.store(false, std::sync::atomic::Ordering::SeqCst);
         });
         true
     }
@@ -828,6 +838,11 @@ impl WifiState {
     pub fn prefer(&mut self, wifi: bool) -> ControlResponse {
         if !self.capability_enabled {
             return reject(ControlRejectionCode::CapabilityDisabled);
+        }
+        // The start's revert is not done: it would undo this change, and
+        // clear its record (code audit of 2026-11-06, AUD-11.2).
+        if self.reconciling.load(std::sync::atomic::Ordering::SeqCst) {
+            return reject(ControlRejectionCode::PendingUnreconciled);
         }
         let (profiles, before) = match self.ethernet_profiles().and_then(|profiles| {
             let before = self.wifi_preferred()?;
@@ -1430,6 +1445,63 @@ mod tests {
         assert_eq!(state.confirm_preference(), ControlResponse::Applied);
         std::thread::sleep(Duration::from_millis(300));
         assert!(!fake.lock().unwrap().calls.contains(&modify("-1")));
+    }
+
+    #[test]
+    fn no_preference_is_taken_while_the_start_still_reverts() {
+        // The last owner's change, which NetworkManager refuses to revert at
+        // first: until it is done a new change would be undone and its
+        // record cleared (code audit of 2026-11-06, AUD-11.2).
+        let metric = format!("-g ipv4.route-metric connection show uuid {ETH}");
+        let profiles = format!("{ETH}:802-3-ethernet\n{OLD}:802-11-wireless\n");
+        let modify = |value: &str| {
+            format!(
+                "connection modify uuid {ETH} ipv4.route-metric {value} ipv6.route-metric {value}"
+            )
+        };
+        let refused = modify("-1");
+        let answers: Vec<(&str, Result<&str, &str>)> = vec![
+            ("-t -f UUID,TYPE connection show", Ok(profiles.as_str())),
+            (metric.as_str(), Ok("-1\n")),
+            (
+                "-t -f DEVICE,TYPE,STATE,CONNECTION device",
+                Ok("eth0:ethernet:connected:Wired\nwlan0:wifi:connected:home\n"),
+            ),
+            (
+                "-t -f DEVICE,TYPE,STATE device",
+                Ok("eth0:ethernet:connected\nwlan0:wifi:connected\n"),
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("wifi.json"));
+        let (state, _) = fixture(&answers);
+        let mut state = state
+            .with_journal(journal.clone())
+            .with_revert_after(Duration::from_secs(3600));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        drop(state);
+
+        let (next, fake) = fixture(&answers);
+        fake.lock()
+            .unwrap()
+            .answers
+            .insert(refused.clone(), Err("NetworkManager is not running".into()));
+        let mut next = next.with_journal(journal.clone());
+        assert!(next.reconcile());
+        std::thread::sleep(Duration::from_millis(300));
+        fake.lock().unwrap().answers.remove(&refused);
+        assert_eq!(
+            next.prefer(true),
+            reject(ControlRejectionCode::PendingUnreconciled)
+        );
+        for _ in 0..80 {
+            if journal.read::<PreferenceRecord>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(next.prefer(true), ControlResponse::Applied);
     }
 
     #[test]

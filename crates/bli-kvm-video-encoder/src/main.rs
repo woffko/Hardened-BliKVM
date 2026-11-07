@@ -31,7 +31,7 @@ use bli_kvm_ve_encoder::{
     encoder::{Counters, HardwareEncoder},
 };
 use bli_kvm_video_encoder::{
-    FrameDecision, FrameGate, GatePolicy, LatestFrame,
+    FrameDecision, FrameGate, GatePolicy, KeyAdmission, LatestFrame,
     choice::{Choice, ProbeHardware},
     demand::{Demand, group_id},
     engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware, add_counters},
@@ -406,8 +406,7 @@ fn read_stream(
 ) -> io::Result<()> {
     let mut reader = open_capture(settings)?;
     let mut idle_since: Option<Instant> = None;
-    let mut generation = demand.generation();
-    let mut let_through: Option<Instant> = None;
+    let mut admission = KeyAdmission::new(demand.generation(), KEY_ADMISSION_SPACING);
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -425,14 +424,9 @@ fn read_stream(
         // asks for a key frame, are answered from the next captured frame,
         // changed or not: on a still screen they would otherwise wait for
         // the periodic one.
-        let waiting =
-            demand.generation() != generation || frames.is_some_and(|hub| hub.key_due(now));
-        if waiting
-            && let_through
-                .is_none_or(|at| now.saturating_duration_since(at) >= KEY_ADMISSION_SPACING)
-        {
-            generation = demand.generation();
-            let_through = Some(now);
+        let asked = frames.is_some_and(|hub| hub.key_due(now));
+        if admission.admits(demand.generation(), asked, demand.key_retry_pending(), now) {
+            demand.clear_key_retry();
             gate.reset();
         }
         let decision = gate.admit(&jpeg, now);
@@ -695,6 +689,10 @@ fn encode_loop(
             if asked && let Some(hub) = frames {
                 hub.give_back_key_request();
             }
+            // The reader has taken the new generation already: it lets
+            // the next capture through for the retry, or a still screen
+            // waits for the refresh (code audit of 2026-11-06, AUD-12).
+            demand.retry_key();
         }
         for packet in packets {
             // Loss is tolerated: the next key frame repairs the view.

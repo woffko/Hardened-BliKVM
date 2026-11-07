@@ -105,6 +105,9 @@ assemble() {
   root_hash=$(openssl passwd -6 1234)
   fakeroot -s "$work/fakeroot.state" -- sh -eu -c '
     staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8 system_sequence=$9
+    # Empties each directory, dotfiles included (code audit of 2026-11-06,
+    # AUD-15: "dir"/* left them).
+    empty_state() { for dir in "$@"; do [ ! -d "$dir" ] || find "$dir" -mindepth 1 -delete; done; }
     # ACLs (journal directories) and xattrs are not reproduced; systemd
     # recreates the journal ACLs on the device.
     tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
@@ -124,8 +127,8 @@ assemble() {
     # Device state that identifies or authenticates this board: web account
     # and backups, Tailscale node keys, NetworkManager secret and leases, the
     # entropy seed and old deployment copies. First Setup recreates the account.
-    rm -rf "$staging/var/lib/hardened-blikvm"/* "$staging/var/lib/tailscale"/* \
-      "$staging/var/lib/NetworkManager/secret_key" "$staging"/var/lib/NetworkManager/*.lease \
+    empty_state "$staging/var/lib/hardened-blikvm" "$staging/var/lib/tailscale"
+    rm -rf "$staging/var/lib/NetworkManager/secret_key" "$staging"/var/lib/NetworkManager/*.lease \
       "$staging/var/lib/NetworkManager/seen-bssids" "$staging/var/lib/NetworkManager/timestamps" \
       "$staging/var/lib/systemd/random-seed" "$staging/var/lib/systemd/credential.secret" \
       "$staging"/var/lib/hardened-blikvm-gadget/deploy-* "$staging/var/lib/hardened-blikvm-gadget/gate"
@@ -196,11 +199,11 @@ assemble() {
     # State of the optional features belongs to the source board: the
     # assistant'"'"'s model key, gateway token and chats, stored scripts and the
     # Tailscale node state. They start empty on a new card.
-    rm -rf "$staging/var/lib/private/hardened-blikvm-picoclaw" \
-      "$staging/var/lib/hardened-blikvm-picoclaw"/* \
-      "$staging/var/lib/hardened-blikvm-picoclaw-runtime"/* \
-      "$staging/var/lib/hardened-blikvm-admin/scripts"/* \
-      "$staging/var/lib/hardened-blikvm-tailscale"/*
+    rm -rf "$staging/var/lib/private/hardened-blikvm-picoclaw"
+    empty_state "$staging/var/lib/hardened-blikvm-picoclaw" \
+      "$staging/var/lib/hardened-blikvm-picoclaw-runtime" \
+      "$staging/var/lib/hardened-blikvm-admin/scripts" \
+      "$staging/var/lib/hardened-blikvm-tailscale"
     for state in var/lib/private var/lib/hardened-blikvm-picoclaw var/lib/hardened-blikvm-picoclaw-runtime \
       var/lib/hardened-blikvm-admin/scripts var/lib/hardened-blikvm-tailscale; do
       if [ -n "$(find "$staging/$state" -type f 2>/dev/null | head -n 1)" ]; then
@@ -250,6 +253,12 @@ assemble() {
         exit 1
       fi
     done
+    # The web account, its backups and sessions: a new card starts with
+    # none, dotfiles included.
+    if [ -n "$(find "$staging/var/lib/hardened-blikvm" -mindepth 1 -print 2>/dev/null | head -n 1)" ]; then
+      echo "source board state remains in var/lib/hardened-blikvm" >&2
+      exit 1
+    fi
     # nginx.conf comes from packaging, not from the source board, whose copy
     # may be an older rendering (security review of 2026-10-18, LOW-04); it
     # uses the TLS pair the first boot generates.

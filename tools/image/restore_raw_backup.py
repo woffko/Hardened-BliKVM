@@ -24,6 +24,7 @@ Needs `sfdisk`, `debugfs` (e2fsprogs) and `zstd`.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -98,9 +99,22 @@ def root_target(card: Path, root: dict) -> tuple[str, int]:
     return str(card), root["start"] * SECTOR
 
 
+def claim(path: str, block: bool):
+    """The root partition opened for writing; a block device is claimed
+    exclusively, so one that is mounted or in use is refused instead of
+    written under its file system (code audit of 2026-11-06, AUD-14)."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CLOEXEC | (os.O_EXCL if block else 0))
+    except OSError as error:
+        if error.errno == errno.EBUSY:
+            raise Refused("the root partition is mounted or in use") from error
+        raise
+    return os.fdopen(fd, "r+b", buffering=0)
+
+
 def write_back(card: Path, root: dict, backup: Path, size: int, sha256: str) -> None:
     path, offset = root_target(card, root)
-    with open(path, "r+b", buffering=0) as out, backup_stream(backup) as stream:
+    with claim(path, is_block(card)) as out, backup_stream(backup) as stream:
         out.seek(offset)
         while chunk := stream.stdout.read(CHUNK):
             out.write(chunk)

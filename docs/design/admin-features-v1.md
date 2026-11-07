@@ -146,7 +146,14 @@ and are socket-activated per connection.
     against the pinned release's size and SHA-256 and copies it into
     `/run/hardened-blikvm-picoclaw-exec`, root's; the unit starts that copy,
     so whoever can write the installed file cannot choose what runs, and a
-    file that differs is not started. `hardened-blikvm-picoclaw.service` runs
+    file that differs is not started. The configuration helper's
+    `picoclaw onboard` (the first preparation, which writes the default
+    configuration) runs a copy checked the same way, made in that helper
+    unit's private `/tmp` and removed afterwards; it used to run the
+    installed file itself (code audit of 2026-11-06, AUD-01; tests
+    `a_runtime_that_is_not_the_pinned_release_is_not_onboarded` and
+    `onboarding_runs_the_checked_copy_and_removes_it`; the unit is
+    unchanged). `hardened-blikvm-picoclaw.service` runs
     `picoclaw gateway` as
     the dedicated `hardened-blikvm-picoclaw` user with a sandbox in which only
     its home (`/var/lib/hardened-blikvm-picoclaw`) is writable. It has network
@@ -180,7 +187,16 @@ and are socket-activated per connection.
     the server drops manual HID input, as the reference does;
   - chat: the browser's `/api/picoclaw/gateway/ws` is relayed to the local
     gateway (`ws://127.0.0.1:18790/pico/ws`) with the gateway token, one
-    assistant session at a time (30-minute lock renewed by traffic).
+    assistant session at a time (30-minute lock renewed by traffic). The
+    lock knows the connection that took it, by a number from a counter: a
+    relay renews, watches and releases only its own connection's lock and
+    clears only its own active entry, while the browser's
+    `DELETE /api/picoclaw/runtime/session` still releases by session. The
+    browser may give a session's lock back and open the same session again
+    before the old relay has ended; the old one's end released the new one's
+    lock and unblocked manual input under a running assistant (code audit of
+    2026-11-06, AUD-04; test
+    `an_old_connection_does_not_release_a_new_one_of_its_session`).
 
 ## Other helper duties (plan phase B)
 

@@ -250,6 +250,8 @@ node --check tools/playwright/restricted_power_probe.mjs
 node --check tools/playwright/restricted_control_gui_probe.mjs
 node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
 node --check tools/playwright/restricted_control_lifecycle.mjs
+node --check tools/playwright/hid_lease_lost_contract.mjs
+node --check tools/playwright/power_focus_contract.mjs
 node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
 node --check tools/playwright/webrtc_unavailable_contract.mjs
@@ -951,6 +953,8 @@ grep -q 'Qualcomm Innovation Center' web/dist/THIRD-PARTY-NOTICES.txt
 grep -q 'Neither the name of the copyright holder' web/dist/THIRD-PARTY-NOTICES.txt
 pnpm_web lint
 node tools/playwright/restricted_control_lifecycle.mjs
+node tools/playwright/hid_lease_lost_contract.mjs
+node tools/playwright/power_focus_contract.mjs
 node tools/playwright/network_contract.mjs
 node tools/playwright/firewall_modes_contract.mjs
 node tools/playwright/webrtc_unavailable_contract.mjs

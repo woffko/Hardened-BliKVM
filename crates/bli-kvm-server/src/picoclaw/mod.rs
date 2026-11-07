@@ -46,6 +46,8 @@ const INTERNAL_TOKEN_FILE: &str = "picoclaw-internal-token";
 /// The assistant session currently relayed, with the operator who opened it.
 pub(crate) struct Active {
     pub session_id: String,
+    /// The connection that took the lock for it.
+    pub connection: u64,
     pub operator: Session,
     /// Text frames for the runtime (the reference's load-image instruction).
     pub upstream: tokio::sync::mpsc::Sender<String>,
@@ -54,23 +56,49 @@ pub(crate) struct Active {
     pub close: tokio::sync::watch::Sender<Option<(u16, String)>>,
 }
 
-#[derive(Default)]
-struct Lock {
-    owner: Option<(String, Instant)>,
+/// Who holds the assistant's lock: the session, the connection that took it
+/// (a number from a counter), and when it lapses. A connection releases or
+/// renews only its own lock: the browser may give a session's lock back and
+/// open the session again before the old relay has ended (code audit of
+/// 2026-11-06, AUD-04).
+struct Owner {
+    session_id: String,
+    connection: u64,
+    expires: Instant,
 }
 
-/// Releases the assistant lock for a session when dropped: a connection
+#[derive(Default)]
+struct Lock {
+    owner: Option<Owner>,
+    last_connection: u64,
+}
+
+impl Lock {
+    /// The owner, once a lapsed one is forgotten.
+    fn current(&mut self, now: Instant) -> Option<&mut Owner> {
+        if self
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.expires <= now)
+        {
+            self.owner = None;
+        }
+        self.owner.as_mut()
+    }
+}
+
+/// Releases the assistant lock of a connection when dropped: a connection
 /// whose upgrade never completes drops the closure that would have relayed it,
 /// and must not leave the operator's keyboard and mouse blocked until the
 /// lock expires.
 pub(crate) struct ReleaseOnDrop {
     pub(crate) picoclaw: Arc<Picoclaw>,
-    pub(crate) session_id: String,
+    pub(crate) connection: u64,
 }
 
 impl Drop for ReleaseOnDrop {
     fn drop(&mut self) {
-        self.picoclaw.release(&self.session_id);
+        self.picoclaw.release_connection(self.connection);
     }
 }
 
@@ -108,44 +136,80 @@ impl Picoclaw {
         &self.internal_token
     }
 
-    /// Takes or renews the lock for `session_id`; `Ok(true)` when newly taken.
-    pub(crate) fn acquire(&self, session_id: &str) -> Result<bool, String> {
+    /// Takes or renews the lock for `session_id`: `Ok(Some(connection))`
+    /// when newly taken, with the connection's number, `Ok(None)` when the
+    /// session already holds it, and the owner when another session does.
+    pub(crate) fn acquire(&self, session_id: &str) -> Result<Option<u64>, String> {
         let mut lock = self.lock.lock().expect("lock poisoned");
         let now = Instant::now();
-        if lock
-            .owner
-            .as_ref()
-            .is_some_and(|(_, expires)| *expires <= now)
-        {
-            lock.owner = None;
-        }
-        match &lock.owner {
-            Some((owner, _)) if owner != session_id => Err(owner.clone()),
-            current => {
-                let taken = current.is_none();
-                lock.owner = Some((session_id.to_string(), now + LOCK_DURATION));
-                Ok(taken)
+        match lock.current(now) {
+            Some(owner) if owner.session_id != session_id => Err(owner.session_id.clone()),
+            Some(owner) => {
+                owner.expires = now + LOCK_DURATION;
+                Ok(None)
+            }
+            None => {
+                lock.last_connection += 1;
+                let connection = lock.last_connection;
+                lock.owner = Some(Owner {
+                    session_id: session_id.to_string(),
+                    connection,
+                    expires: now + LOCK_DURATION,
+                });
+                Ok(Some(connection))
             }
         }
     }
 
+    /// Renews the lock while `session_id` holds it (the runtime's calls).
     pub(crate) fn renew(&self, session_id: &str) -> bool {
+        self.renew_where(|owner| owner.session_id == session_id)
+    }
+
+    /// Renews the lock while `connection` holds it (its relay's traffic).
+    pub(crate) fn renew_connection(&self, connection: u64) -> bool {
+        self.renew_where(|owner| owner.connection == connection)
+    }
+
+    fn renew_where(&self, holds: impl Fn(&Owner) -> bool) -> bool {
         let mut lock = self.lock.lock().expect("lock poisoned");
-        match &mut lock.owner {
-            Some((owner, expires)) if owner == session_id && *expires > Instant::now() => {
-                *expires = Instant::now() + LOCK_DURATION;
+        let now = Instant::now();
+        match lock.current(now) {
+            Some(owner) if holds(owner) => {
+                owner.expires = now + LOCK_DURATION;
                 true
             }
             _ => false,
         }
     }
 
+    /// Whether `connection` still holds the lock.
+    pub(crate) fn holds(&self, connection: u64) -> bool {
+        let mut lock = self.lock.lock().expect("lock poisoned");
+        lock.current(Instant::now())
+            .is_some_and(|owner| owner.connection == connection)
+    }
+
+    /// Gives the lock of `session_id` back, whichever connection took it
+    /// (the browser's DELETE).
     pub(crate) fn release(&self, session_id: &str) {
         let mut lock = self.lock.lock().expect("lock poisoned");
         if lock
             .owner
             .as_ref()
-            .is_some_and(|(owner, _)| owner == session_id)
+            .is_some_and(|owner| owner.session_id == session_id)
+        {
+            lock.owner = None;
+        }
+    }
+
+    /// Gives the lock back if `connection` still holds it.
+    pub(crate) fn release_connection(&self, connection: u64) {
+        let mut lock = self.lock.lock().expect("lock poisoned");
+        if lock
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.connection == connection)
         {
             lock.owner = None;
         }
@@ -153,14 +217,8 @@ impl Picoclaw {
 
     pub(crate) fn owner(&self) -> Option<String> {
         let mut lock = self.lock.lock().expect("lock poisoned");
-        if lock
-            .owner
-            .as_ref()
-            .is_some_and(|(_, expires)| *expires <= Instant::now())
-        {
-            lock.owner = None;
-        }
-        lock.owner.as_ref().map(|(owner, _)| owner.clone())
+        lock.current(Instant::now())
+            .map(|owner| owner.session_id.clone())
     }
 
     /// While an assistant session holds the lock, manual HID input is
@@ -937,8 +995,8 @@ mod tests {
         assert_eq!(picoclaw.internal_token().len(), 64);
         let again = Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into());
         assert_eq!(again.internal_token(), picoclaw.internal_token());
-        assert_eq!(picoclaw.acquire("a"), Ok(true));
-        assert_eq!(picoclaw.acquire("a"), Ok(false));
+        assert_eq!(picoclaw.acquire("a"), Ok(Some(1)));
+        assert_eq!(picoclaw.acquire("a"), Ok(None));
         assert_eq!(picoclaw.acquire("b"), Err("a".into()));
         assert!(picoclaw.blocks_manual_input());
         assert!(picoclaw.renew("a") && !picoclaw.renew("b"));
@@ -946,7 +1004,11 @@ mod tests {
         assert_eq!(picoclaw.owner().as_deref(), Some("a"));
         picoclaw.release("a");
         assert!(!picoclaw.blocks_manual_input());
-        picoclaw.lock.lock().unwrap().owner = Some(("c".into(), Instant::now()));
+        picoclaw.lock.lock().unwrap().owner = Some(Owner {
+            session_id: "c".into(),
+            connection: 9,
+            expires: Instant::now(),
+        });
         assert_eq!(picoclaw.owner(), None);
     }
 
@@ -954,16 +1016,44 @@ mod tests {
     fn an_upgrade_that_never_runs_releases_the_lock() {
         let dir = tempfile::tempdir().unwrap();
         let picoclaw = Arc::new(Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into()));
-        assert_eq!(picoclaw.acquire("a"), Ok(true));
+        let connection = picoclaw.acquire("a").unwrap().unwrap();
         let guard = ReleaseOnDrop {
             picoclaw: picoclaw.clone(),
-            session_id: "a".into(),
+            connection,
         };
         // The closure handed to `on_upgrade` owns the guard; dropping it
         // unrun is what a failed upgrade does.
         let closure = move || drop(guard);
         assert!(picoclaw.blocks_manual_input());
         drop(closure);
+        assert!(!picoclaw.blocks_manual_input());
+    }
+
+    #[test]
+    fn an_old_connection_does_not_release_a_new_one_of_its_session() {
+        // Code audit of 2026-11-06, AUD-04: the browser gives the lock back
+        // (DELETE) and reopens the same session before the old relay has
+        // ended; the old relay's guard released the new connection's lock.
+        let dir = tempfile::tempdir().unwrap();
+        let picoclaw = Arc::new(Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into()));
+        let first = picoclaw.acquire("a").unwrap().unwrap();
+        let old = ReleaseOnDrop {
+            picoclaw: picoclaw.clone(),
+            connection: first,
+        };
+        picoclaw.release("a");
+        let second = picoclaw.acquire("a").unwrap().unwrap();
+        assert_ne!(first, second);
+        drop(old);
+        assert_eq!(
+            picoclaw.owner().as_deref(),
+            Some("a"),
+            "the new connection lost its lock"
+        );
+        // The old relay's traffic and watchdog no longer count as the lock's.
+        assert!(!picoclaw.renew_connection(first) && !picoclaw.holds(first));
+        assert!(picoclaw.renew_connection(second) && picoclaw.holds(second));
+        picoclaw.release_connection(second);
         assert!(!picoclaw.blocks_manual_input());
     }
 
