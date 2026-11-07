@@ -8,16 +8,12 @@ import {
   serveStillPicture,
   takeControl,
 } from "./take_control.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 // A release request is asynchronous; poll for it instead of assuming a fixed
 // delay, which a loaded host can exceed.
 async function eventually(condition, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 const executablePath =

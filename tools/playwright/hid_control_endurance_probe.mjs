@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { controlIsOn, takeControl } from "./take_control.mjs";
+import { deadline } from "./eventually.mjs";
 
 const [baseUrl, username, outputValue, seconds = "120"] = process.argv.slice(2);
 const url = new URL(baseUrl);
@@ -31,8 +32,8 @@ const browser = await chromium.launch({
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
     "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
 });
-const started = Date.now();
-const at = () => Math.round((Date.now() - started) / 100) / 10;
+const started = performance.now();
+const at = () => Math.round((performance.now() - started) / 100) / 10;
 const receipt = {
   schemaVersion: 1,
   probe: "hid-control-endurance",
@@ -87,9 +88,9 @@ try {
   event({ control: (await controlIsOn(page)) ? "true" : "false" });
   const box = await page.locator("#screen").boundingBox();
   let lastState = "true";
-  const deadline = Date.now() + Number(seconds) * 1000;
+  const passed = deadline(Number(seconds) * 1000);
   let step = 0;
-  while (Date.now() < deadline) {
+  while (!passed()) {
     step += 1;
     const x = box.x + box.width * (0.3 + 0.2 * Math.sin(step / 7));
     const y = box.y + box.height * (0.4 + 0.2 * Math.cos(step / 5));

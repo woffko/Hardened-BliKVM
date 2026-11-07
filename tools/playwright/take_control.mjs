@@ -1,3 +1,4 @@
+import { deadline } from "./eventually.mjs";
 // Remote control is taken by the first press on the screen (or a key), which
 // asks for a confirmation and does not reach the target itself; it is given
 // back from the Mouse menu (2026-10-24: no button on the toolbar).
@@ -11,7 +12,7 @@ export async function takeControl(page, { tap = false } = {}) {
   const confirm = page.getByRole("button", { name: "Confirm and control" });
   // A page that has not loaded what it offers yet hears no press: it is
   // pressed again until the confirmation opens.
-  const deadline = Date.now() + 15000;
+  const passed = deadline(15000);
   for (;;) {
     if (tap) {
       const screen = page.locator("#screen").first();
@@ -26,8 +27,7 @@ export async function takeControl(page, { tap = false } = {}) {
       .then(() => true)
       .catch(() => false);
     if (opened) break;
-    if (Date.now() > deadline)
-      throw new Error("no confirmation of remote control opened");
+    if (passed()) throw new Error("no confirmation of remote control opened");
   }
   if (tap) await confirm.tap();
   else await confirm.click();

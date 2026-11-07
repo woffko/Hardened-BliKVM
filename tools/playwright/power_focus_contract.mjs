@@ -7,18 +7,14 @@ import assert from "node:assert/strict";
 import { startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
 import { serveStillPicture } from "./take_control.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 const app = await startApp();
 const browser = await launchChromium();
 const FOCUS_REQUIRED = "a current focus confirmation is required";
 
 async function eventually(condition, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 try {

@@ -213,6 +213,7 @@ node --test tools/test_vp8_range.mjs
 # Where the pointer falls in the picture, whatever the screen element holds.
 node --test tools/test_pointer_map.mjs
 node --test tools/test_screen_area.mjs
+node --test tools/test_eventually.mjs
 node --test tools/test_agent_layout.mjs
 node --test tools/test_agent_start.mjs
 node --test tools/test_terminal_serial.mjs
@@ -273,6 +274,7 @@ node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/password_change_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
+node --check tools/playwright/eventually.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
 node --check tools/playwright/on_screen_keyboard_contract.mjs
 node --check tools/playwright/quic_fixture.mjs
@@ -1018,7 +1020,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
-pnpm_web exec prettier --check '../tools/test_watching_probes.mjs' '../tools/test_screen_area.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
+pnpm_web exec prettier --check '../tools/test_watching_probes.mjs' '../tools/test_screen_area.mjs' '../tools/test_eventually.mjs' '../tools/playwright/eventually.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

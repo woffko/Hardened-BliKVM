@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { startApp } from "./app_harness.mjs";
 import { controlIsOn, takeControl } from "./take_control.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 const browser = await launchChromium();
 const app = await startApp();
@@ -30,12 +31,7 @@ const reports = () =>
     .map((request) => request.body.report.data);
 
 async function eventually(condition, timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 /** The reports some taps send: exactly these, and no more shortly after. */

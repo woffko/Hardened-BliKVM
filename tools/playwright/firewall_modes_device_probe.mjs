@@ -187,8 +187,9 @@ try {
         );
         const begin = `B${tag}-42`;
         const end = `E${tag}-42`;
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
+        // In the page, on its steady clock (tools/playwright/eventually.mjs).
+        const deadline = performance.now() + timeoutMs;
+        while (performance.now() < deadline) {
           const text = window.__text.slice(start);
           const from = text.indexOf(begin);
           const to = text.indexOf(end);

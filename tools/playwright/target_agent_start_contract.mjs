@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
 import { takeControl } from "./take_control.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 const start = await import(
   pathToFileURL(
@@ -47,12 +48,7 @@ const keyboardReports = () =>
     }));
 
 async function eventually(condition, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 // The SHA-256 of the board's agent, which the line checks before it runs
