@@ -141,26 +141,9 @@ impl FileWriter {
 
 impl NetworkWriter for FileWriter {
     fn write_resolv_conf(&self, content: &str) -> Result<String, NetworkWriteError> {
-        let metadata =
-            fs::symlink_metadata(&self.resolv_conf).map_err(|_| NetworkWriteError::Refused)?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(NetworkWriteError::Refused);
-        }
-        // The reviewed sandbox grants write access to the file itself, not to
-        // its directory, so the bounded payload is written in place and then
-        // read back instead of being renamed into position.
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.resolv_conf)
-            .map_err(|_| NetworkWriteError::Unavailable)?;
-        std::io::Write::write_all(&mut file, content.as_bytes())
-            .map_err(|_| NetworkWriteError::Unavailable)?;
-        std::io::Write::flush(&mut file).map_err(|_| NetworkWriteError::Unavailable)?;
-        file.sync_all()
-            .map_err(|_| NetworkWriteError::Unavailable)?;
-        drop(file);
-        fs::read_to_string(&self.resolv_conf).map_err(|_| NetworkWriteError::Unavailable)
+        replace_in_place(&self.resolv_conf, content, |file, bytes| {
+            std::io::Write::write_all(file, bytes)
+        })
     }
 
     fn write_ipv6_disabled(
@@ -178,6 +161,59 @@ impl NetworkWriter for FileWriter {
 
 /// A resolver list is accepted only when every entry is a literal address, so a
 /// write cannot smuggle configuration into the file.
+/// The largest resolver file kept to be written back.
+const MAX_PREVIOUS_RESOLV_CONF_BYTES: u64 = 64 * 1024;
+
+/// Replaces the file at `path` with `content` through `write`, and returns
+/// what it then holds. The reviewed sandbox grants write access to the file
+/// itself, not to its directory, so the bounded payload is written in place
+/// and then read back instead of being renamed into position. Its previous
+/// contents are read first and written back when the write, its sync or the
+/// read-back fails, so a failure never leaves the board without its name
+/// servers (code audit of 2026-11-06, AUD-17.1).
+fn replace_in_place(
+    path: &Path,
+    content: &str,
+    mut write: impl FnMut(&mut fs::File, &[u8]) -> std::io::Result<()>,
+) -> Result<String, NetworkWriteError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| NetworkWriteError::Refused)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(NetworkWriteError::Refused);
+    }
+    let mut previous = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(
+            fs::File::open(path).map_err(|_| NetworkWriteError::Unavailable)?,
+            MAX_PREVIOUS_RESOLV_CONF_BYTES + 1,
+        ),
+        &mut previous,
+    )
+    .map_err(|_| NetworkWriteError::Unavailable)?;
+    if previous.len() as u64 > MAX_PREVIOUS_RESOLV_CONF_BYTES {
+        // Not one this could put back.
+        return Err(NetworkWriteError::Refused);
+    }
+    let overwrite = |write: &mut dyn FnMut(&mut fs::File, &[u8]) -> std::io::Result<()>,
+                     bytes: &[u8]|
+     -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        write(&mut file, bytes)?;
+        std::io::Write::flush(&mut file)?;
+        file.sync_all()
+    };
+    let written = overwrite(&mut write, content.as_bytes()).and_then(|()| fs::read_to_string(path));
+    written.map_err(|_| {
+        let mut plain = |file: &mut fs::File, bytes: &[u8]| std::io::Write::write_all(file, bytes);
+        if overwrite(&mut plain, &previous).is_err() {
+            eprintln!("network: the resolver file could not be put back");
+        }
+        NetworkWriteError::Unavailable
+    })
+}
+
 pub fn render_resolv_conf(servers: &[String]) -> Result<String, NetworkWriteError> {
     if servers.is_empty() || servers.len() > MAX_DNS_SERVERS {
         return Err(NetworkWriteError::InvalidRequest);
@@ -379,6 +415,27 @@ mod tests {
                 .push((interface.to_string(), disabled));
             Ok(if disabled { "1" } else { "0" }.to_string())
         }
+    }
+
+    #[test]
+    fn a_resolver_file_whose_write_fails_keeps_its_previous_contents() {
+        // Code audit of 2026-11-06, AUD-17.1: the file is written in place,
+        // and a write that failed after the truncation left it empty or cut.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("resolv.conf");
+        let previous = "nameserver 192.0.2.53\nsearch example.org\n";
+        fs::write(&path, previous).unwrap();
+        let failed = replace_in_place(&path, "nameserver 198.51.100.53\n", |file, bytes| {
+            std::io::Write::write_all(file, &bytes[..8])?;
+            Err(std::io::Error::other("the disk is full"))
+        });
+        assert_eq!(failed, Err(NetworkWriteError::Unavailable));
+        assert_eq!(fs::read_to_string(&path).unwrap(), previous);
+        // A write that works replaces it.
+        let written = replace_in_place(&path, "nameserver 198.51.100.53\n", |file, bytes| {
+            std::io::Write::write_all(file, bytes)
+        });
+        assert_eq!(written.as_deref(), Ok("nameserver 198.51.100.53\n"));
     }
 
     #[test]

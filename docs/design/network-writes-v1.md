@@ -55,7 +55,11 @@ the intent.
 - Resolver: the reviewed sandbox grants write access to the file itself rather
   than to its directory, so the bounded payload is written in place and read
   back, and a symlinked or non-regular target is refused so the reviewed path
-  cannot be redirected.
+  cannot be redirected. Its previous contents (at most 64 KiB, or the write
+  is refused) are read first and written back when the write, its sync or
+  the read-back fails: a write cut short used to leave the file empty or
+  partial (code audit of 2026-11-06, AUD-17.1; test
+  `a_resolver_file_whose_write_fails_keeps_its_previous_contents`).
 - IPv6: exactly one interface's `disable_ipv6` node is written. The board
   owner runs with `PrivateNetwork=yes`, so it has no host interface of its own:
   the IPv6 write is only available to an owner deployed without that isolation,
