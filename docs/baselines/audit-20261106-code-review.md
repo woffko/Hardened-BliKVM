@@ -123,7 +123,10 @@ probes only, the board's settings left as found.
   desktop and a phone, WebRTC with H.264 and with VP8, QUIC video, touch
   reach. The display button (N7): a press of about a second did not wake the
   panel (the hold is 1000 ms after a 50 ms debounce), a press of 1.5 to 2 s
-  woke it once; before N7 it took 2 to 3 s. The walks left one failed
+  woke it once; before N7 it took 2 to 3 s. The operator kept the 1000 ms
+  hold (2026-11-07; the plan's Decisions record it), and a press of about
+  1.2 s, on the system of sequence 11, woke the dark panel once (the wake
+  count from 1 to 2, the backlight on, boardd not restarted). The walks left one failed
   `hardened-blikvm-update-status@` instance on dev45, the defect N13 fixes.
 - **Gate Y (update runtime dev46, encoder).** Built from a clean tree at
   `5f6e516` after a green `scripts/check.sh` (three runs before it stopped
