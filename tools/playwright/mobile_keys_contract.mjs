@@ -50,8 +50,20 @@ async function eventually(condition, timeoutMs = 5000) {
   return condition();
 }
 
+// What came before quiets down first: taking control and opening the keys
+// release every key, and that report may arrive after they returned (an
+// action straight after them counted it as its own, in about half the runs).
+async function quiet() {
+  for (let count = reports().length; ; ) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (reports().length === count) return;
+    count = reports().length;
+  }
+}
+
 // The reports an action sends: exactly these, and no more shortly after.
 async function sends(action, expected, message) {
+  await quiet();
   const before = reports().length;
   await action();
   await eventually(() => reports().length >= before + expected.length);
