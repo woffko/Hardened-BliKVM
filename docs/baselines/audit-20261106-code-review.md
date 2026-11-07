@@ -162,3 +162,25 @@ probes only, the board's settings left as found.
   before and put back after (the update carries only its SSH keys). The
   RAW switch was found on and left on. The watching probes passed on the new
   system.
+
+## The release 0.1.0-beta.11
+
+Published on 2026-11-07 at the operator's word as a GitHub pre-release,
+[v0.1.0-beta.11](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.11),
+tag on `e9e62ea` (`scripts/check.sh` passed on it in one run). Its notes
+describe each security and safety fix and the claims that did not hold;
+0.1.0-beta.10's notes now open with a line that beta.11 supersedes them.
+The files, whose digests GitHub reports as the local ones:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.11-seq107.tar` | `3cb2d2f7abb2839ff8efbc267a6857cc85888d12480abe484f4b8998f7a24271` |
+| `hardened-blikvm-system-0.1.0-beta.11-seq11.tar` | `7c6158a830113deb96e8936cb0b066022964bbbaff9ea66b7cbb00d8e43f55aa` |
+| `hardened-blikvm-h616-sd.img.zst` | `5f726426634bcee396b3687241d13e18efcb672b57f03cd8a27c72f04a927a50` |
+| `IMAGE-INFO.txt` | `6be14073ed4ab30adb7221d9ec39397b210d8b876057aad9f016bc5134392989` |
+| `hardened-blikvm-agent.exe` | `16b5c79966e83f5a54bb345f7f619ae669ef45eacd57874d903d52681ab44f91` |
+| `SHA256SUMS` | `d8a0127a10b354b656c936b30749409097527dfc7974eb4c65de19eb1cce8fb3` |
+
+The unpacked image is `13d4376921153f4bd0a0f1ba661bee34cc189fa1dd9c205aa8e1529bf9f86f06`.
+The test board ends on slot 107, update runtime dev46 and the RAW system of
+sequence 11, confirmed; its settings, switches and root's home as found.
