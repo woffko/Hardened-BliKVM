@@ -141,7 +141,13 @@ as the view lets it, beyond its own size; the target's size lays it out at
 a resolution the operator types (2560x1440 shows a 1920x1080 capture at
 133 %, each of the target's pixels on one of the display's at a pixel
 ratio of 1). The fields take their keys themselves: while one has the
-focus the page sends no key to the target, as for its other fields.
+focus the page sends no key to the target, as for its other fields. The
+page's keyboard leaves any key whose target is one of its fields to the
+field, also in the moment after the field took the focus and before it has
+turned the keyboard off; a key pressed over the picture still has its
+release sent. A key that came at once used to reach the target (the Delete
+of a field being cleared, once in about eight full runs of
+`screen_enlargement_contract.mjs`, which now presses one so).
 
 ## The views
 

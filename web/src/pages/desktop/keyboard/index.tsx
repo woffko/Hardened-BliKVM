@@ -14,6 +14,21 @@ import { useAltGr } from './useAltGr.ts';
 import { useLeaderKey } from './useLeaderKey.ts';
 import { normalizeKeyCode } from './utils.ts';
 
+/**
+ * Whether a key event belongs to one of the page's own fields: an input, a
+ * text area, a list or editable text. Such a field turns the keyboard off
+ * once it has the focus, a render later; until then its keys must not reach
+ * the target (a menu field's key was sent on when it came at once).
+ */
+function isPageField(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 export const Keyboard = () => {
   const os = getOperatingSystem();
 
@@ -87,6 +102,9 @@ export const Keyboard = () => {
     function handleKeyDown(event: KeyboardEvent) {
       if (!isKeyboardEnabled) return;
       if (isComposing.current || event.isComposing) return;
+      // A key typed into one of the page's fields is the field's, also in
+      // the moment before the field has turned this keyboard off.
+      if (isPageField(event.target)) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -111,10 +129,14 @@ export const Keyboard = () => {
       if (!isKeyboardEnabled) return;
       if (isComposing.current || event.isComposing) return;
 
+      const code = normalizeKeyCode(event, os);
+      // Released in a field: the field's, unless it was pressed over the
+      // picture, whose release the target must still get.
+      if (isPageField(event.target) && !(code && pressedKeys.current.has(code))) return;
+
       event.preventDefault();
       event.stopPropagation();
 
-      const code = normalizeKeyCode(event, os);
       if (!code) return;
 
       // Handle leader key release
