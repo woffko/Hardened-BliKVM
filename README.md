@@ -80,7 +80,8 @@ find.
   rolls back by itself, time, system log, Tailscale, account (a new password
   needs the current one), session lock,
   and the board's display (the vendor's status screen, the vendor's way up)
-  going dark after a time without activity (its button lights it again).
+  going dark after a time without activity (its button, held for a second,
+  lights it again).
 - **Updates**: signed application slots with a health check and automatic
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write

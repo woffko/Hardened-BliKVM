@@ -74,3 +74,68 @@ already resets focus and turns control off with a notice); AUD-08's
 Tailscale and board status parts; AUD-09's "WsClient gives up"; AUD-11.3 as
 written and AUD-11.4's Tailscale part; AUD-12's `asked` and `skips_key`
 parts; AUD-14's quoting; AUD-17.2 and AUD-17.3 as reachable.
+
+## Fixes
+
+The plan's items as they were carried out on `wip/corrective-audit-checkpoint`
+(each commit names the test that failed on the code before it and passes
+after; where a decision was moved into a function first, the test failed on
+the decision as it was). Slot 107 (`db50e2c`) carries phase A; update
+runtime `0.1.0~dev46` (`5f6e516`) and the encoder carry phase Y; phase T is
+host tools. What the board showed is in "Gates" below.
+
+| Item | Finding | Commit | Test that failed before | State |
+| --- | --- | --- | --- | --- |
+| N1 | AUD-05, AUD-09 | `b8f7cdb`, `fcaf333` | a refused renewal is forgotten: the Monitors menu takes a new lease before it asks the agent; a QUIC session lost and back takes a new lease before the next key | fixed |
+| N2 | AUD-10 | `82cf738` | a press the board refused for want of a confirmation is confirmed again and sent once more; a refusal that stays is said | fixed |
+| N3 | AUD-08 | `ec21aca` | an mDNS switch leaves HID leases answered (the lease waited 1.9 s); TLS and the board's status run on the slow settings' worker, `openssl` with a timeout | fixed |
+| N4 | AUD-11.4 | `d065e92` | a unit that cannot be set does not stop the others, and a failed restore is tried again | fixed |
+| N5 | AUD-11.1 | `7f621f6` | a change back to the first addressing ends the window | fixed |
+| N6 | AUD-11.2 | `f3bf3a4` | no IPv4 change, and no Wi-Fi preference, is taken while the start still reverts | fixed |
+| N7 | AUD-06 | `ed63a97` | the activity LED lights its pulse once a period; a press held for its hold wakes the display once; an active-low button wakes once on a press | fixed |
+| N8 | AUD-02 | `7f531a3` | Manual straight after the start keeps the fan running; Auto after Manual writes the policy's command | fixed; not tried on the board (fan settings are not changed there) |
+| N9 | AUD-03 | `2ece6c4` | swept bindings are kept again for a live lease | fixed |
+| N10 | AUD-04 | `c2fe076` | an old connection does not release a new one of its session | fixed |
+| N11 | AUD-16 | `db50e2c` | the agent's layout is written again when the agent comes back, and after a failed write | fixed |
+| N12 | AUD-01 | `73d9e8e` | a runtime that is not the pinned release is not onboarded; onboarding runs the checked copy and removes it | fixed; not run on the board (PicoClaw is not installed there) |
+| N13 | AUD-07 | `925818e` | a client that leaves is no failure | fixed |
+| N14 | AUD-12 (encoder) | `996d590` | a forced key frame that was missed lets the next capture through | fixed |
+| N15 | AUD-12 (gateway) | `84bcf0c` | groups given up forget their unreceived frames | fixed |
+| N16 | AUD-15 | `7071b60` | the cleanup removes dotfiles and checks the account's directory | fixed |
+| N17 | AUD-14 | `fb3189e` | a root partition in use is refused and left unchanged | fixed |
+
+`5f6e516` names the update runtime dev46 (test
+`test_dev46_carries_the_files_of_dev45`). The optional items were left out
+(decision 3).
+
+## Gates
+
+On the test board, at the operator's word for each install; read-only
+probes only, the board's settings left as found.
+
+- **Gate A (slot 107).** Built from a clean tree at `db50e2c` after a green
+  `scripts/check.sh` (the slot's tar `3cb2d2f7…4271`, its manifest
+  `8b06be6e…5bc8`). The board's update runtime dev45 had the files the tree
+  builds, but for the package manifest, and the encoder its hash. Installed
+  through the API and confirmed; the state as found but for the slot
+  (106 to 107). boardd ran with the fan in Auto, active (30 % at 52 °C), the
+  LED and the button present. The watching probes passed: the GUI walks on a
+  desktop and a phone, WebRTC with H.264 and with VP8, QUIC video, touch
+  reach. The display button (N7): a press of about a second did not wake the
+  panel (the hold is 1000 ms after a 50 ms debounce), a press of 1.5 to 2 s
+  woke it once; before N7 it took 2 to 3 s. The walks left one failed
+  `hardened-blikvm-update-status@` instance on dev45, the defect N13 fixes.
+- **Gate Y (update runtime dev46, encoder).** Built from a clean tree at
+  `5f6e516` after a green `scripts/check.sh` (three runs before it stopped
+  on load flakes under another session's load: the server's
+  `logout_upload_returns_unauthorized_over_real_http1` twice, the phone keys
+  contract once; each passed alone). Against dev45, the admin helper (N12),
+  the QUIC gateway (N15), the update supervisor (N13) and the manifest
+  differ; `system-update` does not, so the board's initramfs still reads the
+  RAW stage. Staged by hand: the package over dev45, the encoder
+  (`1e579d33…`, N14) through `deploy_vp8.sh` once the board's video units and
+  Janus configuration were found to be packaging's, the QUIC gateway
+  restarted, dev45's failed status instance reset; no reboot. The state as
+  found; the probes passed again, and after the GUI walks no status instance
+  had failed (N13). N8 and N12 were not tried on the board: fan settings are
+  not changed there, and PicoClaw is not installed.
