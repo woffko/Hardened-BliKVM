@@ -139,6 +139,9 @@ device exclusively (`O_EXCL`) before it writes, and a partition that is
 mounted or in use refuses with "the root partition is mounted or in use"
 instead of being written under its file system (code audit of 2026-11-06,
 AUD-14; test `test_a_root_partition_in_use_is_refused_and_left_unchanged`).
+The paths it gives `debugfs` are quoted, so a temporary directory whose name
+has a space no longer splits them, and one that cannot be quoted is refused
+(test `test_a_work_directory_with_a_space_still_restores`).
 At the next boot the board restores the
 same backup once more and records the update as rolled back. A recovery boot
 from the data partition, which would make this automatic, is a design of its

@@ -65,10 +65,19 @@ def is_block(card: Path) -> bool:
     return stat.S_ISBLK(os.stat(card).st_mode)
 
 
+def debugfs_operand(path: str) -> str:
+    """A path as one operand of a debugfs request (code audit of 2026-11-06,
+    AUD-14: unquoted, a space split it); one it cannot quote is refused."""
+    if '"' in path or "\n" in path:
+        raise Refused(f"a path debugfs cannot be given: {path!r}")
+    return f'"{path}"'
+
+
 def dump(card: Path, data: dict, name: str, target: Path) -> None:
     source = data["node"] if is_block(card) else f"{card}?offset={data['start'] * SECTOR}"
+    request = f"dump {debugfs_operand(f'{STAGING}/{name}')} {debugfs_operand(str(target))}"
     result = subprocess.run(
-        ["debugfs", "-R", f"dump {STAGING}/{name} {target}", source],
+        ["debugfs", "-R", request, source],
         capture_output=True,
         text=True,
     )
