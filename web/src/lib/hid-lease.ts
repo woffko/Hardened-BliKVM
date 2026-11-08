@@ -50,6 +50,20 @@ const RENEW_FRACTION = 0.5;
  */
 export class LeaseNotGranted extends Error {}
 
+/**
+ * The web session has ended: the server answered as unauthorized and the page
+ * goes to the login. Asking again meanwhile only repeats that answer.
+ */
+export class SessionEnded extends Error {}
+
+/** Whether `error` is the server's answer that the web session has ended. */
+export function sessionEnded(error: unknown): boolean {
+  return (
+    error instanceof SessionEnded ||
+    (error as { response?: { status?: unknown } } | null)?.response?.status === 401
+  );
+}
+
 export function newOperationId(): string {
   const bytes = new Uint8Array(OPERATION_ID_BYTES);
   crypto.getRandomValues(bytes);

@@ -85,16 +85,27 @@ class RestoreRawBackupTests(unittest.TestCase):
             source.seek(ROOT_START * SECTOR)
             return source.read(len(self.original))
 
-    def run_tool(self, card: Path) -> subprocess.CompletedProcess:
+    def run_tool(self, card: Path, env: dict | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-I", str(TOOL), str(card), "--yes"],
             capture_output=True,
             text=True,
+            env=env,
         )
 
     def test_an_interrupted_write_is_undone_from_the_backup(self) -> None:
         card = self.card("writing")
         result = self.run_tool(card)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.root_of(card), self.original)
+
+    def test_a_work_directory_with_a_space_still_restores(self) -> None:
+        # Code audit of 2026-11-06, AUD-14: debugfs read the dump's paths
+        # unquoted, so a temporary directory with a space split them.
+        card = self.card("writing")
+        spaced = self.work / "work dir"
+        spaced.mkdir()
+        result = self.run_tool(card, env={**os.environ, "TMPDIR": str(spaced)})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.root_of(card), self.original)
 

@@ -17,6 +17,7 @@ import {
   launchChromium,
   routeEngineAndQuality,
 } from "./quality_fixture.mjs";
+import { deadline } from "./eventually.mjs";
 
 const browser = await launchChromium();
 const app = await startApp();
@@ -213,11 +214,11 @@ const rows = async (page) => (await drawn(page)).rows;
 
 /** Waits until the rows hold what `check` wants; returns them. */
 async function rowsUntil(page, check, what) {
-  const deadline = Date.now() + 8000;
+  const passed = deadline(8000);
   for (;;) {
     const shown = await rows(page);
     if (check(shown)) return shown;
-    assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(shown)}`);
+    assert.ok(!passed(), `${what}: ${JSON.stringify(shown)}`);
     await page.waitForTimeout(100);
   }
 }
@@ -612,11 +613,11 @@ try {
     });
     await monitor(page).waitFor();
     const pixelsUntil = async (check, what) => {
-      const deadline = Date.now() + 3000;
+      const passed = deadline(3000);
       for (;;) {
         const { pixels } = await drawn(page);
         if (pixels && check(pixels)) return pixels;
-        assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(pixels)}`);
+        assert.ok(!passed(), `${what}: ${JSON.stringify(pixels)}`);
         await page.waitForTimeout(100);
       }
     };

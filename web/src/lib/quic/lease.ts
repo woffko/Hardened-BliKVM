@@ -4,7 +4,7 @@
  */
 import type { LeaseGrant } from '@/api/restricted-control.ts';
 import { getTransport } from '@/api/transport.ts';
-import type { LeaseTransport } from '@/lib/hid-lease.ts';
+import { SessionEnded, type LeaseTransport } from '@/lib/hid-lease.ts';
 import type { ApiResponse } from '@/lib/http.ts';
 
 import { quicSession } from './session.ts';
@@ -15,6 +15,7 @@ async function send(request: object, signal?: AbortSignal): Promise<ApiResponse<
     // The web session has ended. The server says so to a request over HTTPS
     // too, and the page then asks for a login.
     void getTransport().catch(() => undefined);
+    throw new SessionEnded('the web session has ended');
   }
   // As over HTTPS, where any other status fails the request.
   if (answer.status !== 200) {

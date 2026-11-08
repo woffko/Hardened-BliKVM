@@ -369,3 +369,19 @@ RUSTSEC-2026-0385 in `ctutils` 0.4.2, still reached only through
 which is in a program the board runs, so it is not reachable on a board.
 The local registry now has 0.4.7 and 0.4.8; the next dependency update
 takes one of them.
+
+## `ctutils` 0.4.8 (2026-11-07)
+
+`ctutils` is taken from 0.4.2 to 0.4.8 from the local registry without
+fetching (its `cmov` 0.5.4 and `subtle` 2.6.1 were already in the lock), so
+RUSTSEC-2026-0385 of beta.10 and beta.11 is gone. It is still reached only
+through the diagnostic journal's crates, whose tests pass with it. `cargo
+audit --deny warnings`, run without fetching (the local database of
+2026-11-06, 1,422 advisories), reports nothing; the lock keeps 317 packages.
+
+## RustSec scan for 0.1.0-beta.12 (2026-11-08)
+
+An application on beta.11's system, with what the code audit of 2026-11-06
+left. The lock is the one of `ctutils` 0.4.8 above (317 packages); `cargo
+audit --deny warnings`, run without fetching (the local database of
+2026-11-06), reports nothing.

@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
 import { takeControl } from "./take_control.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 const browser = await launchChromium();
 const feature = (availability) => ({
@@ -130,12 +131,7 @@ const absoluteReports = () =>
     .map((request) => request.body.report.data);
 
 async function eventually(condition, timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 try {

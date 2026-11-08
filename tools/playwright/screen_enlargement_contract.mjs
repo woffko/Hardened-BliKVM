@@ -329,8 +329,29 @@ try {
     }
     assert.ok(keys() > 0, "a key over the picture was not sent");
     const before = keys();
+    const sentBefore = sent.length;
     await page.locator("svg.lucide-monitor").first().click();
     await page.getByText("Upscaling", { exact: true }).hover();
+    // A key pressed in a field the moment it has the focus, before the page
+    // has turned its keyboard off, is the field's (it reached the target
+    // once in about eight full runs: the Delete of fill("")).
+    await page.locator("[data-upscale-target-width]").evaluate((field) => {
+      field.focus();
+      for (const type of ["keydown", "keyup"])
+        field.dispatchEvent(
+          new KeyboardEvent(type, {
+            code: "Delete",
+            key: "Delete",
+            bubbles: true,
+          }),
+        );
+    });
+    await page.waitForTimeout(300);
+    assert.equal(
+      keys(),
+      before,
+      "a key pressed in a field at once was sent on",
+    );
     const width = page.locator("[data-upscale-target-width]");
     await width.fill("");
     await width.pressSequentially("2560");
@@ -340,7 +361,11 @@ try {
     await height.press("Enter");
     const target = await settled(page, 1, 2560);
     assert.ok(Math.abs(target.screen - 2560) < 2, String(target.screen));
-    assert.equal(keys(), before, "keys typed into the menu were sent on");
+    assert.equal(
+      keys(),
+      before,
+      `keys typed into the menu were sent on: ${JSON.stringify(sent.slice(sentBefore - 2))}`,
+    );
     assert.deepEqual(
       await page.evaluate(() =>
         JSON.parse(localStorage.getItem("hardened-blikvm-upscale")),

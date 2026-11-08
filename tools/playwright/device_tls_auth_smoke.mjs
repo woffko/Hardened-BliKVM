@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { deadline } from "./eventually.mjs";
 
 const [modulePath, executablePath, baseUrl] = process.argv.slice(2);
 assert.ok(
@@ -29,8 +30,8 @@ function formatRtcOffsetSeconds(value) {
 }
 
 async function waitForIncrease(readCount, baseline, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const passed = deadline(timeoutMs);
+  while (!passed()) {
     if (readCount() > baseline) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

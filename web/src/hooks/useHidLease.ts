@@ -5,7 +5,13 @@ import { useTranslation } from 'react-i18next';
 
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
-import { ASSISTANT_ACTIVE, HidLeaseSession, httpsLease, LeaseNotGranted } from '@/lib/hid-lease.ts';
+import {
+  ASSISTANT_ACTIVE,
+  HidLeaseSession,
+  httpsLease,
+  LeaseNotGranted,
+  sessionEnded
+} from '@/lib/hid-lease.ts';
 import { MouseQueue } from '@/lib/hid-report-queue.ts';
 import { quicLease } from '@/lib/quic/lease.ts';
 import { quicSession } from '@/lib/quic/session.ts';
@@ -36,6 +42,10 @@ let sharedSession: HidLeaseSession | null = null;
 let startingSession: HidLeaseSession | null = null;
 let sharedQueue: Promise<void> = Promise.resolve();
 let queueGeneration = 0;
+// The server said the web session has ended: the page goes to the login, and
+// until it loads again no lease is asked for (each queued report asked anew,
+// and was refused the same way).
+let webSessionEnded = false;
 let enqueueRef: ((report: HidReport) => Promise<void>) | null = null;
 // At most one mouse report in flight; see MouseQueue.
 const mouseQueue = new MouseQueue(
@@ -154,6 +164,7 @@ export function useHidLease() {
   /** Starts the shared lease if needed; false when it cannot be used. */
   const ensureSession = useCallback(
     async (generation: number): Promise<HidLeaseSession | null> => {
+      if (webSessionEnded) return null;
       if (generation !== queueGeneration || !(await ensureConfirmed())) return null;
       const current = manifestRef.current;
       if (!current) return null;
@@ -205,6 +216,8 @@ export function useHidLease() {
           if (
             generation !== queueGeneration ||
             error instanceof LeaseNotGranted ||
+            // The page goes to the login; the same answer would only repeat.
+            sessionEnded(error) ||
             (error instanceof Error && error.message === ASSISTANT_ACTIVE) ||
             (error instanceof DOMException && error.name === 'AbortError') ||
             attempt >= RETRY_DELAYS_MS.length
@@ -234,6 +247,12 @@ export function useHidLease() {
           if (generation !== queueGeneration) return;
           // Held back while the AI assistant has control; the lease is live.
           if (error instanceof Error && error.message === ASSISTANT_ACTIVE) return;
+          // The page is on its way to the login: nothing to say, and nothing
+          // more to ask.
+          if (sessionEnded(error)) {
+            webSessionEnded = true;
+            return;
+          }
           resetFocusConfirmation();
           if (error instanceof LeaseNotGranted) {
             // The board refused control: the next press asks again.

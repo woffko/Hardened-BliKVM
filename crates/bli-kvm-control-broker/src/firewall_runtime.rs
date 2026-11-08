@@ -40,14 +40,30 @@ pub fn read_persisted_mode(path: &std::path::Path) -> Option<bli_kvm_core::Firew
         .map(|stored| stored.mode)
 }
 
-fn write_persisted_mode(
+/// Removes a mode written for a change that did not take effect.
+fn discard_staged(path: &std::path::Path) {
+    match std::fs::remove_file(staged_path(path)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("firewall: an unconfirmed mode could not be removed: {error}"),
+    }
+}
+
+/// Where a mode is written before its change takes effect.
+fn staged_path(path: &std::path::Path) -> PathBuf {
+    path.with_extension("json.new")
+}
+
+/// Writes and syncs `mode` beside the persisted one, which it replaces only
+/// once its change took effect (`commit_staged`).
+fn stage_persisted_mode(
     path: &std::path::Path,
     mode: bli_kvm_core::FirewallMode,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let text = serde_json::to_string(&PersistedMode { mode }).map_err(|error| error.to_string())?;
-    let temporary = path.with_extension("json.new");
+    let temporary = staged_path(path);
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -58,8 +74,27 @@ fn write_persisted_mode(
     file.write_all(text.as_bytes())
         .and_then(|()| file.write_all(b"\n"))
         .and_then(|()| file.sync_all())
-        .map_err(|error| error.to_string())?;
-    std::fs::rename(&temporary, path).map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())
+}
+
+/// The staged mode becomes the persisted one.
+fn commit_staged(path: &std::path::Path) -> Result<(), String> {
+    std::fs::rename(staged_path(path), path).map_err(|error| error.to_string())?;
+    if let Some(directory) = path.parent() {
+        std::fs::File::open(directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn write_persisted_mode(
+    path: &std::path::Path,
+    mode: bli_kvm_core::FirewallMode,
+) -> Result<(), String> {
+    stage_persisted_mode(path, mode)?;
+    commit_staged(path)
 }
 
 impl ModeRuntime {
@@ -127,6 +162,10 @@ impl ModeRuntime {
     /// an earlier build of the owner wrote (after an update without a
     /// reboot) is brought up to this build's rules for its mode.
     pub fn persist_to(&mut self, path: PathBuf, now_ms: u64) {
+        // A mode written for a change that a power loss cut short never took
+        // effect: it is not the confirmed one (code audit of 2026-11-06,
+        // AUD-11.3).
+        discard_staged(&path);
         match self.transaction.refresh() {
             Ok(Some(mode)) => {
                 eprintln!("firewall: the rules of the {mode:?} mode were brought up to date")
@@ -148,24 +187,25 @@ impl ModeRuntime {
         self.persisted = Some(path);
     }
 
-    fn remember(&self, mode: bli_kvm_core::FirewallMode) -> Result<(), String> {
+    /// Writes the mode to remember beside the persisted one; it replaces
+    /// that one once its change took effect, and is removed otherwise.
+    fn stage(&self, mode: bli_kvm_core::FirewallMode) -> Result<(), String> {
         match &self.persisted {
-            Some(path) => write_persisted_mode(path, mode),
+            Some(path) => stage_persisted_mode(path, mode),
             None => Ok(()),
         }
     }
 
-    /// Puts back the mode persisted before a change that did not happen.
-    fn forget(&self, previous: Option<bli_kvm_core::FirewallMode>) {
+    fn settle(&self, mode: bli_kvm_core::FirewallMode, took_effect: bool) {
         let Some(path) = &self.persisted else {
             return;
         };
-        let restored = match previous {
-            Some(mode) => write_persisted_mode(path, mode),
-            None => std::fs::remove_file(path).map_err(|error| error.to_string()),
-        };
-        if let Err(error) = restored {
-            eprintln!("firewall: the persisted mode could not be put back: {error}");
+        if !took_effect {
+            discard_staged(path);
+        } else if let Err(error) = commit_staged(path) {
+            // In force but not kept: the next boot restores the mode before.
+            eprintln!("firewall: the {mode:?} mode took effect but could not be kept: {error}");
+            discard_staged(path);
         }
     }
 
@@ -191,9 +231,12 @@ impl ModeRuntime {
         }
         // A mode is remembered once confirmed: at once when it needs no
         // confirmation, otherwise when the operator confirms it. It is
-        // written before the change takes effect, so a mode that a reboot
-        // would not keep is refused rather than applied or confirmed (code
-        // audit of 2026-10-20, AUD-14).
+        // written and synced before the change takes effect, so a mode that
+        // a reboot would not keep is refused rather than applied or
+        // confirmed (code audit of 2026-10-20, AUD-14), but it replaces the
+        // persisted one only once the change took effect: a power loss
+        // between them keeps the mode before (code audit of 2026-11-06,
+        // AUD-11.3).
         let confirmed = match request {
             PlatformControlRequestV2::FirewallModeChange { request } => {
                 (!request.mode.requires_confirmation()).then_some(request.mode)
@@ -203,9 +246,8 @@ impl ModeRuntime {
                 .pending()
                 .map(crate::firewall_confirmation::PendingChange::requested_mode),
         };
-        let previous = self.persisted.as_deref().and_then(read_persisted_mode);
         if let Some(mode) = confirmed
-            && let Err(error) = self.remember(mode)
+            && let Err(error) = self.stage(mode)
         {
             eprintln!("firewall: the {mode:?} mode cannot be persisted: {error}");
             return reject(ControlRejectionCode::BackendRejected);
@@ -223,8 +265,8 @@ impl ModeRuntime {
             }
             _ => unreachable!(),
         };
-        if result.is_err() && confirmed.is_some() {
-            self.forget(previous);
+        if let Some(mode) = confirmed {
+            self.settle(mode, result.is_ok());
         }
         match result {
             Ok(()) => ControlResponse::Applied,
@@ -388,6 +430,132 @@ mod tests {
             ControlResponse::Applied
         );
         assert!(runtime.transaction.pending().is_some());
+    }
+
+    #[test]
+    fn the_persisted_mode_changes_only_once_the_change_took_effect() {
+        // Code audit of 2026-11-06, AUD-11.3: the mode was renamed into place
+        // before the change was made, so a power loss between them kept an
+        // unconfirmed mode for the next boot.
+        use crate::firewall_executor::tests::{Kernel, configuration};
+        use crate::firewall_settings::FirewallRunner;
+        use bli_kvm_core::{FirewallChangeRequest, FirewallMode};
+        type Seen = Arc<Mutex<Vec<Option<FirewallMode>>>>;
+        /// The kernel, and what the persisted file says when a batch is applied.
+        struct Watching {
+            inner: Kernel,
+            path: PathBuf,
+            seen: Seen,
+        }
+        impl FirewallRunner for Watching {
+            fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
+                if args.first() == Some(&"-f") {
+                    self.seen
+                        .lock()
+                        .unwrap()
+                        .push(read_persisted_mode(&self.path));
+                }
+                self.inner.run(program, args)
+            }
+            fn exists(&mut self, path: &std::path::Path) -> bool {
+                self.inner.exists(path)
+            }
+            fn read_file(&mut self, path: &std::path::Path) -> Result<String, String> {
+                self.inner.read_file(path)
+            }
+            fn write_file(&mut self, path: &std::path::Path, text: &str) -> Result<(), String> {
+                self.inner.write_file(path, text)
+            }
+            fn remove_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+                self.inner.remove_file(path)
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("firewall-mode.json");
+        let staged = path.with_extension("json.new");
+        write_persisted_mode(&path, FirewallMode::Baseline).unwrap();
+        // A power loss left a written mode that never took effect.
+        std::fs::write(&staged, "{\"mode\":\"paranoid\"}\n").unwrap();
+        let seen: Seen = Arc::default();
+        let mut runtime = ModeRuntime::open_with_runner(
+            directory.path().join("run"),
+            configuration(),
+            [3; 16],
+            Box::new(Watching {
+                inner: Kernel::holding(None),
+                path: path.clone(),
+                seen: Arc::clone(&seen),
+            }),
+        )
+        .unwrap();
+        runtime.persist_to(path.clone(), 100_000);
+        assert!(!staged.exists(), "a mode that never took effect was left");
+        assert_eq!(read_persisted_mode(&path), Some(FirewallMode::Baseline));
+        seen.lock().unwrap().clear();
+        let change = PlatformControlRequestV2::FirewallModeChange {
+            request: FirewallChangeRequest {
+                operation_id: [1; 16],
+                session_binding: [2; 32],
+                mode: FirewallMode::Moderate,
+                issued_at_unix_ms: 100_000,
+            },
+        };
+        assert_eq!(runtime.dispatch(&change, 100_000), ControlResponse::Applied);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [Some(FirewallMode::Baseline)],
+            "the new mode was kept before it took effect"
+        );
+        assert_eq!(read_persisted_mode(&path), Some(FirewallMode::Moderate));
+        assert!(!staged.exists());
+
+        // A mode that needs a confirmation, refused at its confirmation: the
+        // persisted mode stays, and nothing is left beside it.
+        use crate::firewall_confirmation::{PendingChange, PendingStore};
+        let run = directory.path().join("confirming");
+        std::fs::create_dir(&run).unwrap();
+        // The first owner freezes the configuration the change is made with.
+        ModeRuntime::open_with_runner(
+            run.clone(),
+            configuration(),
+            [3; 16],
+            Box::new(Kernel::holding(None)),
+        )
+        .unwrap();
+        let pending = PendingChange::prepare(
+            [5; 16],
+            [2; 32],
+            [3; 16],
+            FirewallMode::Moderate,
+            FirewallMode::Restricted,
+            100_000,
+        )
+        .unwrap();
+        PendingFileStore::new(&run)
+            .unwrap()
+            .save(&pending.encode().unwrap())
+            .unwrap();
+        let mut runtime = ModeRuntime::open_with_runner(
+            run,
+            configuration(),
+            [3; 16],
+            Box::new(Kernel::holding(None)),
+        )
+        .unwrap();
+        runtime.persisted = Some(path.clone());
+        let wrong_session = PlatformControlRequestV2::FirewallModeConfirm {
+            request: bli_kvm_core::FirewallConfirmRequest {
+                operation_id: [5; 16],
+                session_binding: [9; 32],
+                issued_at_unix_ms: 100_000,
+            },
+        };
+        assert_ne!(
+            runtime.dispatch(&wrong_session, 100_000),
+            ControlResponse::Applied
+        );
+        assert_eq!(read_persisted_mode(&path), Some(FirewallMode::Moderate));
+        assert!(!staged.exists());
     }
 
     #[test]

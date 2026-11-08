@@ -90,8 +90,9 @@ try {
         const start = window.__text.length;
         window.__socket.send(`${line}; printf 'A%s-%s\\n' ${tag} $((6*7))\r`);
         const marker = `A${tag}-42`;
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
+        // In the page, on its steady clock (tools/playwright/eventually.mjs).
+        const deadline = performance.now() + timeoutMs;
+        while (performance.now() < deadline) {
           const text = window.__text.slice(start);
           const at = text.indexOf(marker);
           if (at >= 0) return text.slice(0, at).replace(/\r/g, "").trim();

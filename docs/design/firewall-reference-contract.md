@@ -76,7 +76,15 @@ do not claim Tailscale preservation from these rules alone.
   The reference re-applies its saved mode at boot; the owner therefore keeps
   the last confirmed mode in `/var/lib/hardened-blikvm-gadget/firewall-mode.json`
   (a mode needing no confirmation is kept at once, a restrictive one when the
-  operator confirms it) and, on start with no owned table and no pending
+  operator confirms it). The mode to keep is written and synced beside it as
+  `firewall-mode.json.new` before the change, so a mode that a reboot could
+  not keep is refused, and renamed over it only once the change took effect;
+  a change that fails removes it, and the start removes one that a power loss
+  left without reading it. Before, the mode was renamed into place before
+  the change, and a power loss between them kept an unconfirmed restrictive
+  mode for the next boot (code audit of 2026-11-06, AUD-11.3; test
+  `the_persisted_mode_changes_only_once_the_change_took_effect`). On start
+  with no owned table and no pending
   change, re-applies it as a journaled change without the HTTPS preflight
   (the front may still be starting; the mode was confirmed with it running).
   A failed restore rolls back to the open baseline.

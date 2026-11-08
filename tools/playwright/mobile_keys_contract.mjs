@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { startApp } from "./app_harness.mjs";
 import { takeControl } from "./take_control.mjs";
+import { eventually as waitFor } from "./eventually.mjs";
 
 const { chromium } = await import(
   pathToFileURL(
@@ -42,12 +43,7 @@ const reports = () =>
     .map((request) => request.body.report.data);
 
 async function eventually(condition, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return condition();
+  return waitFor(condition, timeoutMs, 50);
 }
 
 // What came before quiets down first: taking control and opening the keys
