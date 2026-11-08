@@ -55,3 +55,22 @@ board's settings left as found.
   passed: the GUI walks on a desktop and a phone, WebRTC with H.264 and with
   VP8, QUIC video, touch reach. R1 to R3 were not tried on the board: its
   firewall, network and TLS settings are not changed there.
+
+## The release 0.1.0-beta.12
+
+Published on 2026-11-08 at the operator's word as a GitHub pre-release,
+[v0.1.0-beta.12](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.12),
+tag on `f153a9b` (`scripts/check.sh` passed on it in one run; `cargo audit`
+reports nothing). The application only: the card image and the RAW system
+update stay 0.1.0-beta.11's, whose notes now open with a line that beta.12
+supersedes their application. The files, whose digests GitHub reports as the
+local ones:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.12-seq108.tar` | `6a60a246691b5b5da57b303a8e115351cc9203b7b3a623b59e07b76a3cfee587` |
+| `hardened-blikvm-agent.exe` | `ac4e515a2a6f37e979459d4576d7b83f12c87e8953f1bddfaa8441c25592a53b` |
+| `SHA256SUMS` | `ce2b422bf59f94e287ade7aafc3cfc94f0d87a8ca662d4e44b77890550f92701` |
+
+The test board ends on slot 108, update runtime dev46 and the RAW system of
+sequence 11, its settings and switches as found.
