@@ -65,6 +65,7 @@ pub fn sanitize_kvmd_inventory_with_observations(
                 .map(|rtc| rtc.offset_from_system_seconds),
         },
         power_led: source.atx.leds.power,
+        hdd_led: source.atx.leds.hdd,
         janus_enabled: source.info.extras.janus.enabled,
     };
     debug_assert_eq!(inventory.validate(), Ok(()));
@@ -162,6 +163,8 @@ pub struct NativeBoardObservations {
     pub external_rtc_seconds: Option<i64>,
     pub external_rtc_offset_seconds: Option<i64>,
     pub power_led: Option<bool>,
+    /// The target's disk LED, lit while the disk works.
+    pub hdd_led: Option<bool>,
     /// Signal state reported by the running capture engine.
     pub video_online: Option<bool>,
     /// USB device controller bound (the gadget is online) and enumerated by
@@ -215,6 +218,7 @@ pub fn native_board_inventory(observations: NativeBoardObservations) -> RuntimeI
             offset_from_system_seconds: observations.external_rtc_offset_seconds,
         },
         power_led: observations.power_led,
+        hdd_led: observations.hdd_led,
         janus_enabled: None,
     }
 }
@@ -230,6 +234,7 @@ mod native_tests {
             external_rtc_seconds: Some(1_789_655_576),
             external_rtc_offset_seconds: Some(-49),
             power_led: Some(true),
+            hdd_led: Some(false),
             video_online: Some(true),
             ..NativeBoardObservations::default()
         });

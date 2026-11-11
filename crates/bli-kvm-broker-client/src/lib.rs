@@ -183,6 +183,7 @@ mod tests {
                 thermal: ThermalObservation::default(),
                 rtc: RtcObservation::default(),
                 power_led: None,
+                hdd_led: None,
                 janus_enabled: Some(false),
             };
             let response = BrokerResponseEnvelope {

@@ -259,6 +259,7 @@ mod tests {
                 offset_from_system_seconds: Some(-28_647_995),
             },
             power_led: Some(true),
+            hdd_led: None,
             janus_enabled: Some(false),
         }
     }

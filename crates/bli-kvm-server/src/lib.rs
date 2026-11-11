@@ -618,6 +618,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application/version", get(application::version))
         .route("/application/preview", get(application::preview))
         .route("/inventory", get(runtime_inventory))
+        .route("/atx/leds", get(case_leds_route))
         .route("/hostname", get(hostname))
         .route("/vm/mdns", get(device_settings::mdns_state))
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
@@ -933,34 +934,57 @@ fn usb_device_controller() -> (Option<bool>, Option<bool>) {
 /// Assemble the native board inventory: thermal and RTC from the kernel views,
 /// the host power LED and the component states from the board owner and the
 /// USB controller, and nothing that we do not observe.
+/// The target's case LEDs as the board owner reads them from boardd: whether
+/// the owner answered, then the power LED and the disk's (lit while the disk
+/// works), each `None` when the board does not have it or nothing answered.
+async fn case_leds(state: &AppState) -> (Option<bool>, Option<bool>, Option<bool>) {
+    let Some(control) = state.control.as_ref() else {
+        return (None, None, None);
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let operation_id = format!("{now_ms:032x}");
+    match control
+        .execute_v2(
+            operation_id,
+            bli_kvm_core::PlatformControlRequestV2::BoardStatus {},
+        )
+        .await
+    {
+        Ok(bli_kvm_control_protocol::ControlResponse::BoardStatus {
+            power_led_present,
+            power_led_on,
+            hdd_led_present,
+            hdd_led_on,
+        }) => (
+            Some(true),
+            power_led_present.then_some(power_led_on),
+            hdd_led_present.then_some(hdd_led_on),
+        ),
+        _ => (Some(false), None, None),
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaseLeds {
+    power_led: Option<bool>,
+    hdd_led: Option<bool>,
+}
+
+/// `GET /api/atx/leds`: the case LEDs alone, light enough for the toolbar to
+/// read once a second (plan of 2026-11-11, H2).
+async fn case_leds_route(State(state): State<AppState>) -> Json<ApiResponse<CaseLeds>> {
+    let (_, power_led, hdd_led) = case_leds(&state).await;
+    Json(ApiResponse::ok(CaseLeds { power_led, hdd_led }))
+}
+
 async fn native_inventory(state: &AppState, session_token: &str) -> RuntimeInventory {
     let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
     let rtc = bli_kvm_platform_bli::read_h616_external_rtc().ok();
-    let power_led = match state.control.as_ref() {
-        Some(control) => {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_millis() as u64)
-                .unwrap_or(0);
-            let operation_id = format!("{now_ms:032x}");
-            match control
-                .execute_v2(
-                    operation_id,
-                    bli_kvm_core::PlatformControlRequestV2::BoardStatus {},
-                )
-                .await
-            {
-                Ok(bli_kvm_control_protocol::ControlResponse::BoardStatus {
-                    power_led_present,
-                    power_led_on,
-                    ..
-                }) => (Some(true), power_led_present.then_some(power_led_on)),
-                _ => (Some(false), None),
-            }
-        }
-        None => (None, None),
-    };
-    let (power_online, power_led) = power_led;
+    let (power_online, power_led, hdd_led) = case_leds(state).await;
     let (hid_online, hid_connected) = usb_device_controller();
     #[cfg(feature = "restricted-control-surface")]
     let (media_enabled, media_online, media_connected) = if state.options.media_controls_enabled {
@@ -993,6 +1017,7 @@ async fn native_inventory(state: &AppState, session_token: &str) -> RuntimeInven
         external_rtc_seconds: rtc.map(|readout| readout.unix_seconds),
         external_rtc_offset_seconds: rtc.map(|readout| readout.offset_from_system_seconds),
         power_led,
+        hdd_led,
         video_online,
         hid_online,
         hid_connected,
@@ -2969,7 +2994,100 @@ mod tests {
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["backend"], "native");
         assert_eq!(body["data"]["powerLed"], true);
+        assert_eq!(body["data"]["hddLed"], false);
         broker.await.unwrap();
+    }
+
+    /// A played board owner answering one `BoardStatus` per connection with
+    /// each of `answers` in turn: (power present, on, disk present, on).
+    fn played_board_owner(
+        listener: UnixListener,
+        answers: Vec<(bool, bool, bool, bool)>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            for (power_present, power_on, hdd_present, hdd_on) in answers {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                assert!(matches!(
+                    request.request,
+                    bli_kvm_core::PlatformControlRequestV2::BoardStatus {}
+                ));
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response: bli_kvm_control_protocol::ControlResponse::BoardStatus {
+                        power_led_present: power_present,
+                        power_led_on: power_on,
+                        hdd_led_present: hdd_present,
+                        hdd_led_on: hdd_on,
+                    },
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn the_case_leds_are_read_from_the_board_owner() {
+        // The target's disk on the toolbar (plan of 2026-11-11, H2): a light
+        // read of both case LEDs, null for one the board does not have.
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let owner = played_board_owner(
+            UnixListener::bind(&control_socket).unwrap(),
+            vec![(true, true, true, true), (true, false, false, true)],
+        );
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            ..ServerOptions::default()
+        });
+        let read = |cookie: Option<String>| {
+            let mut request = Request::builder()
+                .uri("/api/atx/leds")
+                .header(header::HOST, "kvm.test");
+            if let Some(cookie) = cookie {
+                request = request.header(header::COOKIE, cookie);
+            }
+            request.body(Body::empty()).unwrap()
+        };
+        let unsigned = app.clone().oneshot(read(None)).await.unwrap();
+        assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let body = json_body(
+            app.clone()
+                .oneshot(read(Some(cookie.clone())))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["powerLed"], true);
+        assert_eq!(body["data"]["hddLed"], true);
+        let body = json_body(app.clone().oneshot(read(Some(cookie))).await.unwrap()).await;
+        assert_eq!(body["data"]["powerLed"], false);
+        assert_eq!(body["data"]["hddLed"], serde_json::Value::Null);
+        owner.await.unwrap();
+
+        // No board owner: nothing is known.
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            ..ServerOptions::default()
+        });
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let body = json_body(app.clone().oneshot(read(Some(cookie))).await.unwrap()).await;
+        assert_eq!(body["data"]["powerLed"], serde_json::Value::Null);
+        assert_eq!(body["data"]["hddLed"], serde_json::Value::Null);
     }
 
     #[cfg(feature = "restricted-control-surface")]
@@ -4106,6 +4224,7 @@ mod tests {
                 offset_from_system_seconds: Some(-28_647_995),
             },
             power_led: Some(true),
+            hdd_led: None,
             janus_enabled: Some(false),
         }
     }
