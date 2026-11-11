@@ -1068,8 +1068,11 @@ mod tests {
             ignore_auto_dns: "yes".into(),
         };
         let profile = Arc::new(Mutex::new(first.clone()));
+        // A window long enough for a loaded host, which takes its time
+        // between the two changes (a 2 s one was reverted under the change
+        // back once, at load 14).
         let mut ipv4 =
-            settings(&profile, Duration::from_millis(2_000)).with_journal(journal.clone());
+            settings(&profile, Duration::from_millis(6_000)).with_journal(journal.clone());
         ipv4.set(&manual(Some("192.0.2.50")));
         assert!(ipv4.revert_in_seconds() > 0);
         let mut back = manual(Some("192.0.2.10"));
@@ -1077,7 +1080,7 @@ mod tests {
         ipv4.set(&back);
         assert_eq!(ipv4.revert_in_seconds(), 0, "the window is still open");
         assert!(journal.read::<RevertRecords>().is_none());
-        std::thread::sleep(Duration::from_millis(4_000));
+        std::thread::sleep(Duration::from_millis(8_000));
         let now = profile.lock().unwrap().clone();
         assert_eq!(now.addresses, "192.0.2.10/24");
         assert_eq!(now.dns, "192.0.2.54", "the change back was reverted");
