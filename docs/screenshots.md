@@ -63,7 +63,10 @@ Images to mount as a mass storage device or a CD-ROM.
 ![Image download](screenshots/12b-download-image.png)
 ![Wake-on-LAN](screenshots/12c-wake-on-lan.png)
 ![Power](screenshots/13-power-menu.png)
-The ATX buttons: reset, a short and a long press of power.
+The ATX buttons: reset, a short and a long press of power. Under the title,
+the target's case LEDs: its power, and its disk, lit while the disk works;
+on the toolbar, the "HDD" pill under the power icon is amber while the disk
+works and grey while it is idle.
 
 ![Quality monitor](screenshots/14-quality-monitor.png)
 The quality monitor's Extended level.

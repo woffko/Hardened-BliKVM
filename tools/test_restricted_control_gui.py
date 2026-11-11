@@ -197,10 +197,15 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("export function textToKeyReports", helper)
         self.assertIn("getModifierBit('ShiftLeft')", helper)
 
-    def test_power_led_reads_the_hardened_inventory(self) -> None:
+    def test_power_led_reads_the_hardened_case_leds(self) -> None:
         power = (ROOT / "web/src/pages/desktop/menu/power/index.tsx").read_text()
-        self.assertIn("getRuntimeInventory", power)
-        self.assertIn("inventory.data.powerLed", power)
+        # The case LEDs' light read, once a second while the page is shown
+        # (docs/baselines/work-plan-20261111-hdd-indicator.md).
+        self.assertIn("useCaseLeds(hardened)", power)
+        self.assertIn("leds?.powerLed", power)
+        self.assertIn("data-hdd-led", power)
+        hook = (ROOT / "web/src/hooks/useCaseLeds.ts").read_text()
+        self.assertIn("document.visibilityState === 'hidden'", hook)
         # The hardened platform has no legacy GPIO endpoint, so the fallback
         # must never be reached for it.
         self.assertIn("usesBliApplicationUpdates(manifest)", power)
