@@ -269,3 +269,15 @@ fan stayed at 20 % at 85 °C), and the supervisor's
 `a_manual_command_is_recorded_and_replaced_by_the_next_evaluation` and
 `a_failed_manual_command_latches_maximum_cooling`. Not tried on the board:
 fan settings are not changed there.
+
+## The case's LEDs on every turn (2026-11-11)
+
+The target's power and disk LEDs (ATX inputs, lines 234 and 233) were read
+with the temperature's sample, once a second. The disk's LED blinks briefly
+while the disk works, so a read once a second mostly found it off. The
+sampling thread now reads both on every 20 ms turn; the power LED is
+reported as read, and the disk's as lit (`atxHddLedOn`) while it was seen lit
+within the last 500 ms (`HDD_ACTIVITY_MS`): the disk is working. The status
+keeps its fields, which the update runtime's health check reads strictly.
+Test: `a_blinking_disk_counts_as_active_between_its_blinks` (a disk lit 30 ms
+every 400 ms; read once a second, 11 of 21 status reads said idle).

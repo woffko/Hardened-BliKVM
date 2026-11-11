@@ -303,8 +303,9 @@ where
     }
     state.tick_led(now_ms);
     state.tick_button(now_ms);
+    // The case's LEDs on every turn too: the disk's blinks briefly.
+    state.tick_atx_leds(now_ms);
     if due {
-        state.tick_atx_leds();
         state.tick_display(now_ms);
     }
     Ok(())
@@ -495,6 +496,38 @@ mod turn_tests {
         .unwrap()
     }
 
+    /// The case's LEDs on the clock: the power LED lit, the disk's lit for
+    /// `lit` ms of every `every` ms.
+    struct CaseLeds {
+        clock: Arc<AtomicU64>,
+        every: u64,
+        lit: u64,
+    }
+
+    impl bli_kvm_platform_bli::GpioDriver for CaseLeds {
+        type Error = std::io::Error;
+
+        fn request_line(&mut self, _request: &LineRequest) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn write_line(&mut self, _request: &LineRequest, _active: bool) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn read_line(&mut self, request: &LineRequest) -> Result<bool, Self::Error> {
+            let now = self.clock.load(Ordering::SeqCst);
+            Ok(match request.role {
+                bli_kvm_platform_bli::GpioRole::AtxHddLed => now % self.every < self.lit,
+                _ => true,
+            })
+        }
+
+        fn release_line(&mut self, _request: &LineRequest) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
     /// A board of the example configuration with its LED and button on the
     /// clock; the button is pressed between `pressed`.
     fn board(
@@ -585,6 +618,55 @@ mod turn_tests {
         for pair in lit.windows(2) {
             assert_eq!(pair[1].0 - pair[0].0, config.led.period_ms, "{lit:?}");
         }
+    }
+
+    #[test]
+    fn a_blinking_disk_counts_as_active_between_its_blinks() {
+        // The target's disk LED blinks briefly; read with the 1 s sample it
+        // was mostly off (plan of 2026-11-11, H1).
+        let clock = Arc::new(AtomicU64::new(0));
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let (state, config) = board(&clock, &written, (0, 0));
+        let atx_config = config
+            .atx_leds
+            .as_ref()
+            .expect("the example has the case LEDs");
+        let atx = atx_leds::AtxLedsRuntime::new(
+            CaseLeds {
+                clock: Arc::clone(&clock),
+                every: 400,
+                lit: 30,
+            },
+            atx_leds::atx_power_led_line(atx_config),
+            atx_leds::atx_hdd_led_line(atx_config),
+            atx_config,
+        )
+        .unwrap();
+        let mut state = state.with_atx_leds_for_test(Box::new(atx));
+        let tick = SAMPLER_TICK_MS.min(config.sample_interval_ms);
+        let mut cadence = SampleCadence::new(config.sample_interval_ms);
+        let mut reads = Vec::new();
+        let mut now = 0;
+        while now <= 3_000 {
+            clock.store(now, Ordering::SeqCst);
+            let readings = cadence.due(now).then_some(Readings {
+                thermal: Ok(40_000),
+                rtc: Err("absent"),
+            });
+            board_turn(&mut state, now, readings).unwrap();
+            if now >= 1_000 && now % 100 == 0 {
+                let status = state.status();
+                assert!(status.atx_power_led_on);
+                reads.push((now, status.atx_hdd_led_on));
+            }
+            now += tick;
+        }
+        let off: Vec<u64> = reads
+            .iter()
+            .filter(|(_, on)| !on)
+            .map(|(at, _)| *at)
+            .collect();
+        assert!(off.is_empty(), "the busy disk read idle at {off:?}");
     }
 
     #[test]

@@ -15,13 +15,19 @@ pub enum AtxLedError {
     Line,
 }
 
-/// Owns both ATX LED inputs and their last sampled levels.
+/// How long after its last lit reading the disk still counts as active: its
+/// LED blinks briefly while the disk works.
+pub const HDD_ACTIVITY_MS: u64 = 500;
+
+/// Owns both ATX LED inputs: the power LED's last level and when the disk's
+/// was last seen lit.
 pub struct AtxLedsRuntime<G: GpioDriver> {
     driver: G,
     power: LineRequest,
     hdd: LineRequest,
     power_on: bool,
-    hdd_on: bool,
+    hdd_lit_at: Option<u64>,
+    sampled_at: u64,
 }
 
 /// Reviewed read-only request for the host power LED input.
@@ -64,12 +70,14 @@ impl<G: GpioDriver> AtxLedsRuntime<G> {
             power,
             hdd,
             power_on,
-            hdd_on,
+            hdd_lit_at: hdd_on.then_some(0),
+            sampled_at: 0,
         })
     }
 
-    /// Read both inputs once; the status view reports the last good sample.
-    pub fn sample(&mut self) -> Result<(), AtxLedError> {
+    /// Read both inputs at `now_ms`, on every turn of the sampling thread;
+    /// the status view reports the last good sample.
+    pub fn sample(&mut self, now_ms: u64) -> Result<(), AtxLedError> {
         let power_on = self
             .driver
             .read_line(&self.power)
@@ -79,7 +87,10 @@ impl<G: GpioDriver> AtxLedsRuntime<G> {
             .read_line(&self.hdd)
             .map_err(|_| AtxLedError::Line)?;
         self.power_on = power_on;
-        self.hdd_on = hdd_on;
+        if hdd_on {
+            self.hdd_lit_at = Some(now_ms);
+        }
+        self.sampled_at = now_ms;
         Ok(())
     }
 
@@ -87,14 +98,17 @@ impl<G: GpioDriver> AtxLedsRuntime<G> {
         self.power_on
     }
 
-    pub const fn hdd_on(&self) -> bool {
-        self.hdd_on
+    /// Whether the disk's LED was lit within `HDD_ACTIVITY_MS` of the last
+    /// sample: the disk is working (plan of 2026-11-11, H1).
+    pub fn hdd_on(&self) -> bool {
+        self.hdd_lit_at
+            .is_some_and(|at| self.sampled_at.saturating_sub(at) < HDD_ACTIVITY_MS)
     }
 }
 
 impl<G: GpioDriver + Send> crate::server::AtxLedControl for AtxLedsRuntime<G> {
-    fn sample(&mut self) -> Result<(), &'static str> {
-        AtxLedsRuntime::sample(self).map_err(|_| "line")
+    fn sample(&mut self, now_ms: u64) -> Result<(), &'static str> {
+        AtxLedsRuntime::sample(self, now_ms).map_err(|_| "line")
     }
 
     fn power_present(&self) -> bool {
@@ -110,7 +124,7 @@ impl<G: GpioDriver + Send> crate::server::AtxLedControl for AtxLedsRuntime<G> {
     }
 
     fn hdd_on(&self) -> bool {
-        self.hdd_on
+        AtxLedsRuntime::hdd_on(self)
     }
 }
 
@@ -184,9 +198,18 @@ mod tests {
         assert_eq!(*requested.lock().unwrap(), vec![234, 233]);
         assert!(runtime.power_on());
         assert!(!runtime.hdd_on());
-        runtime.sample().unwrap();
+        runtime.sample(1_000).unwrap();
         assert!(!runtime.power_on());
         assert!(runtime.hdd_on());
+        // Lit at 1 000 ms, unlit since: active for another HDD_ACTIVITY_MS.
+        levels
+            .lock()
+            .unwrap()
+            .extend([Ok(false), Ok(false), Ok(false), Ok(false)]);
+        runtime.sample(1_000 + HDD_ACTIVITY_MS - 20).unwrap();
+        assert!(runtime.hdd_on());
+        runtime.sample(1_000 + HDD_ACTIVITY_MS).unwrap();
+        assert!(!runtime.hdd_on());
         let power = atx_power_led_line(&config);
         assert_eq!(power.role, GpioRole::AtxPowerLed);
         assert_eq!(power.direction, LineDirection::Input);
@@ -210,7 +233,7 @@ mod tests {
         )
         .unwrap();
         assert!(runtime.power_on());
-        assert!(runtime.sample().is_err());
+        assert!(runtime.sample(1_000).is_err());
         assert!(runtime.power_on());
     }
 }
