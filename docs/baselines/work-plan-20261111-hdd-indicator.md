@@ -117,11 +117,11 @@ test build: the release, with decision 1, is slot 110.
   for 100 ms after each flash and idle until the next (today it reads lit
   throughout), and a steady change shows at the next turn.
 - **H5. The board owner reads boardd's status outside its request lock.**
-  `crates/bli-kvm-control-broker`: `BoardStatus` read boardd's socket with a
-  blocking call while it held the lock every V2 request takes, the HID
-  lease's among them. The read now runs on a blocking worker with the lock
-  released. Test: while boardd takes 600 ms to answer a status read, another
-  V2 request is answered at once (today it waits for the read).
+  Left: already so. The code audit of 2026-11-06 (AUD-08) put `BoardStatus`
+  with the system settings, which the owner serves on a blocking worker
+  behind their own lock; the lock every V2 request takes, the HID lease's
+  among them, is held only to take the settings' handle and to note the
+  answer. Found when H5 was begun (2026-11-12).
 - **H6. The case LEDs as a socket.** `crates/bli-kvm-server`: a protected,
   read-only WebSocket `GET /api/atx/leds/socket`, checked for its origin like
   `/api/ws`, sends `{ "powerLed", "hddLed" }` when it opens and at each
