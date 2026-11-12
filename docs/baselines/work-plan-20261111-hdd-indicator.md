@@ -52,10 +52,21 @@ The rules of the earlier plans hold:
    toolbar's live indicator needs it, and the inventory, which the Power menu
    reads today, gathers media, video and temperature too). The alternative,
    pushing the LEDs over the page's socket, is a larger change.
+   **Changed by the operator on 2026-11-12**: a socket that sends each
+   change, beside the light route (decision 3, phase B).
 3. **Timing.** The disk counts as active when its LED was lit within the last
    500 ms; the page reads once a second while it is shown (recommended). The
    indicator is therefore lit while the disk works, not a copy of the LED's
    flicker.
+   **Changed by the operator on 2026-11-12** (with decision 2), after slot
+   109's comparison: as KVMD does it. KVMD (on the board,
+   `kvmd/plugins/atx/gpio.py` and `kvmd/aiogp.py`) waits for the line's
+   edges, changes the LED's value at most once per 100 ms
+   (`hdd_led_debounce: 0.1`), and sends each change to the page over its
+   socket at once. Read once a second with the 500 ms window, the pill stayed
+   amber while the case's light went on and off; read four times a second,
+   it would stand amber or blink out of step, the case's light changing in
+   steps of 250 ms on this target. See phase B.
 4. **Screenshots.** `02-desktop.png` and `13-power-menu.png` shot again with
    the indicator (recommended), or left.
 
@@ -93,6 +104,43 @@ Then slot 109 is built, installed at the operator's word, and the watching
 probes run. The operator makes the target's disk work and compares the pill
 with the case's HDD light.
 
+## Phase B: as KVMD shows it (slot 110)
+
+The operator's change of decisions 2 and 3 on 2026-11-12. Slot 109 stays a
+test build: the release, with decision 1, is slot 110.
+
+- **H4. boardd holds each change of a case LED at least 100 ms.**
+  `atx_leds.rs`: on each 20 ms turn the reported level of each LED follows
+  the line's, but changes at most once per 100 ms, to the level read at the
+  turn, as KVMD's debounce does; the 500 ms window of H1 goes. The status
+  keeps its fields. Test: a disk LED lit for one turn every 400 ms reads lit
+  for 100 ms after each flash and idle until the next (today it reads lit
+  throughout), and a steady change shows at the next turn.
+- **H5. The board owner reads boardd's status outside its request lock.**
+  `crates/bli-kvm-control-broker`: `BoardStatus` read boardd's socket with a
+  blocking call while it held the lock every V2 request takes, the HID
+  lease's among them. The read now runs on a blocking worker with the lock
+  released. Test: while boardd takes 600 ms to answer a status read, another
+  V2 request is answered at once (today it waits for the read).
+- **H6. The case LEDs as a socket.** `crates/bli-kvm-server`: a protected,
+  read-only WebSocket `GET /api/atx/leds/socket`, checked for its origin like
+  `/api/ws`, sends `{ "powerLed", "hddLed" }` when it opens and at each
+  change. One task reads the owner every 50 ms while a socket is open and
+  none while none is; at most 16 sockets are open. A socket ends at its
+  session's end and at the server's stop, and frames from the page are not
+  read. The route counts follow (128). Tests: the first answer and each
+  change from a played owner; nothing read with no socket open; the socket
+  ends at logout and at the stop; no session, no socket.
+- **H7. The page listens to the socket.** `web/src/hooks/useCaseLeds.ts`:
+  while shown, the page opens the socket and shows each change; hidden, it
+  closes it; when the socket closes, it reads `/api/atx/leds` once a second
+  until a new socket opens (tried again after 2 s). The contract follows:
+  the pill follows the socket's answers within a frame, no socket while the
+  page is hidden, and the read once a second while the socket is down.
+
+Then slot 110 is built, installed at the operator's word, the watching
+probes run, and the operator compares the pill with the case's light again.
+
 ## Phase W: the record
 
 The review note `docs/baselines/audit-20261111-hdd-indicator.md`: each item's
@@ -103,7 +151,8 @@ operator's word.
 
 ## Size
 
-Three items, one slot, and with decision 1 an application release.
+Three items and one slot; with the change of 2026-11-12, four items more
+and a second slot; with decision 1 an application release.
 
 ## Operator steps
 
