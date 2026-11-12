@@ -401,3 +401,13 @@ none of them; the board's programs read extended attributes through
 `libc::fgetxattr` directly. The functions are therefore not reachable on a
 board. The local registry has 1.1.6, which fixes them; it is taken after
 this release.
+
+## `rustix` 1.1.6 (2026-11-12)
+
+After beta.13, `rustix` is taken from 1.1.4 to 1.1.6 from the local registry
+without fetching, so RUSTSEC-2026-0486 of beta.13 is gone. `cargo` also
+resolves `windows-sys` 0.61.2, already in the lock, for `errno`, `quinn-udp`,
+`rustix` and `tempfile` on Windows targets instead of 0.52.0; the target
+agent for Windows uses none of them. `cargo audit --deny warnings`, run
+without fetching (the database of 2026-11-12, 1,490 advisories), reports
+nothing; the lock keeps 317 packages.
