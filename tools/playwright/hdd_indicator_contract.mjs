@@ -62,8 +62,9 @@ try {
   const state = () =>
     page.evaluate(
       () =>
-        document.querySelector("[data-hdd-led]")?.getAttribute("data-hdd-led") ??
-        "none",
+        document
+          .querySelector("[data-hdd-led]")
+          ?.getAttribute("data-hdd-led") ?? "none",
     );
   await pill.waitFor();
   assert.equal(sockets.length, 1, "one socket");
@@ -130,7 +131,10 @@ try {
     await eventually(() => sockets.length === 3, 4000),
     "no new socket after the old one went down",
   );
-  assert.ok(reads >= 1 && reads <= 4, `${reads} reads while the socket was down`);
+  assert.ok(
+    reads >= 1 && reads <= 4,
+    `${reads} reads while the socket was down`,
+  );
   const settled = reads;
   await page.waitForTimeout(1500);
   assert.equal(reads, settled, "the light route was read with a socket open");
