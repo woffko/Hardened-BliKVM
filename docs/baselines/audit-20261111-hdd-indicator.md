@@ -104,3 +104,25 @@ board's settings left as found.
   over 291 ms, the longest pause 9.2 s): the steps of the case's light,
   each held at least 100 ms.
 - The operator's comparison, with the new page: "Follows the light".
+
+## The release 0.1.0-beta.13
+
+Published on 2026-11-12 at the operator's word as a GitHub pre-release,
+[v0.1.0-beta.13](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.13),
+tag on `b7f1fc6` (the commits after `e6626e0`, where slot 110 was built and
+`scripts/check.sh` passed, add only documents). The application only: the
+card image and the RAW system update stay 0.1.0-beta.11's; beta.12's notes
+now open with a line that beta.13 supersedes them. `cargo audit` with the
+database of 2026-11-12 reported RUSTSEC-2026-0486 in `rustix` 1.1.4, not
+reachable on a board (`docs/third-party-rust.md`); `rustix` 1.1.6 was taken
+after the tag (`65c7f03`). The files, whose digests GitHub reports as the
+local ones:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.13-seq110.tar` | `78f852a0c64cda8fe6bd1b99fba3c96cba3d1895771a3fe7dc3917fff5452878` |
+| `hardened-blikvm-agent.exe` | `da5fc03090d5e6ba7e5f206c6a7c1f52d921beb04db545e05f59da7e98668fed` |
+| `SHA256SUMS` | `12ef005df66803fe5a9e1ae0a63620b2bfebd24446ff8e55b74eea142df6303c` |
+
+The test board ends on slot 110, update runtime dev46 and the RAW system of
+sequence 11, its settings and switches as found.
