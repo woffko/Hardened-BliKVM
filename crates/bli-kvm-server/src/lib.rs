@@ -33,6 +33,7 @@ mod application;
 mod atx;
 mod auth;
 mod autostart;
+mod case_leds;
 mod device_settings;
 mod download;
 mod encoder_report;
@@ -102,6 +103,8 @@ pub(crate) struct AppState {
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
     /// The open `/api/ws` sockets of each web session.
     pub ws_sockets: Arc<ws::OpenSockets>,
+    /// The case LEDs' shared read for their sockets.
+    pub case_leds_feed: Arc<case_leds::CaseLedsFeed>,
     pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
     pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
     #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
@@ -566,6 +569,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
         hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
         ws_sockets: Arc::new(ws::OpenSockets::default()),
+        case_leds_feed: Arc::default(),
         terminal_tickets: Arc::new(Mutex::new(terminal::TicketStore::new())),
         picoclaw: picoclaw_available(&options).then(|| {
             Arc::new(picoclaw::Picoclaw::new(
@@ -619,6 +623,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application/preview", get(application::preview))
         .route("/inventory", get(runtime_inventory))
         .route("/atx/leds", get(case_leds_route))
+        .route("/atx/leds/socket", get(case_leds::socket))
         .route("/hostname", get(hostname))
         .route("/vm/mdns", get(device_settings::mdns_state))
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
@@ -931,12 +936,10 @@ fn usb_device_controller() -> (Option<bool>, Option<bool>) {
     }
 }
 
-/// Assemble the native board inventory: thermal and RTC from the kernel views,
-/// the host power LED and the component states from the board owner and the
-/// USB controller, and nothing that we do not observe.
 /// The target's case LEDs as the board owner reads them from boardd: whether
-/// the owner answered, then the power LED and the disk's (lit while the disk
-/// works), each `None` when the board does not have it or nothing answered.
+/// the owner answered, then the power LED and the disk's (each change held
+/// 100 ms by boardd), each `None` when the board does not have it or nothing
+/// answered.
 async fn case_leds(state: &AppState) -> (Option<bool>, Option<bool>, Option<bool>) {
     let Some(control) = state.control.as_ref() else {
         return (None, None, None);
@@ -967,7 +970,7 @@ async fn case_leds(state: &AppState) -> (Option<bool>, Option<bool>, Option<bool
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CaseLeds {
     power_led: Option<bool>,
@@ -975,12 +978,16 @@ struct CaseLeds {
 }
 
 /// `GET /api/atx/leds`: the case LEDs alone, light enough for the toolbar to
-/// read once a second (plan of 2026-11-11, H2).
+/// read once a second while its socket is down (plan of 2026-11-11, H2; the
+/// socket, `case_leds::socket`, from H6).
 async fn case_leds_route(State(state): State<AppState>) -> Json<ApiResponse<CaseLeds>> {
     let (_, power_led, hdd_led) = case_leds(&state).await;
     Json(ApiResponse::ok(CaseLeds { power_led, hdd_led }))
 }
 
+/// Assemble the native board inventory: thermal and RTC from the kernel views,
+/// the host power LED and the component states from the board owner and the
+/// USB controller, and nothing that we do not observe.
 async fn native_inventory(state: &AppState, session_token: &str) -> RuntimeInventory {
     let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
     let rtc = bli_kvm_platform_bli::read_h616_external_rtc().ok();
@@ -3088,6 +3095,262 @@ mod tests {
         let body = json_body(app.clone().oneshot(read(Some(cookie))).await.unwrap()).await;
         assert_eq!(body["data"]["powerLed"], serde_json::Value::Null);
         assert_eq!(body["data"]["hddLed"], serde_json::Value::Null);
+    }
+
+    /// A played board owner answering every `BoardStatus` with the case LEDs
+    /// `leds` holds at the time (power, disk), counting the reads.
+    fn live_board_owner(
+        listener: UnixListener,
+        leds: Arc<std::sync::Mutex<(bool, bool)>>,
+        reads: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut prefix = [0_u8; 4];
+                if stream.read_exact(&mut prefix).await.is_err() {
+                    continue;
+                }
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                if stream.read_exact(&mut payload).await.is_err() {
+                    continue;
+                }
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                assert!(matches!(
+                    request.request,
+                    bli_kvm_core::PlatformControlRequestV2::BoardStatus {}
+                ));
+                let (power_on, hdd_on) = *leds.lock().unwrap();
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response: bli_kvm_control_protocol::ControlResponse::BoardStatus {
+                        power_led_present: true,
+                        power_led_on: power_on,
+                        hdd_led_present: true,
+                        hdd_led_on: hdd_on,
+                    },
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                let _ = stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await;
+            }
+        })
+    }
+
+    /// Opens the case LEDs' socket as a page of `origin` would, with the
+    /// session `cookie` when there is one.
+    async fn open_case_leds_socket(
+        address: SocketAddr,
+        cookie: Option<&str>,
+        origin: &str,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        tokio_tungstenite::tungstenite::Error,
+    > {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = format!("ws://{address}/api/atx/leds/socket")
+            .into_client_request()
+            .unwrap();
+        let headers = request.headers_mut();
+        headers.insert(header::HOST, "kvm.test".parse().unwrap());
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        if let Some(cookie) = cookie {
+            headers.insert(header::COOKIE, cookie.parse().unwrap());
+        }
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        tokio_tungstenite::client_async(request, stream)
+            .await
+            .map(|(socket, _)| socket)
+    }
+
+    fn refused_with(
+        opened: Result<
+            tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+            tokio_tungstenite::tungstenite::Error,
+        >,
+    ) -> u16 {
+        match opened {
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                response.status().as_u16()
+            }
+            Err(error) => panic!("the socket failed otherwise: {error}"),
+            Ok(_) => panic!("the socket opened"),
+        }
+    }
+
+    /// Waits until the socket ends.
+    async fn socket_ends(socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
+        use futures_util::StreamExt;
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                match socket.next().await {
+                    None
+                    | Some(Err(_))
+                    | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await;
+        assert!(ended.is_ok(), "the socket stayed open");
+    }
+
+    /// Serves `app` on a loopback port until `shutdown` stops it.
+    async fn serve_on_loopback(
+        app: Router,
+        shutdown: &shutdown::Shutdown,
+    ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let signal = shutdown.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move { signal.cancelled().await })
+            .await
+            .unwrap();
+        });
+        (address, server)
+    }
+
+    #[tokio::test]
+    async fn the_case_leds_socket_sends_each_change_and_ends_with_the_session() {
+        // As KVMD shows the case's LEDs (plan of 2026-11-11, H6): each change
+        // reaches the page at once; the owner is read only while a socket is
+        // open.
+        use futures_util::StreamExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let leds = Arc::new(std::sync::Mutex::new((true, true)));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let owner = live_board_owner(
+            UnixListener::bind(&control_socket).unwrap(),
+            Arc::clone(&leds),
+            Arc::clone(&reads),
+        );
+        let shutdown = shutdown::Shutdown::default();
+        let app = app_with_options(ServerOptions {
+            shutdown: shutdown.clone(),
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (address, server) = serve_on_loopback(app.clone(), &shutdown).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "read with no socket open");
+        assert_eq!(
+            refused_with(
+                open_case_leds_socket(address, Some(&cookie), "https://elsewhere.test").await
+            ),
+            403
+        );
+        assert_eq!(
+            refused_with(open_case_leds_socket(address, None, "https://kvm.test").await),
+            401
+        );
+
+        let mut socket = open_case_leds_socket(address, Some(&cookie), "https://kvm.test")
+            .await
+            .unwrap();
+        assert_eq!(
+            next_text(&mut socket).await,
+            serde_json::json!({ "powerLed": true, "hddLed": true })
+        );
+        *leds.lock().unwrap() = (true, false);
+        assert_eq!(
+            next_text(&mut socket).await,
+            serde_json::json!({ "powerLed": true, "hddLed": false })
+        );
+        // Only changes are sent.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(400), socket.next())
+                .await
+                .is_err()
+        );
+        assert!(reads.load(Ordering::SeqCst) >= 4);
+        *leds.lock().unwrap() = (false, false);
+        assert_eq!(
+            next_text(&mut socket).await,
+            serde_json::json!({ "powerLed": false, "hddLed": false })
+        );
+
+        // The session's end ends the socket, and the reads stop.
+        let mut logout = json_request(Method::POST, "/api/auth/logout", Value::Null);
+        logout
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        logout
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        assert_eq!(
+            json_body(app.clone().oneshot(logout).await.unwrap()).await["code"],
+            0
+        );
+        socket_ends(&mut socket).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let after = reads.load(Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            after,
+            "read with no socket open"
+        );
+
+        shutdown.stop();
+        server.await.unwrap();
+        owner.abort();
+    }
+
+    #[tokio::test]
+    async fn the_case_leds_sockets_are_bounded_and_end_at_the_stop() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let owner = live_board_owner(
+            UnixListener::bind(&control_socket).unwrap(),
+            Arc::new(std::sync::Mutex::new((true, false))),
+            Arc::default(),
+        );
+        let shutdown = shutdown::Shutdown::default();
+        let app = app_with_options(ServerOptions {
+            shutdown: shutdown.clone(),
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let (address, server) = serve_on_loopback(app, &shutdown).await;
+        let mut sockets = Vec::new();
+        for _ in 0..case_leds::MAX_OPEN_SOCKETS {
+            let mut socket = open_case_leds_socket(address, Some(&cookie), "https://kvm.test")
+                .await
+                .unwrap();
+            assert_eq!(
+                next_text(&mut socket).await,
+                serde_json::json!({ "powerLed": true, "hddLed": false })
+            );
+            sockets.push(socket);
+        }
+        assert_eq!(
+            refused_with(open_case_leds_socket(address, Some(&cookie), "https://kvm.test").await),
+            503
+        );
+        shutdown.stop();
+        for socket in &mut sockets {
+            socket_ends(socket).await;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), shutdown.drained())
+            .await
+            .unwrap();
+        server.await.unwrap();
+        owner.abort();
     }
 
     #[cfg(feature = "restricted-control-surface")]
