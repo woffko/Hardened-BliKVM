@@ -36,7 +36,9 @@ find.
   captured one by a layout set in the Mouse menu,
   [`docs/design/screen-area-v1.md`](docs/design/screen-area-v1.md)), a touch
   layout for phones with an on-screen keyboard and a row of extra keys, the
-  ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
+  ATX power buttons with the target's power and disk LEDs (an "HDD" pill
+  under the toolbar's power icon that follows the case's disk light, as
+  KVMD shows it), and virtual media (an ISO as CD-ROM, disk images as mass
   storage). Remote control is taken by the first click, tap or key on the
   screen after a confirmation, and given back from the Mouse menu; a window
   that loses focus gives the keyboard and mouse back and takes them again

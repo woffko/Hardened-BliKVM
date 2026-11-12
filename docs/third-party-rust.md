@@ -385,3 +385,19 @@ An application on beta.11's system, with what the code audit of 2026-11-06
 left. The lock is the one of `ctutils` 0.4.8 above (317 packages); `cargo
 audit --deny warnings`, run without fetching (the local database of
 2026-11-06), reports nothing.
+
+## RustSec scan for 0.1.0-beta.13 (2026-11-12)
+
+An application on beta.11's system: the target's case LEDs on the toolbar
+(`docs/baselines/audit-20261111-hdd-indicator.md`). The lock is unchanged
+since `ctutils` 0.4.8 (317 packages).
+
+`cargo audit --deny warnings`, with the database fetched on 2026-11-12
+(1,490 advisories), reports one warning: RUSTSEC-2026-0486, unsound, in
+`rustix` 1.1.4. Its extended-attribute functions (`getxattr`, `listxattr`
+and their variants) mark bytes as initialized that a zero-length buffer
+never received. `rustix` is reached only through `tempfile`, which calls
+none of them; the board's programs read extended attributes through
+`libc::fgetxattr` directly. The functions are therefore not reachable on a
+board. The local registry has 1.1.6, which fixes them; it is taken after
+this release.
