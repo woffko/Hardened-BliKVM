@@ -199,12 +199,15 @@ class RestrictedControlGuiTests(unittest.TestCase):
 
     def test_power_led_reads_the_hardened_case_leds(self) -> None:
         power = (ROOT / "web/src/pages/desktop/menu/power/index.tsx").read_text()
-        # The case LEDs' light read, once a second while the page is shown
-        # (docs/baselines/work-plan-20261111-hdd-indicator.md).
+        # The case LEDs from their socket while the page is shown, the light
+        # read once a second while the socket is down, nothing while hidden
+        # (docs/baselines/work-plan-20261111-hdd-indicator.md, H3 and H7).
         self.assertIn("useCaseLeds(hardened)", power)
         self.assertIn("leds?.powerLed", power)
         self.assertIn("data-hdd-led", power)
         hook = (ROOT / "web/src/hooks/useCaseLeds.ts").read_text()
+        self.assertIn("/api/atx/leds/socket", hook)
+        self.assertIn("getCaseLeds()", hook)
         self.assertIn("document.visibilityState === 'hidden'", hook)
         # The hardened platform has no legacy GPIO endpoint, so the fallback
         # must never be reached for it.
