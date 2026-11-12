@@ -73,7 +73,7 @@ pub trait ButtonControl: Send {
 
 /// ATX host LED inputs the status view reports.
 pub trait AtxLedControl: Send {
-    fn sample(&mut self) -> Result<(), &'static str>;
+    fn sample(&mut self, now_ms: u64) -> Result<(), &'static str>;
     fn power_present(&self) -> bool;
     fn power_on(&self) -> bool;
     fn hdd_present(&self) -> bool;
@@ -469,11 +469,17 @@ where
     }
 
     /// Sample the ATX host LED inputs; called by the sampling thread.
-    pub fn tick_atx_leds(&mut self) {
+    pub fn tick_atx_leds(&mut self, now_ms: u64) {
         let Some(atx_leds) = self.atx_leds.as_mut() else {
             return;
         };
-        let _ = atx_leds.sample();
+        let _ = atx_leds.sample(now_ms);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_atx_leds_for_test(mut self, atx_leds: Box<dyn AtxLedControl>) -> Self {
+        self.atx_leds = Some(atx_leds);
+        self
     }
 
     /// Drive the LED pulse forward; called by the sampling thread.

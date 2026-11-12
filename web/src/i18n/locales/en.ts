@@ -500,6 +500,11 @@ const en = {
       resetConfirm: 'Proceed reset operation?',
       powerConfirm: 'Proceed power operation?',
       failed: 'The power button was not pressed: {{reason}}',
+      ledOn: 'Power on',
+      ledOff: 'Power off',
+      ledDisk: 'Disk',
+      diskActive: 'Disk: working',
+      diskIdle: 'Disk: idle',
       okBtn: 'Yes',
       cancelBtn: 'No'
     },

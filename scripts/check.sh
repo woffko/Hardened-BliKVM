@@ -253,6 +253,7 @@ node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
 node --check tools/playwright/restricted_control_lifecycle.mjs
 node --check tools/playwright/hid_lease_lost_contract.mjs
 node --check tools/playwright/power_focus_contract.mjs
+node --check tools/playwright/hdd_indicator_contract.mjs
 node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
 node --check tools/playwright/webrtc_unavailable_contract.mjs
@@ -957,6 +958,7 @@ pnpm_web lint
 node tools/playwright/restricted_control_lifecycle.mjs
 node tools/playwright/hid_lease_lost_contract.mjs
 node tools/playwright/power_focus_contract.mjs
+node tools/playwright/hdd_indicator_contract.mjs
 node tools/playwright/network_contract.mjs
 node tools/playwright/firewall_modes_contract.mjs
 node tools/playwright/webrtc_unavailable_contract.mjs

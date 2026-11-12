@@ -15,13 +15,50 @@ pub enum AtxLedError {
     Line,
 }
 
-/// Owns both ATX LED inputs and their last sampled levels.
+/// How long a reported LED level stands before it may change again, as
+/// KVMD's debounce (`hdd_led_debounce: 0.1`): a flash shows at least this
+/// long, and the level changes at most once in it (plan of 2026-11-11, H4).
+pub const LED_HOLD_MS: u64 = 100;
+
+/// One LED's reported level: it follows the line, but a change stands for
+/// `LED_HOLD_MS` before the next.
+#[derive(Debug, Clone, Copy)]
+struct HeldLevel {
+    on: bool,
+    changed_at: Option<u64>,
+}
+
+impl HeldLevel {
+    const fn new(on: bool) -> Self {
+        Self {
+            on,
+            changed_at: None,
+        }
+    }
+
+    /// The line read `level` at `now_ms`.
+    fn follow(&mut self, level: bool, now_ms: u64) {
+        if level == self.on {
+            return;
+        }
+        if self
+            .changed_at
+            .is_some_and(|at| now_ms.saturating_sub(at) < LED_HOLD_MS)
+        {
+            return;
+        }
+        self.on = level;
+        self.changed_at = Some(now_ms);
+    }
+}
+
+/// Owns both ATX LED inputs and their reported levels.
 pub struct AtxLedsRuntime<G: GpioDriver> {
     driver: G,
     power: LineRequest,
     hdd: LineRequest,
-    power_on: bool,
-    hdd_on: bool,
+    power_on: HeldLevel,
+    hdd_on: HeldLevel,
 }
 
 /// Reviewed read-only request for the host power LED input.
@@ -63,13 +100,14 @@ impl<G: GpioDriver> AtxLedsRuntime<G> {
             driver,
             power,
             hdd,
-            power_on,
-            hdd_on,
+            power_on: HeldLevel::new(power_on),
+            hdd_on: HeldLevel::new(hdd_on),
         })
     }
 
-    /// Read both inputs once; the status view reports the last good sample.
-    pub fn sample(&mut self) -> Result<(), AtxLedError> {
+    /// Read both inputs at `now_ms`, on every turn of the sampling thread;
+    /// the status view reports the levels held from the good samples.
+    pub fn sample(&mut self, now_ms: u64) -> Result<(), AtxLedError> {
         let power_on = self
             .driver
             .read_line(&self.power)
@@ -78,23 +116,25 @@ impl<G: GpioDriver> AtxLedsRuntime<G> {
             .driver
             .read_line(&self.hdd)
             .map_err(|_| AtxLedError::Line)?;
-        self.power_on = power_on;
-        self.hdd_on = hdd_on;
+        self.power_on.follow(power_on, now_ms);
+        self.hdd_on.follow(hdd_on, now_ms);
         Ok(())
     }
 
     pub const fn power_on(&self) -> bool {
-        self.power_on
+        self.power_on.on
     }
 
+    /// The disk LED's level as held: lit for at least `LED_HOLD_MS` after a
+    /// flash read at a turn (plan of 2026-11-11, H4).
     pub const fn hdd_on(&self) -> bool {
-        self.hdd_on
+        self.hdd_on.on
     }
 }
 
 impl<G: GpioDriver + Send> crate::server::AtxLedControl for AtxLedsRuntime<G> {
-    fn sample(&mut self) -> Result<(), &'static str> {
-        AtxLedsRuntime::sample(self).map_err(|_| "line")
+    fn sample(&mut self, now_ms: u64) -> Result<(), &'static str> {
+        AtxLedsRuntime::sample(self, now_ms).map_err(|_| "line")
     }
 
     fn power_present(&self) -> bool {
@@ -102,7 +142,7 @@ impl<G: GpioDriver + Send> crate::server::AtxLedControl for AtxLedsRuntime<G> {
     }
 
     fn power_on(&self) -> bool {
-        self.power_on
+        self.power_on.on
     }
 
     fn hdd_present(&self) -> bool {
@@ -110,7 +150,7 @@ impl<G: GpioDriver + Send> crate::server::AtxLedControl for AtxLedsRuntime<G> {
     }
 
     fn hdd_on(&self) -> bool {
-        self.hdd_on
+        AtxLedsRuntime::hdd_on(self)
     }
 }
 
@@ -184,8 +224,24 @@ mod tests {
         assert_eq!(*requested.lock().unwrap(), vec![234, 233]);
         assert!(runtime.power_on());
         assert!(!runtime.hdd_on());
-        runtime.sample().unwrap();
+        runtime.sample(1_000).unwrap();
         assert!(!runtime.power_on());
+        assert!(runtime.hdd_on());
+        // Lit at 1 000 ms, unlit since: held for LED_HOLD_MS, then unlit;
+        // lit again at once, the hold being over.
+        levels.lock().unwrap().extend([
+            Ok(false),
+            Ok(false),
+            Ok(false),
+            Ok(false),
+            Ok(false),
+            Ok(true),
+        ]);
+        runtime.sample(1_000 + LED_HOLD_MS - 20).unwrap();
+        assert!(runtime.hdd_on());
+        runtime.sample(1_000 + LED_HOLD_MS).unwrap();
+        assert!(!runtime.hdd_on());
+        runtime.sample(1_000 + 2 * LED_HOLD_MS).unwrap();
         assert!(runtime.hdd_on());
         let power = atx_power_led_line(&config);
         assert_eq!(power.role, GpioRole::AtxPowerLed);
@@ -210,7 +266,7 @@ mod tests {
         )
         .unwrap();
         assert!(runtime.power_on());
-        assert!(runtime.sample().is_err());
+        assert!(runtime.sample(1_000).is_err());
         assert!(runtime.power_on());
     }
 }

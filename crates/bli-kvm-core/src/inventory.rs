@@ -58,6 +58,9 @@ pub struct RuntimeInventory {
     pub thermal: ThermalObservation,
     pub rtc: RtcObservation,
     pub power_led: Option<bool>,
+    /// The target's disk LED: lit while the disk works (plan of 2026-11-11).
+    #[serde(default)]
+    pub hdd_led: Option<bool>,
     pub janus_enabled: Option<bool>,
 }
 
@@ -140,6 +143,7 @@ mod tests {
             thermal: ThermalObservation::default(),
             rtc: RtcObservation::default(),
             power_led: None,
+            hdd_led: None,
             janus_enabled: Some(false),
         }
     }

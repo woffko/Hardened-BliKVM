@@ -269,3 +269,31 @@ fan stayed at 20 % at 85 °C), and the supervisor's
 `a_manual_command_is_recorded_and_replaced_by_the_next_evaluation` and
 `a_failed_manual_command_latches_maximum_cooling`. Not tried on the board:
 fan settings are not changed there.
+
+## The case's LEDs on every turn (2026-11-11)
+
+The target's power and disk LEDs (ATX inputs, lines 234 and 233) were read
+with the temperature's sample, once a second. The disk's LED blinks briefly
+while the disk works, so a read once a second mostly found it off. The
+sampling thread now reads both on every 20 ms turn; the power LED is
+reported as read, and the disk's as lit (`atxHddLedOn`) while it was seen lit
+within the last 500 ms (`HDD_ACTIVITY_MS`): the disk is working. The status
+keeps its fields, which the update runtime's health check reads strictly.
+Test: `a_blinking_disk_counts_as_active_between_its_blinks` (a disk lit 30 ms
+every 400 ms; read once a second, 11 of 21 status reads said idle).
+
+### As KVMD shows them (2026-11-12)
+
+Compared with the case's light on the test board, the 500 ms window kept the
+toolbar's pill amber while the light went on and off: this target's disk LED
+changes in steps of about 250 ms, and a flash at least every 500 ms is
+common. The operator chose to show the LEDs as KVMD does (plan, phase B):
+KVMD changes an LED's value at most once per 100 ms (`hdd_led_debounce`) and
+sends each change to the page. Each LED's reported level now follows its line
+on every turn, but a change stands for 100 ms (`LED_HOLD_MS`) before the
+next, to the level read at that turn; a flash seen at one turn shows for
+100 ms, and a dark gap shorter than the hold after a change does not show.
+The 500 ms window is gone; the status keeps its fields. Test:
+`a_disk_flash_shows_for_the_hold_and_no_longer` (a disk lit one turn every
+400 ms reads lit for 100 ms after each flash and idle until the next; with
+the window it read lit throughout).
