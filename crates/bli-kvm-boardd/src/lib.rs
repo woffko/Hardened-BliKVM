@@ -621,9 +621,10 @@ mod turn_tests {
     }
 
     #[test]
-    fn a_blinking_disk_counts_as_active_between_its_blinks() {
-        // The target's disk LED blinks briefly; read with the 1 s sample it
-        // was mostly off (plan of 2026-11-11, H1).
+    fn a_disk_flash_shows_for_the_hold_and_no_longer() {
+        // As KVMD shows the case's LEDs: a change stands at least 100 ms and
+        // no longer than the line keeps it (plan of 2026-11-11, H4). With
+        // H1's 500 ms window, a flash every 400 ms read lit throughout.
         let clock = Arc::new(AtomicU64::new(0));
         let written = Arc::new(Mutex::new(Vec::new()));
         let (state, config) = board(&clock, &written, (0, 0));
@@ -631,11 +632,12 @@ mod turn_tests {
             .atx_leds
             .as_ref()
             .expect("the example has the case LEDs");
+        // Lit for one 20 ms turn of every 400 ms.
         let atx = atx_leds::AtxLedsRuntime::new(
             CaseLeds {
                 clock: Arc::clone(&clock),
                 every: 400,
-                lit: 30,
+                lit: 20,
             },
             atx_leds::atx_power_led_line(atx_config),
             atx_leds::atx_hdd_led_line(atx_config),
@@ -645,7 +647,7 @@ mod turn_tests {
         let mut state = state.with_atx_leds_for_test(Box::new(atx));
         let tick = SAMPLER_TICK_MS.min(config.sample_interval_ms);
         let mut cadence = SampleCadence::new(config.sample_interval_ms);
-        let mut reads = Vec::new();
+        let mut wrong = Vec::new();
         let mut now = 0;
         while now <= 3_000 {
             clock.store(now, Ordering::SeqCst);
@@ -654,19 +656,17 @@ mod turn_tests {
                 rtc: Err("absent"),
             });
             board_turn(&mut state, now, readings).unwrap();
-            if now >= 1_000 && now % 100 == 0 {
+            if now >= 1_000 {
                 let status = state.status();
                 assert!(status.atx_power_led_on);
-                reads.push((now, status.atx_hdd_led_on));
+                let flash = now % 400 < atx_leds::LED_HOLD_MS;
+                if status.atx_hdd_led_on != flash {
+                    wrong.push((now, status.atx_hdd_led_on));
+                }
             }
             now += tick;
         }
-        let off: Vec<u64> = reads
-            .iter()
-            .filter(|(_, on)| !on)
-            .map(|(at, _)| *at)
-            .collect();
-        assert!(off.is_empty(), "the busy disk read idle at {off:?}");
+        assert!(wrong.is_empty(), "the disk read wrongly at {wrong:?}");
     }
 
     #[test]
