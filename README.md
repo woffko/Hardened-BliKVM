@@ -140,7 +140,7 @@ processes instead, each as its own systemd unit with a sandbox:
 | nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server, which it reaches through a Unix socket that serves nginx alone |
 | `bli-kvm-server` | `hardened-blikvm-server`, from the active signed slot | login, sessions, the API and its policy, the web interface, WebRTC signalling, the QUIC gateway's link; no device access of its own |
 | board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the target agent's channel and drive, the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
-| `bli-kvm-boardd` | root | the fan and the board's peripherals |
+| `bli-kvm-boardd` | root | the fan, the board's display, its button and activity LED, and the inputs of the target's power and disk LEDs |
 | uStreamer and the MJPEG proxy | `hardened-blikvm-video` | the capture, and its MJPEG stream for the server |
 | video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches; H.264 with the video engine or with x264 |
 | encoder driver (`hardened-blikvm-ve-enc`) | kernel module, loaded by its own unit | gives the H.264 encoder the video engine, to one opener at a time |
@@ -172,8 +172,10 @@ Design notes are under [`docs/design`](docs/design): the QUIC transport, the
 firewall contract, the administration features, the video encoders (software,
 and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
-agent. Plans, audits and what was shown on the test board are under
+agent, the board daemon (the fan, the display, the case's LEDs). Plans,
+audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261111-hdd-indicator.md`](docs/baselines/audit-20261111-hdd-indicator.md),
 [`audit-20261107-remaining.md`](docs/baselines/audit-20261107-remaining.md),
 [`audit-20261106-code-review.md`](docs/baselines/audit-20261106-code-review.md),
 [`audit-20261025-remote-control.md`](docs/baselines/audit-20261025-remote-control.md),

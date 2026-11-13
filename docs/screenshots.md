@@ -1,7 +1,8 @@
 # Screenshots
 
-The web interface of 0.1.0-beta.10, on a desktop browser (1440x900) and on a
-phone (390x844). They were made with the built page and recorded, anonymized
+The web interface of 0.1.0-beta.10, with the remote desktop and the Power
+menu shot again for 0.1.0-beta.13 (the target's disk LED), on a desktop
+browser (1440x900) and on a phone (390x844). They were made with the built page and recorded, anonymized
 answers of the test board's API: the addresses are documentation addresses
 (RFC 5737, RFC 3849), the names are made up, and the target's screen is a
 drawn stand-in, not a real screen.

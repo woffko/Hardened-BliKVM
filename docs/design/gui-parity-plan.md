@@ -307,7 +307,7 @@ Goal: prove the replacement is complete.
   parity capture and comparison for E5.
 - `tools/phase8_acceptance_report.py`: audited acceptance report over the
   manifest.
-- `tools/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
+- `scripts/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
   `tools/stage_device_board_bundle.py`: board build, verification and staging.
 
 ## Invariants
