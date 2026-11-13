@@ -32,7 +32,7 @@
   "applicationCategory": "UtilitiesApplication",
   "applicationSubCategory": "KVM over IP",
   "operatingSystem": "Linux (Armbian) on the BliKVM v4, Allwinner H616",
-  "softwareVersion": "0.1.0-beta.10",
+  "softwareVersion": "0.1.0-beta.13",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "url": "https://woffko.github.io/Hardened-BliKVM/",
   "codeRepository": "https://github.com/woffko/Hardened-BliKVM",
@@ -154,10 +154,11 @@ footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top:
   <h1>Open-source KVM over IP for the BliKVM v4</h1>
   <p class="lead">Hardened BliKVM is a security-focused IP-KVM firmware for the BliKVM v4 (Allwinner H616). Control a computer's keyboard, mouse and screen from a browser, down to the BIOS, mount ISO images, press its power and reset buttons, from a desktop or a phone. The backend is written in Rust; the web interface is React and TypeScript.</p>
   <div class="buttons">
-    <a class="button primary" href="https://github.com/woffko/Hardened-BliKVM/releases/latest">Download the SD card image</a>
+    <a class="button primary" href="https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.11">Download the SD card image</a>
+    <a class="button" href="https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.13">Latest application (0.1.0-beta.13)</a>
     <a class="button" href="https://github.com/woffko/Hardened-BliKVM">Source code on GitHub</a>
   </div>
-  <div class="badges">Beta · 0.1.0-beta.10 · GPL-3.0-only · BliKVM v4 (Allwinner H616)</div>
+  <div class="badges">Beta · application 0.1.0-beta.13 on the system and card image of 0.1.0-beta.11 · GPL-3.0-only · BliKVM v4 (Allwinner H616)</div>
   <div class="shot">
     <img src="img/02-desktop.png" width="1440" height="900" alt="Hardened BliKVM web interface: the remote computer's desktop under the toolbar in a browser">
   </div>
@@ -173,7 +174,7 @@ footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top:
       <div class="card"><h3>QUIC and WebTransport</h3><p>An optional transport on UDP 443 for the keyboard, the mouse and the H.264 picture, with the bitrate fitted to the narrowest path; a lost session reopens without dropping control.</p></div>
       <div class="card"><h3>Sharp upscaling</h3><p>Where the browser draws with a GPU, a picture shown larger than its size is drawn sharply (deringing and SGSR 1), with a watchdog that turns it off where frames are lost.</p></div>
       <div class="card"><h3>Virtual media</h3><p>Mount an ISO as a CD-ROM or a disk image as USB mass storage, upload images or download them from a URL.</p></div>
-      <div class="card"><h3>ATX power control</h3><p>Power and reset buttons of the target computer, short and long press, and Wake-on-LAN.</p></div>
+      <div class="card"><h3>ATX power control</h3><p>Power and reset buttons of the target computer, short and long press, and Wake-on-LAN. The target's power and disk LEDs are shown live: an HDD indicator under the toolbar's power icon follows the case's disk light, as PiKVM's KVMD shows it.</p></div>
       <div class="card"><h3>Windows target agent</h3><p>An optional agent knows the target's monitors and keyboard layouts, keeps the mouse on the captured monitor, switches layouts, passes clipboard text both ways and locks the session.</p></div>
       <div class="card"><h3>Quality monitor</h3><p>Speed, delay, frames a second, codec and bitrate over the picture, and in its extended level the transport's, the encoder's and the decoder's numbers.</p></div>
       <div class="card"><h3>Network and firewall</h3><p>IPv4, IPv6, DNS, Wi-Fi, TLS, Tailscale, and a firewall with four modes whose changes roll back by themselves unless confirmed.</p></div>
@@ -187,7 +188,7 @@ footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top:
 <section id="screenshots">
   <div class="wrap">
     <h2>Screenshots</h2>
-    <p class="sub">Anonymized: documentation addresses, made-up names and a drawn stand-in for the target's screen. Every menu and settings page is in <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.10/docs/screenshots.md">docs/screenshots.md</a>.</p>
+    <p class="sub">Anonymized: documentation addresses, made-up names and a drawn stand-in for the target's screen. Every menu and settings page is in <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.13/docs/screenshots.md">docs/screenshots.md</a>.</p>
     <div class="gallery">
       <figure><img src="img/04-screen-menu.png" width="1440" height="900" loading="lazy" alt="Screen menu: video mode, resolution, frame rate, scale, upscaling"><figcaption>Screen menu: video mode, resolution, frame rate, upscaling.</figcaption></figure>
       <figure><img src="img/03-confirm-control.png" width="1440" height="900" loading="lazy" alt="Confirm remote control dialog"><figcaption>The first press asks before anything reaches the target.</figcaption></figure>
@@ -195,7 +196,7 @@ footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top:
       <figure><img src="img/08-mouse-menu.png" width="1440" height="900" loading="lazy" alt="Mouse menu"><figcaption>Mouse menu: cursor, mode, desktop layout, release control.</figcaption></figure>
       <figure><img src="img/10-keyboard-menu.png" width="1440" height="900" loading="lazy" alt="Keyboard menu"><figcaption>Keyboard menu: paste, on-screen keyboard, shortcuts, the target's layout and clipboard.</figcaption></figure>
       <figure><img src="img/12-virtual-media.png" width="1440" height="900" loading="lazy" alt="Virtual media dialog with ISO images"><figcaption>Virtual media: ISO images as mass storage or CD-ROM.</figcaption></figure>
-      <figure><img src="img/13-power-menu.png" width="1440" height="900" loading="lazy" alt="ATX power menu"><figcaption>ATX power: reset, short and long press.</figcaption></figure>
+      <figure><img src="img/13-power-menu.png" width="1440" height="900" loading="lazy" alt="ATX power menu with the power and disk LEDs"><figcaption>ATX power: the case's power and disk LEDs, reset, short and long press.</figcaption></figure>
       <figure><img src="img/14-quality-monitor.png" width="1440" height="900" loading="lazy" alt="Quality monitor overlay"><figcaption>The quality monitor's extended level.</figcaption></figure>
       <figure><img src="img/07-screen-upscaling.png" width="1440" height="900" loading="lazy" alt="Upscaling settings"><figcaption>Upscaling: sharpness and size.</figcaption></figure>
       <figure><img src="img/25-settings-system.png" width="1440" height="900" loading="lazy" alt="System settings: network and QUIC transport"><figcaption>Settings: network and the QUIC transport.</figcaption></figure>
@@ -230,22 +231,23 @@ footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top:
       </tbody>
     </table>
     </div>
-    <p style="margin-top:18px">The design notes, the audits and what was shown on the test board are in the repository: <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.10/docs/design">docs/design</a>, <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.10/docs/baselines">docs/baselines</a> and <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.10/docs/security-boundaries.md">docs/security-boundaries.md</a>.</p>
+    <p style="margin-top:18px">The design notes, the audits and what was shown on the test board are in the repository: <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.13/docs/design">docs/design</a>, <a href="https://github.com/woffko/Hardened-BliKVM/tree/v0.1.0-beta.13/docs/baselines">docs/baselines</a> and <a href="https://github.com/woffko/Hardened-BliKVM/blob/v0.1.0-beta.13/docs/security-boundaries.md">docs/security-boundaries.md</a>.</p>
   </div>
 </section>
 
 <section id="install">
   <div class="wrap">
     <h2>Install on a BliKVM v4</h2>
-    <p class="sub">The image needs a microSD card of at least 32 GB. Check the download against <code>SHA256SUMS</code> from the <a href="https://github.com/woffko/Hardened-BliKVM/releases/latest">release</a> first.</p>
+    <p class="sub">The image needs a microSD card of at least 32 GB. The current card image is <a href="https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.11">0.1.0-beta.11's</a>; check the download against its <code>SHA256SUMS</code> first.</p>
     <ol>
       <li>Write the card. Linux or macOS:
         <pre><code>zstd -dc hardened-blikvm-h616-sd.img.zst | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress</code></pre>
         Windows: unpack with <code>zstd -d</code>, then write the <code>.img</code> with balenaEtcher or Rufus.</li>
       <li>Insert the card, connect Ethernet and power the board. The first boot creates the board's own SSH host keys, TLS certificate and identifiers; it takes about a minute.</li>
       <li>Open <code>https://&lt;board address&gt;/</code> and create the administrator account in First Setup, on a trusted network. The password you choose also becomes root's password for SSH.</li>
+      <li>Upload the <a href="https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.13">latest application bundle</a> (0.1.0-beta.13) in Settings &gt; Update.</li>
     </ol>
-    <p>A board that already runs Hardened BliKVM is updated from Settings &gt; Update with the signed application bundle and the signed RAW system update of the release; the release notes say how.</p>
+    <p>A board that already runs Hardened BliKVM is updated from Settings &gt; Update with the signed application bundle and, when a release brings one, the signed RAW system update; each release's notes say how.</p>
   </div>
 </section>
 
