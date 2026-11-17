@@ -65,6 +65,10 @@ the owner answers, `read_only` elsewhere, and a write is refused there. The
 test line (`POST /api/system-log/test`) goes to the journal as before and,
 with a remote host set, on to it.
 
+The kept errors live on the root (`/var/lib/private`), so a RAW system
+update, which writes a new root, starts them afresh; the settings live in
+`/etc/hardened-blikvm`, which the update carries.
+
 ## Sandbox
 
 The forwarder runs as a dynamic user without capabilities

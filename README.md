@@ -79,15 +79,19 @@ find.
 - **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
   system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
   of the main connection), a firewall with four modes and a confirmation that
-  rolls back by itself, time, system log, Tailscale, account (a new password
-  needs the current one), session lock,
+  rolls back by itself, time, system log (the board's errors kept on the
+  card through a hang, the rest in memory, and an optional copy to a syslog
+  server; [`docs/design/system-log-v1.md`](docs/design/system-log-v1.md)),
+  Tailscale, account (a new password needs the current one, and logout on the
+  toolbar too), session lock,
   and the board's display (the vendor's status screen, the vendor's way up)
   going dark after a time without activity (its button, held for a second,
   lights it again).
 - **Updates**: signed application slots with a health check and automatic
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write
-  the old system back if the new one does not start.
+  the old system back if the new one does not start. A hung board resets
+  itself: systemd feeds the SoC's watchdog, and a kernel panic reboots.
 - **Target agent** (Windows, off by default; Settings > Device): with its
   switch on, the board's mouse device carries a vendor collection that a
   small agent on the target talks to, and a read-only drive carries the
@@ -115,8 +119,7 @@ find.
   ([`docs/design/admin-features-v1.md`](docs/design/admin-features-v1.md)).
 
 Not there: audio, and updates fetched from a feed (they are uploaded). The
-time, NTP, remote system log and autostart script settings are shown
-read-only.
+time, NTP and autostart script settings are shown read-only.
 
 ## Screenshots
 
@@ -146,6 +149,7 @@ processes instead, each as its own systemd unit with a sandbox:
 | encoder driver (`hardened-blikvm-ve-enc`) | kernel module, loaded by its own unit | gives the H.264 encoder the video engine, to one opener at a time |
 | Janus | dynamic user | WebRTC media, streaming plugin only |
 | QUIC gateway (`bli-kvm-quic-gateway`) | `hardened-blikvm-quic` | QUIC and TLS on UDP 443 while its switch is on; it holds no authority and passes on what the server allows |
+| system log forwarder (`bli-kvm-syslog-forward`) | dynamic user, no capabilities | journald's messages and the kernel's: errors kept on the card, an optional UDP copy to a syslog server |
 | update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back; start the application at boot, again after a failed attempt |
 | administration helpers | socket-activated, per request; an image download and PicoClaw's installer each as an account of its own | the features behind the switches; PicoClaw starts only from a copy checked against its pinned release |
 
@@ -172,9 +176,11 @@ Design notes are under [`docs/design`](docs/design): the QUIC transport, the
 firewall contract, the administration features, the video encoders (software,
 and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
-agent, the board daemon (the fan, the display, the case's LEDs). Plans,
+agent, the board daemon (the fan, the display, the case's LEDs), the system
+log. Plans,
 audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261117-system-log.md`](docs/baselines/audit-20261117-system-log.md),
 [`audit-20261111-hdd-indicator.md`](docs/baselines/audit-20261111-hdd-indicator.md),
 [`audit-20261107-remaining.md`](docs/baselines/audit-20261107-remaining.md),
 [`audit-20261106-code-review.md`](docs/baselines/audit-20261106-code-review.md),
