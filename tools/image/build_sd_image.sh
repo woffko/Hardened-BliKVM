@@ -320,6 +320,17 @@ assemble() {
     install -d -m 0755 -o 0 -g 0 "$staging/etc/systemd/system.conf.d"
     install -m 0644 -o 0 -g 0 "$packaging/systemd/system.conf.d/60-hardened-blikvm-watchdog.conf" "$staging/etc/systemd/system.conf.d/"
     install -m 0644 -o 0 -g 0 "$packaging/sysctl/60-hardened-blikvm-panic.conf" "$staging/etc/sysctl.d/"
+    # The system log (plan of 2026-11-17, L2): the update runtime installs the
+    # forwarder that syslog.socket starts; it is enabled and is syslog.service.
+    # busybox syslogd and klogd took /dev/log from journald: masked.
+    [ -f "$staging/lib/systemd/system/hardened-blikvm-syslog.service" ] || {
+      echo "the system log forwarder is missing on the source board" >&2
+      exit 1
+    }
+    ln -sfn /lib/systemd/system/hardened-blikvm-syslog.service "$staging/etc/systemd/system/syslog.service"
+    ln -sfn /lib/systemd/system/hardened-blikvm-syslog.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-syslog.service"
+    ln -sfn /dev/null "$staging/etc/systemd/system/busybox-syslogd.service"
+    ln -sfn /dev/null "$staging/etc/systemd/system/busybox-klogd.service"
     # The About page shows this as the system image version.
     printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"

@@ -82,10 +82,12 @@ L1's files.
 
 ## Phase B: the application (L2 to L5)
 
-- **L2. The forwarder.** A small program, `bli-kvm-syslog-forward`, in the
-  application slot, run by a unit of the system that the system's
-  `syslog.socket` starts (journald's `ForwardToSyslog`): without privileges
-  but `CAP_SYSLOG` for `/dev/kmsg`, which journald does not forward; it reads
+- **L2. The forwarder.** A small program, `bli-kvm-syslog-forward`, a part
+  of the system (the update runtime from `0.1.0~dev47`, since only the root
+  execution helper starts the slot's programs), run by a unit that the
+  system's `syslog.socket` starts (journald's `ForwardToSyslog`): without
+  privileges (`kernel.dmesg_restrict` is 0, so `/dev/kmsg`, which journald
+  does not forward, needs none); it reads
   the forwarded messages and the kernel's, appends err and above to the
   file on the card (crit and above synced at once, a mark with the boot's
   identity first, 256 KiB and one rotation), and, while

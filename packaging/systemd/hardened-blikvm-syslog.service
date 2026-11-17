@@ -1,0 +1,60 @@
+[Unit]
+Description=Hardened BliKVM system log forwarder: errors kept on the card, an optional remote copy
+Documentation=https://github.com/woffko/Hardened-BliKVM
+# journald forwards each message to syslog.socket; the kernel's are read
+# from /dev/kmsg (docs/baselines/work-plan-20261117-system-log.md, L2).
+Requires=syslog.socket
+After=syslog.socket
+
+[Service]
+Type=simple
+Sockets=syslog.socket
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-syslog-forward
+# The board owner writes the remote host, the priority and the kernel's
+# switch; without the file nothing is sent and the errors are still kept.
+EnvironmentFile=-/etc/hardened-blikvm/syslog.env
+DynamicUser=yes
+StateDirectory=hardened-blikvm-syslog
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateUsers=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+# The kernel's lines are read from /dev/kmsg.
+ProtectKernelLogs=no
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+# The boot's identity and the board's name are read from /proc/sys.
+ProcSubset=all
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# The remote copy goes to the operator's host; nothing on the board itself,
+# Janus's loopback address included (security review of 2026-10-18, MED-03).
+IPAddressDeny=localhost
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=/dev/kmsg r
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+Alias=syslog.service
