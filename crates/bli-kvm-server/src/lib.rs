@@ -3450,6 +3450,9 @@ mod tests {
         (app, root, requests, owner)
     }
 
+    // The board's server: the capability is offered with its restricted
+    // controls.
+    #[cfg(feature = "restricted-control-surface")]
     #[tokio::test]
     async fn the_system_log_settings_and_logs_go_through_the_board_owner() {
         // The System Log page made real (plan of 2026-11-17, L3): the owner
