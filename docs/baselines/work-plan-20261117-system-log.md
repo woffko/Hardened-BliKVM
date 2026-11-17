@@ -43,9 +43,20 @@ sent to the target.
    instead of the ring in memory (recommended; it survives a hang, at the
    cost of the card's writes). The alternative keeps the ring and relies on
    the remote copy.
+   **Changed by the operator on 2026-11-17**, the card to be written as
+   little as possible: busybox syslogd holds only what programs send through
+   `syslog(3)` (sshd, cron; none of the board's services and no kernel line
+   was in its ring), and takes `/dev/log` from journald. So the ramlog and
+   the journal in memory stay; busybox syslogd and klogd are switched off,
+   `/dev/log` going back to journald; a small forwarder keeps on the card
+   only the messages of priority err and above (`/var/lib/hardened-blikvm-syslog`,
+   256 KiB and one rotation, a mark at each boot, crit and above synced at
+   once). This board's journal held no err line in seven hours.
 2. **The remote copy.** UDP syslog to a host and port the operator sets,
    off by default, the local log kept beside it (`-R host:port -L`), as the
    page offers (recommended).
+   **Changed with decision 1:** the forwarder sends the copy, the messages
+   up to the page's priority, while the remote host is set.
 3. **Release.** An application release with L2 to L5 and a system release
    (card image and RAW sequence 12) with L1, at the operator's word
    (recommended); or the application now and L1 with the next system.
@@ -56,6 +67,9 @@ The operator took decisions 1 to 4 as written on 2026-11-17 and added an
 item: a logout button on the toolbar (L5).
 
 ## Phase A: the system (L1)
+
+L2's system part (its unit, busybox syslogd masked) joins the system with
+L1's files.
 
 - **L1. The watchdog and the panic reboot in the system.** The image and the
   system's staging carry `/etc/systemd/system.conf.d/60-hardened-blikvm-watchdog.conf`
@@ -68,29 +82,40 @@ item: a logout button on the toolbar (L5).
 
 ## Phase B: the application (L2 to L5)
 
-- **L2. The board owner keeps the system log.** A typed request carries the
-  page's settings (remote on, host, port, priority 1 to 8, buffer 16 to
-  1024 KiB, rotations 0 to 4, small output, stripped timestamps, the kernel
-  log and its console level), validated as the server validates them
-  today. The owner writes them as busybox syslogd and klogd options
-  (`/etc/default/busybox-syslogd`), the local log on the card per decision
-  1, restarts the two services and reads the options back; a write that
-  fails leaves the previous options. Tests: the options for each field;
-  invalid values refused; a failed write or restart leaves the file as it
-  was.
-- **L3. The server's routes.** `POST /api/system-log/config` (CSRF, a
-  signed-in session) through the owner, `GET` from the owner;
-  `GET /api/system-log/messages` reads, through the owner, the local log
-  (`system`), its kernel lines (`kernel`) and the journal of the board's own
-  units (`backend`), bounded as today; `POST /api/system-log/test` sends a
-  test message. The capability `system_log` becomes `read_write`. Tests: each
-  route with a played owner; no session, no answer; the route count follows.
-- **L4. The System Log page.** The switches and fields work when the capability is
-  `read_write`; the page says where the local log is kept. English and
-  Russian. Tests: a contract through the built page (a change saved and read
-  back, a remote host required when remote is on, the three kinds shown), the
-  GUI source test.
-
+- **L2. The forwarder.** A small program, `bli-kvm-syslog-forward`, in the
+  application slot, run by a unit of the system that the system's
+  `syslog.socket` starts (journald's `ForwardToSyslog`): without privileges
+  but `CAP_SYSLOG` for `/dev/kmsg`, which journald does not forward; it reads
+  the forwarded messages and the kernel's, appends err and above to the
+  file on the card (crit and above synced at once, a mark with the boot's
+  identity first, 256 KiB and one rotation), and, while
+  `/etc/hardened-blikvm/syslog.json` names a remote host, sends the
+  messages up to its priority there over UDP (RFC 3164 lines, the board's
+  name added). The system's part, carried by the image like L1:
+  the unit, busybox syslogd and klogd masked. Tests: the filter and the
+  file's bound and rotation, the boot mark, the remote lines, the kernel
+  lines' priority, the unit's sandbox in the image's check.
+- **L3. The board owner and the server.** Typed requests carry the page's
+  settings (remote on, host, port, priority 1 to 8, the kernel's lines on
+  or off), validated as the server validates them today; the owner writes
+  `/etc/hardened-blikvm/syslog.json`, restarts the forwarder and reads the
+  settings back, and a failed write leaves the previous file. A read
+  request returns, bounded, this boot's journal (`system`), its kernel lines
+  (`kernel`), the board's own units (`backend`) or the errors kept on the
+  card (`saved`). The server's `POST /api/system-log/config` (CSRF, a
+  signed-in session) and `GET` go through the owner, `GET
+  /api/system-log/messages` too, `POST /api/system-log/test` logs a test
+  line. The capability `system_log` is `read_write` where the system has the
+  forwarder's unit, `read_only` otherwise. Tests: the owner's requests with a
+  played journal and file; each route with a played owner; no session, no
+  answer; the route counts follow.
+- **L4. The System Log page.** The remote host, port, priority and the
+  kernel's switch work when the capability is `read_write`; busybox's own
+  fields (buffer, rotations, small output, stripped timestamps, console
+  level) are not shown on this board; the kinds include the errors kept on
+  the card. English and Russian. Tests: a contract through the built page (a
+  change saved and read back, a host required when remote is on, the four
+  kinds), the GUI source test.
 - **L5. Logout on the toolbar.** `web/src/pages/desktop/menu`: a logout
   button after Settings, asking as Settings > Account does ("Are you sure
   you want to logout?") and logging out the same way (the session ended on
