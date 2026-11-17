@@ -156,7 +156,11 @@ assemble() {
       "$gadget_state/target-agent.env" "$gadget_state/system-switches.json" \
       "$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json \
       "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
-      "$staging/var/lib/hardened-blikvm/screen-area.json"
+      "$staging/var/lib/hardened-blikvm/screen-area.json" \
+      "$staging/etc/hardened-blikvm/syslog.env"
+    # The system log forwarder keeps the source board errors; a new card
+    # starts with none and with the remote copy off (plan of 2026-11-17, L2).
+    rm -rf "$staging/var/lib/private/hardened-blikvm-syslog" "$staging/var/lib/hardened-blikvm-syslog"
     # The system-action journal is the source board'"'"'s reboots under its boot
     # identities, one perhaps not yet accepted, and it has room for sixteen:
     # a new card'"'"'s owner starts an empty one.
@@ -186,7 +190,7 @@ assemble() {
       \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
       -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
       -o -name hid-only.env -o -name display-sleep.env -o -name target-agent.env \
-      -o -name system-switches.json \
+      -o -name system-switches.json -o -name syslog.env \
       -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
