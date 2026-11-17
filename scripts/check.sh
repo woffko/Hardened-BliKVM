@@ -255,6 +255,7 @@ node --check tools/playwright/hid_lease_lost_contract.mjs
 node --check tools/playwright/power_focus_contract.mjs
 node --check tools/playwright/hdd_indicator_contract.mjs
 node --check tools/playwright/system_log_contract.mjs
+node --check tools/playwright/logout_toolbar_contract.mjs
 node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
 node --check tools/playwright/webrtc_unavailable_contract.mjs
@@ -961,6 +962,7 @@ node tools/playwright/hid_lease_lost_contract.mjs
 node tools/playwright/power_focus_contract.mjs
 node tools/playwright/hdd_indicator_contract.mjs
 node tools/playwright/system_log_contract.mjs
+node tools/playwright/logout_toolbar_contract.mjs
 node tools/playwright/network_contract.mjs
 node tools/playwright/firewall_modes_contract.mjs
 node tools/playwright/webrtc_unavailable_contract.mjs

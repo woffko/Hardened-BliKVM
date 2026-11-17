@@ -1492,6 +1492,7 @@ const en = {
       toggle: 'Toggle Fullscreen'
     },
     menu: {
+      logout: 'Log out',
       collapse: 'Collapse Menu',
       expand: 'Expand Menu',
       show: 'Show Menu'
