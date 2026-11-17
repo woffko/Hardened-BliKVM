@@ -15,8 +15,11 @@ ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-syslog-forward
 EnvironmentFile=-/etc/hardened-blikvm/syslog.env
 DynamicUser=yes
 StateDirectory=hardened-blikvm-syslog
-StateDirectoryMode=0700
-UMask=0077
+# The board owner, root without CAP_DAC_OVERRIDE, reads the kept errors for
+# the System Log page; /var/lib/private, which holds the directory, stays
+# root's alone (0700), so no other account reaches them.
+StateDirectoryMode=0755
+UMask=0022
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=10s

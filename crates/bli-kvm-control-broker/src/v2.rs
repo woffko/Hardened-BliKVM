@@ -56,6 +56,8 @@ pub struct SystemSettings {
     mdns: Option<crate::device_settings::MdnsState>,
     tls: Option<crate::tls_settings::TlsState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
+    /// The System Log page's settings and reads (plan of 2026-11-17, L3).
+    system_log: Option<crate::system_log_settings::SystemLogConfig>,
 }
 
 pub type SharedSystemSettings = std::sync::Arc<std::sync::Mutex<SystemSettings>>;
@@ -77,6 +79,9 @@ impl SystemSettings {
                 | PlatformControlRequestV2::TlsState {}
                 | PlatformControlRequestV2::TlsSet { .. }
                 | PlatformControlRequestV2::BoardStatus {}
+                | PlatformControlRequestV2::SystemLog { .. }
+                | PlatformControlRequestV2::SystemLogState {}
+                | PlatformControlRequestV2::SystemLogRead { .. }
         )
     }
 
@@ -136,6 +141,18 @@ impl SystemSettings {
                 .as_mut()
                 .map_or_else(disabled, |tls| tls.set(*enabled)),
             PlatformControlRequestV2::BoardStatus {} => self.board_status(),
+            PlatformControlRequestV2::SystemLog { settings } => self
+                .system_log
+                .as_mut()
+                .map_or_else(disabled, |log| log.set(settings)),
+            PlatformControlRequestV2::SystemLogState {} => self
+                .system_log
+                .as_ref()
+                .map_or_else(disabled, |log| log.state()),
+            PlatformControlRequestV2::SystemLogRead { kind, lines } => self
+                .system_log
+                .as_mut()
+                .map_or_else(disabled, |log| log.read(*kind, *lines)),
             _ => disabled(),
         }
     }
@@ -370,6 +387,11 @@ impl ControlV2State {
 
     pub fn with_quic(&mut self, quic: crate::quic_settings::QuicSettings) {
         self.system_settings_mut().quic = Some(quic);
+    }
+
+    /// Attach the System Log page's settings and reads.
+    pub fn with_system_log_config(&mut self, config: crate::system_log_settings::SystemLogConfig) {
+        self.system_settings_mut().system_log = Some(config);
     }
 
     fn system_settings_mut(&mut self) -> std::sync::MutexGuard<'_, SystemSettings> {
@@ -1042,7 +1064,10 @@ impl ControlV2State {
             | PlatformControlRequestV2::MdnsState {}
             | PlatformControlRequestV2::TlsState {}
             | PlatformControlRequestV2::TlsSet { .. }
-            | PlatformControlRequestV2::BoardStatus {} => {
+            | PlatformControlRequestV2::BoardStatus {}
+            | PlatformControlRequestV2::SystemLog { .. }
+            | PlatformControlRequestV2::SystemLogState {}
+            | PlatformControlRequestV2::SystemLogRead { .. } => {
                 let response = self.system_settings_mut().dispatch(request);
                 self.note_system_setting(request, &response);
                 response

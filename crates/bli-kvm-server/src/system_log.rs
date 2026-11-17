@@ -1,12 +1,12 @@
-//! Read-only system log compatibility surface.
+//! The System Log page (docs/design/system-log-v1.md;
+//! docs/baselines/work-plan-20261117-system-log.md, L3).
 //!
-//! Ported from the Hardened NanoKVM reference response shapes and validation.
-//! BLi-KVM keeps this read-only and command-free: the unprivileged network
-//! process only tails plain log files. The privileged syslogd/klogd/`dmesg`
-//! paths of the reference are intentionally not reproduced here.
-
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+//! The page keeps Hardened NanoKVM's settings and views. On this board the
+//! board owner writes the settings for the system's log forwarder, which
+//! keeps the errors on the card and sends an optional remote copy, and reads
+//! this boot's journal and the kept errors; the server holds no log and runs
+//! no command. Of the reference's settings the remote host, its port, the
+//! priority and the kernel's switch apply; the rest keep their defaults.
 
 use axum::Json;
 use axum::extract::Query;
@@ -19,14 +19,13 @@ use crate::{
 };
 use axum::{Extension, extract::State};
 
-const CONFIG_FILE: &str = "/etc/kvm/syslog.json";
-const LOG_FILE: &str = "/tmp/hardened-syslog/messages";
-const FALLBACK_LOG_FILES: [&str; 2] = ["/var/log/messages", "/tmp/messages"];
-const BACKEND_LOG_FILE: &str = "/tmp/blikvm-server.log";
-const KERNEL_LOG_FILE: &str = "/var/log/kern.log";
-const MAX_LOG_VIEW_BYTES: usize = 256 * 1024;
+/// Where the forwarder keeps the errors on the card.
+const KEPT_ERRORS_FILE: &str = "/var/lib/hardened-blikvm-syslog/errors.log";
+/// The forwarder's unit, which the system installs from update runtime dev47;
+/// without it the settings are shown and not written.
+pub const FORWARDER_UNIT_PATH: &str = "/lib/systemd/system/hardened-blikvm-syslog.service";
 const DEFAULT_LINES: usize = 200;
-const MAX_LINES: usize = 1000;
+const MAX_LINES: usize = bli_kvm_core::SYSTEM_LOG_MAX_LINES as usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -60,6 +59,29 @@ impl Default for SystemLogConfig {
     }
 }
 
+impl SystemLogConfig {
+    fn from_settings(settings: &bli_kvm_core::SystemLogSettings) -> Self {
+        Self {
+            remote_enabled: settings.remote_enabled,
+            remote_host: settings.remote_host.clone(),
+            remote_port: settings.remote_port,
+            priority: settings.priority,
+            kernel_enabled: settings.kernel_enabled,
+            ..Self::default()
+        }
+    }
+
+    fn settings(&self) -> bli_kvm_core::SystemLogSettings {
+        bli_kvm_core::SystemLogSettings {
+            remote_enabled: self.remote_enabled,
+            remote_host: self.remote_host.clone(),
+            remote_port: self.remote_port,
+            priority: self.priority,
+            kernel_enabled: self.kernel_enabled,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemLogConfigResponse {
@@ -67,6 +89,8 @@ pub struct SystemLogConfigResponse {
     local_log_file: &'static str,
     local_storage: &'static str,
     remote_protocol: &'static str,
+    /// Whether the board writes the settings: its system has the forwarder.
+    writable: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,98 +109,163 @@ pub struct LogResponse {
     truncated: bool,
 }
 
-pub async fn get_config() -> AppResult<Json<ApiResponse<SystemLogConfigResponse>>> {
-    Ok(Json(ApiResponse::ok(SystemLogConfigResponse {
-        config: read_config()?,
-        local_log_file: LOG_FILE,
-        local_storage: "tmpfs",
-        remote_protocol: "udp",
-    })))
+/// An operation identity for one request of this session.
+fn operation_id(session: &crate::auth::session::Session) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"hardened-blikvm-system-log-op-v1");
+    hasher.update(session.token.as_bytes());
+    hasher.update(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
+    hasher
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
-pub async fn get_messages(
+async fn ask(
+    state: &AppState,
+    session: &crate::auth::session::Session,
+    request: bli_kvm_core::PlatformControlRequestV2,
+) -> AppResult<bli_kvm_control_protocol::ControlResponse> {
+    let control = state
+        .control
+        .as_ref()
+        .ok_or_else(|| AppError::ServiceUnavailable("system log is not configured".into()))?;
+    control
+        .execute_v2(operation_id(session), request)
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("system log is unavailable".into()))
+}
+
+async fn read_config(
+    state: &AppState,
+    session: &crate::auth::session::Session,
+) -> AppResult<SystemLogConfigResponse> {
+    let (settings, writable) = if state.control.is_some() {
+        match ask(
+            state,
+            session,
+            bli_kvm_core::PlatformControlRequestV2::SystemLogState {},
+        )
+        .await?
+        {
+            bli_kvm_control_protocol::ControlResponse::SystemLogState { settings, writable } => {
+                (settings, writable && state.options.system_log_writes)
+            }
+            _ => (bli_kvm_core::SystemLogSettings::default(), false),
+        }
+    } else {
+        (bli_kvm_core::SystemLogSettings::default(), false)
+    };
+    Ok(SystemLogConfigResponse {
+        config: SystemLogConfig::from_settings(&settings),
+        local_log_file: KEPT_ERRORS_FILE,
+        local_storage: "card",
+        remote_protocol: "udp",
+        writable,
+    })
+}
+
+/// `GET /api/system-log/config`: the settings as the board owner reads them.
+pub(crate) async fn get_config(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<SystemLogConfigResponse>>> {
+    Ok(Json(ApiResponse::ok(read_config(&state, &session).await?)))
+}
+
+/// `POST /api/system-log/config`: the board owner writes the settings for
+/// the forwarder; the answer is the settings read back.
+pub(crate) async fn set_config(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(config): Json<SystemLogConfig>,
+) -> AppResult<Json<ApiResponse<SystemLogConfigResponse>>> {
+    if !state.options.system_log_writes {
+        return Err(AppError::BadRequest(
+            "this board's system has no system log forwarder".into(),
+        ));
+    }
+    let config = validate_config(config)?;
+    match ask(
+        &state,
+        &session,
+        bli_kvm_core::PlatformControlRequestV2::SystemLog {
+            settings: config.settings(),
+        },
+    )
+    .await?
+    {
+        bli_kvm_control_protocol::ControlResponse::Applied => {}
+        bli_kvm_control_protocol::ControlResponse::Rejected { code } => {
+            return Err(AppError::BadRequest(format!(
+                "the board refused the settings: {}",
+                crate::hid::rejection_name(code)
+            )));
+        }
+        _ => {
+            return Err(AppError::ServiceUnavailable(
+                "system log is unavailable".into(),
+            ));
+        }
+    }
+    Ok(Json(ApiResponse::ok(read_config(&state, &session).await?)))
+}
+
+/// `GET /api/system-log/messages`: this boot's journal (`system`), its
+/// kernel lines (`kernel`), the board's own units (`backend`) or the errors
+/// kept on the card (`saved`), through the board owner.
+pub(crate) async fn get_messages(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
     Query(query): Query<LogQuery>,
 ) -> AppResult<Json<ApiResponse<LogResponse>>> {
     let kind = query.kind.unwrap_or_else(|| "system".to_string());
     let lines = query.lines.unwrap_or(DEFAULT_LINES).clamp(1, MAX_LINES);
-
-    let (content, truncated) = match kind.as_str() {
-        "system" => read_first_available(&system_log_candidates(), lines)?,
-        "backend" => read_tail(Path::new(BACKEND_LOG_FILE), lines)?,
-        "kernel" => read_tail(Path::new(KERNEL_LOG_FILE), lines)?,
+    let log = match kind.as_str() {
+        "system" => bli_kvm_core::SystemLogKind::System,
+        "kernel" => bli_kvm_core::SystemLogKind::Kernel,
+        "backend" => bli_kvm_core::SystemLogKind::Backend,
+        "saved" => bli_kvm_core::SystemLogKind::Saved,
         _ => return Err(AppError::BadRequest("invalid log kind".into())),
     };
-
+    let (content, truncated) = if state.control.is_some() {
+        match ask(
+            &state,
+            &session,
+            bli_kvm_core::PlatformControlRequestV2::SystemLogRead {
+                kind: log,
+                lines: lines as u16,
+            },
+        )
+        .await?
+        {
+            bli_kvm_control_protocol::ControlResponse::SystemLogText { content, truncated } => {
+                (content, truncated)
+            }
+            _ => {
+                return Err(AppError::ServiceUnavailable(
+                    "system log is unavailable".into(),
+                ));
+            }
+        }
+    } else {
+        (String::new(), false)
+    };
     Ok(Json(ApiResponse::ok(LogResponse {
         kind,
         content,
         lines,
         truncated,
     })))
-}
-
-fn system_log_candidates() -> Vec<&'static str> {
-    std::iter::once(LOG_FILE)
-        .chain(FALLBACK_LOG_FILES)
-        .collect()
-}
-
-fn read_first_available(paths: &[&str], lines: usize) -> AppResult<(String, bool)> {
-    for path in paths {
-        if Path::new(path).exists() {
-            return read_tail(Path::new(path), lines);
-        }
-    }
-    Ok((String::new(), false))
-}
-
-fn read_tail(path: &Path, lines: usize) -> AppResult<(String, bool)> {
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok((String::new(), false));
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let length = file.metadata()?.len();
-    let read_length = length.min(MAX_LOG_VIEW_BYTES as u64) as usize;
-    let start = length.saturating_sub(read_length as u64);
-    let mut buffer = vec![0_u8; read_length];
-    file.seek(SeekFrom::Start(start))?;
-    file.read_exact(&mut buffer)?;
-
-    let truncated = start > 0;
-    let mut content = String::from_utf8_lossy(&buffer).to_string();
-    if truncated {
-        if let Some(position) = content.find('\n') {
-            content = content[position + 1..].to_string();
-        }
-    }
-    Ok((tail_lines(&content, lines), truncated))
-}
-
-fn tail_lines(content: &str, lines: usize) -> String {
-    let all_lines: Vec<&str> = content.lines().collect();
-    let start = all_lines.len().saturating_sub(lines);
-    let mut output = all_lines[start..].join("\n");
-    if content.ends_with('\n') && !output.is_empty() {
-        output.push('\n');
-    }
-    output
-}
-
-fn read_config() -> AppResult<SystemLogConfig> {
-    match std::fs::read_to_string(CONFIG_FILE) {
-        Ok(content) => {
-            let config: SystemLogConfig = serde_json::from_str(&content)
-                .map_err(|error| AppError::Config(format!("invalid syslog config: {error}")))?;
-            validate_config(config)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(SystemLogConfig::default())
-        }
-        Err(error) => Err(error.into()),
-    }
 }
 
 fn validate_config(mut config: SystemLogConfig) -> AppResult<SystemLogConfig> {
@@ -295,37 +384,6 @@ mod tests {
             ..SystemLogConfig::default()
         };
         assert!(validate_config(config).is_ok());
-    }
-
-    #[test]
-    fn tail_keeps_the_requested_suffix() {
-        let content = "one\ntwo\nthree\nfour\n";
-        assert_eq!(tail_lines(content, 2), "three\nfour\n");
-        assert_eq!(tail_lines(content, 10), content);
-        assert_eq!(tail_lines("only", 1), "only");
-        assert_eq!(tail_lines("", 5), "");
-    }
-
-    #[test]
-    fn tail_of_a_file_clamps_and_reports_truncation() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("messages");
-        let content: String = (0..500).map(|index| format!("line {index}\n")).collect();
-        std::fs::write(&path, &content).unwrap();
-        let (tail, truncated) = read_tail(&path, 3).unwrap();
-        assert_eq!(tail, "line 497\nline 498\nline 499\n");
-        assert!(!truncated);
-        let (tail, truncated) = read_tail(Path::new("/nonexistent/messages"), 3).unwrap();
-        assert_eq!(tail, "");
-        assert!(!truncated);
-    }
-
-    #[test]
-    fn missing_candidates_yield_empty_output() {
-        let (content, truncated) =
-            read_first_available(&["/nonexistent/a", "/nonexistent/b"], 10).unwrap();
-        assert_eq!(content, "");
-        assert!(!truncated);
     }
 }
 

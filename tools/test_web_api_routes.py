@@ -36,7 +36,6 @@ GATED = {
     ("hid.ts", "paste"): "paste: the restricted HID lease types instead",
     ("hid.ts", "reset"): "HID reset: legacy HID only",
     ("network.ts", "verifyApLogin"): "Wi-Fi access-point page: the AP mode is refused",
-    ("system-log.ts", "setConfig"): "system log: read-only capability",
     ("system-time.ts", "setConfig"): "time: read-only capability",
     ("system-time.ts", "syncNow"): "time: read-only capability",
     ("virtual-device.ts", "getVirtualDevice"): "virtual devices: capability unavailable",

@@ -45,12 +45,32 @@ the journal in memory stay, and only the errors are kept on the card.
 On this board's journal, seven hours held three warnings and no error: the
 card sees a boot mark and the rare error.
 
+## The page, the board owner and the server
+
+The board owner writes the page's settings (`SystemLog`), whole and root's
+alone, and restarts the forwarder; if the restart fails it puts the previous
+file back and starts the forwarder with it. It reads them back
+(`SystemLogState`, with whether the system has the forwarder's unit), and
+reads a log (`SystemLogRead`): this boot's journal (`system`), its kernel
+lines (`kernel`), the board's own units and nginx (`backend`), through
+`journalctl` with fixed arguments, a 10 s deadline and a bound on its
+output, or the errors kept on the card (`saved`); the answer is the tail,
+at most 1000 lines and 16 KiB, within one control message. These requests
+run on the owner's settings worker, not under the lock HID leases take.
+
+The server's `GET` and `POST /api/system-log/config` and
+`GET /api/system-log/messages` go through the owner; the capability
+`system_log` is `read_write` where the server finds the forwarder's unit and
+the owner answers, `read_only` elsewhere, and a write is refused there. The
+test line (`POST /api/system-log/test`) goes to the journal as before and,
+with a remote host set, on to it.
+
 ## Sandbox
 
 The forwarder runs as a dynamic user without capabilities
 (`CapabilityBoundingSet=`), reads `/dev/kmsg` only (`DeviceAllow=/dev/kmsg r`;
 `kernel.dmesg_restrict` is 0 on this system), writes only its state
-directory, and reaches no address on the board itself
+directory (readable by root alone, through `/var/lib/private`), and reaches no address on the board itself
 (`IPAddressDeny=localhost`), Janus's included. `systemd-analyze security`
 rates its exposure 1.4.
 

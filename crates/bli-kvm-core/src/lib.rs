@@ -14,6 +14,7 @@ mod firewall;
 mod inventory;
 pub mod nginx_redirect;
 mod platform;
+mod system_log;
 mod video_settings;
 
 pub use admin_features::{ADMIN_FEATURES_PATH, AdminFeatureSwitches};
@@ -55,6 +56,10 @@ pub use inventory::{
     RtcObservation, RuntimeInventory, RuntimeVersions, ThermalObservation,
 };
 pub use platform::CapabilityProvider;
+pub use system_log::{
+    SYSTEM_LOG_ENV_PATH, SYSTEM_LOG_MAX_LINES, SYSTEM_LOG_MAX_TEXT_BYTES, SYSTEM_LOG_UNIT,
+    SystemLogKind, SystemLogSettings, system_log_host_is_valid,
+};
 pub use video_settings::{
     JIGGLE_DELTA, JIGGLE_INTERVAL_SECONDS, MouseJigglerChange, MouseJigglerError, MouseJigglerMode,
     VIDEO_RESOLUTION_DEFAULT, VIDEO_RESOLUTION_ENV, VIDEO_RESOLUTIONS, jiggle_reports,

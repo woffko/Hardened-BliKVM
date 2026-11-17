@@ -120,6 +120,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         system_actions_enabled: env::var("BLI_KVM_SYSTEM_ACTIONS").as_deref() == Ok("1"),
         network_writes_enabled: env::var("BLI_KVM_NETWORK_WRITES").as_deref() == Ok("1"),
         firewall_modes_enabled: env::var("BLI_KVM_FIREWALL_MODES").as_deref() == Ok("1"),
+        // The forwarder comes with the system (update runtime dev47).
+        system_log_writes: std::path::Path::new(bli_kvm_server::SYSTEM_LOG_FORWARDER_UNIT)
+            .is_file(),
         video_controls_enabled: env::var("BLI_KVM_VIDEO_CONTROLS").as_deref() == Ok("1"),
         engine_socket: env::var_os("BLI_KVM_USTREAMER_SOCKET").map(PathBuf::from),
         h264_encoder_status: env::var_os("BLI_KVM_H264_ENCODER_STATUS").map(PathBuf::from),

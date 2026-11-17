@@ -57,6 +57,8 @@ mod scripts;
 mod session_lock;
 mod shortcuts;
 pub mod shutdown;
+/// The system log forwarder's unit: present where the system has it.
+pub const SYSTEM_LOG_FORWARDER_UNIT: &str = system_log::FORWARDER_UNIT_PATH;
 mod ssh;
 mod state_file;
 mod system_action;
@@ -199,6 +201,9 @@ pub struct ServerOptions {
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
     pub firewall_modes_enabled: bool,
+    /// The system has the system log forwarder, whose settings the board
+    /// owner writes (docs/design/system-log-v1.md).
+    pub system_log_writes: bool,
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
@@ -284,6 +289,7 @@ impl Default for ServerOptions {
             picoclaw_mcp_url: None,
             network_writes_enabled: false,
             firewall_modes_enabled: false,
+            system_log_writes: false,
             media_directory: None,
             media_store_must_be_mounted: false,
             quic_link_socket: None,
@@ -485,6 +491,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.network.dns = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.ipv6 = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.wol = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        // The System Log page's settings are written where the system has
+        // the forwarder and the owner writes them.
+        if options.system_log_writes && options.control_socket.is_some() {
+            manifest.board.features.insert(
+                "system_log".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
         }
         if options.firewall_modes_enabled {
             manifest.board.features.insert(
@@ -748,7 +762,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(admin_features::list).post(admin_features::update),
         )
         .route("/vm/hardware", get(vm_info::vm_hardware))
-        .route("/system-log/config", get(system_log::get_config))
+        .route(
+            "/system-log/config",
+            get(system_log::get_config).post(system_log::set_config),
+        )
         .route("/system-log/messages", get(system_log::get_messages))
         .route("/system-log/test", post(system_log::send_test))
         .route("/diagnostics", get(diagnostics_view))
@@ -3350,6 +3367,247 @@ mod tests {
             .await
             .unwrap();
         server.await.unwrap();
+        owner.abort();
+    }
+
+    /// A played board owner for the System Log page: it answers the
+    /// settings it was last given, takes new ones, and reads the kept errors,
+    /// recording every request.
+    fn system_log_owner(
+        listener: UnixListener,
+        requests: Arc<std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut settings = bli_kvm_core::SystemLogSettings::default();
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut prefix = [0_u8; 4];
+                if stream.read_exact(&mut prefix).await.is_err() {
+                    continue;
+                }
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                if stream.read_exact(&mut payload).await.is_err() {
+                    continue;
+                }
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                requests.lock().unwrap().push(request.request.clone());
+                let response = match &request.request {
+                    bli_kvm_core::PlatformControlRequestV2::SystemLogState {} => {
+                        bli_kvm_control_protocol::ControlResponse::SystemLogState {
+                            settings: settings.clone(),
+                            writable: true,
+                        }
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::SystemLog { settings: next } => {
+                        settings = next.clone();
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::SystemLogRead { .. } => {
+                        bli_kvm_control_protocol::ControlResponse::SystemLogText {
+                            content: "2026-11-14T10:00:00Z err kernel: mmc0: timeout\n".into(),
+                            truncated: false,
+                        }
+                    }
+                    _ => bli_kvm_control_protocol::ControlResponse::Rejected {
+                        code: bli_kvm_control_protocol::ControlRejectionCode::CapabilityDisabled,
+                    },
+                };
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                let _ = stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await;
+            }
+        })
+    }
+
+    async fn system_log_app(
+        writes: bool,
+    ) -> (
+        Router,
+        tempfile::TempDir,
+        Arc<std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let owner = system_log_owner(
+            UnixListener::bind(&control_socket).unwrap(),
+            Arc::clone(&requests),
+        );
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            system_log_writes: writes,
+            ..ServerOptions::default()
+        });
+        (app, root, requests, owner)
+    }
+
+    #[tokio::test]
+    async fn the_system_log_settings_and_logs_go_through_the_board_owner() {
+        // The System Log page made real (plan of 2026-11-17, L3): the owner
+        // writes the forwarder's settings and reads the logs.
+        let (app, _root, requests, owner) = system_log_app(true).await;
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let get = |uri: &str, cookie: &str| {
+            Request::builder()
+                .uri(uri)
+                .header(header::HOST, "kvm.test")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let manifest = json_body(
+            app.clone()
+                .oneshot(get("/api/capabilities", &cookie))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["board"]["features"]["system_log"]["availability"],
+            "read_write"
+        );
+        let body = json_body(
+            app.clone()
+                .oneshot(get("/api/system-log/config", &cookie))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["writable"], true);
+        assert_eq!(body["data"]["config"]["remoteEnabled"], false);
+        assert_eq!(
+            body["data"]["localLogFile"],
+            "/var/lib/hardened-blikvm-syslog/errors.log"
+        );
+
+        let mut set = json_request(
+            Method::POST,
+            "/api/system-log/config",
+            serde_json::json!({
+                "remoteEnabled": true,
+                "remoteHost": "logs.example.test",
+                "remotePort": 5514,
+                "priority": 5,
+                "bufferKb": 200,
+                "rotations": 1,
+                "smallOutput": false,
+                "stripTimestamps": false,
+                "kernelEnabled": false,
+                "kernelConsoleLevel": 7
+            }),
+        );
+        set.headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        set.headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let body = json_body(app.clone().oneshot(set).await.unwrap()).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["config"]["remoteHost"], "logs.example.test");
+        assert_eq!(body["data"]["config"]["remotePort"], 5514);
+        assert_eq!(body["data"]["config"]["kernelEnabled"], false);
+        assert!(requests.lock().unwrap().contains(
+            &bli_kvm_core::PlatformControlRequestV2::SystemLog {
+                settings: bli_kvm_core::SystemLogSettings {
+                    remote_enabled: true,
+                    remote_host: "logs.example.test".into(),
+                    remote_port: 5514,
+                    priority: 5,
+                    kernel_enabled: false,
+                },
+            }
+        ));
+
+        let body = json_body(
+            app.clone()
+                .oneshot(get("/api/system-log/messages?kind=saved&lines=50", &cookie))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["kind"], "saved");
+        assert!(
+            body["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("mmc0: timeout")
+        );
+        assert!(requests.lock().unwrap().contains(
+            &bli_kvm_core::PlatformControlRequestV2::SystemLogRead {
+                kind: bli_kvm_core::SystemLogKind::Saved,
+                lines: 50,
+            }
+        ));
+        let body = json_body(
+            app.clone()
+                .oneshot(get("/api/system-log/messages?kind=other", &cookie))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(body["code"], 0);
+        let unsigned = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/system-log/config")
+                    .header(header::HOST, "kvm.test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+        owner.abort();
+    }
+
+    #[tokio::test]
+    async fn a_system_without_the_forwarder_keeps_the_system_log_read_only() {
+        let (app, _root, requests, owner) = system_log_app(false).await;
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let manifest = json_body(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/capabilities")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["board"]["features"]["system_log"]["availability"],
+            "read_only"
+        );
+        let mut set = json_request(
+            Method::POST,
+            "/api/system-log/config",
+            serde_json::json!({ "remoteEnabled": true, "remoteHost": "logs.example.test" }),
+        );
+        set.headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        set.headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let body = json_body(app.clone().oneshot(set).await.unwrap()).await;
+        assert_ne!(body["code"], 0, "{body}");
+        assert!(!requests.lock().unwrap().iter().any(|request| matches!(
+            request,
+            bli_kvm_core::PlatformControlRequestV2::SystemLog { .. }
+        )));
         owner.abort();
     }
 

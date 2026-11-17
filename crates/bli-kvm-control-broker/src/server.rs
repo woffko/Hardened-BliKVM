@@ -393,6 +393,12 @@ async fn board_state(
         Box::new(crate::system_log_settings::SystemLogExecRunner),
         true,
     ));
+    // The System Log page's settings, for the system's forwarder, and its
+    // reads of this boot's journal and the errors kept on the card.
+    state.with_system_log_config(crate::system_log_settings::SystemLogConfig::open(
+        crate::system_log_settings::SystemLogPaths::default(),
+        Box::new(crate::system_log_settings::SystemLogExecCommands),
+    ));
     // The reviewed firewall baseline stays refused while no backend is installed.
     let mut firewall = crate::firewall_settings::FirewallState::open(
         Box::new(crate::firewall_settings::SystemFirewallRunner),
@@ -1226,6 +1232,8 @@ where
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::DisplaySleepState { .. }
+        | ControlResponse::SystemLogState { .. }
+        | ControlResponse::SystemLogText { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
