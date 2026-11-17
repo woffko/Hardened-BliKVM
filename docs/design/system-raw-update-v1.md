@@ -269,6 +269,22 @@ Also since that review, in the runtime that carries it:
   (also carried) when the new place has none, so a board updated from a
   root that had it there keeps its images listed (CRIT-01).
 
+### The watchdog and the panic reboot (2026-11-17)
+
+The test board hung on 2026-11-14 and stayed down until its power was cut
+two days later: nothing fed the H616's watchdog (sunxi-wdt), and
+`kernel.panic` was 0. The card image now carries
+`/etc/systemd/system.conf.d/60-hardened-blikvm-watchdog.conf`
+(`RuntimeWatchdogSec=15s`, which the driver sets to its 16 s;
+`RebootWatchdogSec=10min`) and `/etc/sysctl.d/60-hardened-blikvm-panic.conf`
+(`kernel.panic = 10`) from `packaging/`, installed by the image builder over
+whatever the source board had, so a RAW update brings them to a running
+board with the image's root. A hung kernel or PID 1 resets the board within
+16 s; the RAW boot step runs in the initramfs, before systemd opens the
+watchdog, so a long write is not cut short. Test:
+`tools/test_build_sd_image.py` `test_the_image_resets_a_hung_board`
+(`docs/baselines/work-plan-20261117-system-log.md`, L1).
+
 ## Components
 
 - `crates/bli-kvm-system-raw-update`: the stage, boot, booted, confirm,

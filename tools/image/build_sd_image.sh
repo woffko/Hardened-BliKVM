@@ -314,6 +314,12 @@ assemble() {
     install -m 0644 -o 0 -g 0 "$script_dir/hardened-blikvm-firstboot.service" "$staging/etc/systemd/system/hardened-blikvm-firstboot.service"
     ln -sf ../hardened-blikvm-firstboot.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-firstboot.service"
     : > "$staging/etc/hardened-blikvm/.firstboot-pending"
+    # A hung board resets itself: systemd feeds the SoC watchdog, and a kernel
+    # panic reboots (plan of 2026-11-17, L1). A RAW update carries them too.
+    packaging=$script_dir/../../packaging
+    install -d -m 0755 -o 0 -g 0 "$staging/etc/systemd/system.conf.d"
+    install -m 0644 -o 0 -g 0 "$packaging/systemd/system.conf.d/60-hardened-blikvm-watchdog.conf" "$staging/etc/systemd/system.conf.d/"
+    install -m 0644 -o 0 -g 0 "$packaging/sysctl/60-hardened-blikvm-panic.conf" "$staging/etc/sysctl.d/"
     # The About page shows this as the system image version.
     printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"
