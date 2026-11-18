@@ -96,3 +96,26 @@ On the test board, at the operator's word.
 The test board ends on slot 111, update runtime dev47 and the RAW system of
 sequence 12, its settings and switches as found but for the remote copy the
 operator set.
+
+## The release 0.1.0-beta.14
+
+Published on 2026-11-18 at the operator's word as a GitHub pre-release,
+[v0.1.0-beta.14](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.14),
+tag on `1a15952` (the commits after `1afb20a`, where the card image was made
+and `scripts/check.sh` passed, add only documents; the slot was built at
+`fc30294` after a green check). An application, a card image and a RAW
+system update: beta.13's notes and beta.11's now open with a line that beta.14
+supersedes them, and the project's page leads to it. `cargo audit` with the
+database of 2026-11-17 reports nothing (`docs/third-party-rust.md`). The
+files, whose digests GitHub reports as the local ones:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.14-seq111.tar` | `981984371b6ec810927ea8befb07f9d53499aa39b829fc155b439674d95ac82a` |
+| `hardened-blikvm-system-0.1.0-beta.14-seq12.tar` | `2ca9a8c120db6e7f724e9710034e3b8f278e5ee6d77a3938afd9c4bc6ce447af` |
+| `hardened-blikvm-h616-sd.img.zst` | `703e8c203d8f73fa6b574d79031316eb23b04604257fcf3c14fea9f11eabf5a8` |
+| `IMAGE-INFO.txt` | `e17b16e46c946977c91b60419697c624d122b1ed77a881e7b25131a825be8aeb` |
+| `hardened-blikvm-agent.exe` | `f23b0dc971d079fa82b86ee58bc34d09e4232bb1fb96e1c84cdbd4fe4fa0dbd7` |
+| `SHA256SUMS` | `28420695bb2598eb1c72c5637c5f2c7e620d8c56fbca1823d7eb2993eb3205ad` |
+
+The unpacked image is `c50889f337a6e238b56eed2c21ac393b83e453201b9d5f076ee637cbee1caf60`.
