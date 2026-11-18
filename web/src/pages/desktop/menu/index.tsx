@@ -19,6 +19,7 @@ import { Fullscreen } from './fullscreen';
 import { Image } from './image';
 import { Keyboard } from './keyboard';
 import { LocalKeyboardButton } from './local-keyboard-button';
+import { Logout } from './logout';
 import { Monitors } from './monitors';
 import { Mouse } from './mouse';
 import { Collapse, Expand } from './operations';
@@ -184,6 +185,7 @@ export const Menu = () => {
             )}
 
             <Settings />
+            {isEnabled('logout') && <Logout />}
             {isEnabled('fullscreen') && <Fullscreen />}
             {isDesktopLayout && isEnabled('collapse') && (
               <Collapse toggleMenu={setIsMenuExpanded} />

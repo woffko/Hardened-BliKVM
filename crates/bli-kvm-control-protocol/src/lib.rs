@@ -161,6 +161,16 @@ pub enum ControlResponse {
     DisplaySleepState {
         seconds: u32,
     },
+    /// The system log's settings, and whether the system has its forwarder.
+    SystemLogState {
+        settings: bli_kvm_core::SystemLogSettings,
+        writable: bool,
+    },
+    /// The tail of one log.
+    SystemLogText {
+        content: String,
+        truncated: bool,
+    },
     /// The connected interfaces and a pending addressing revert, if any.
     NetworkInfo {
         interfaces: Vec<NetworkInterfaceInfo>,
@@ -533,6 +543,16 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
         && (chunk.len() > bli_kvm_core::MAX_FIREWALL_RULES_CHUNK
             || *total as usize > bli_kvm_core::MAX_FIREWALL_RULES_BYTES
             || u64::from(*offset) + chunk.len() as u64 > u64::from(*total))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::SystemLogState { settings, .. } = response
+        && !settings.is_valid()
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::SystemLogText { content, .. } = response
+        && content.len() > bli_kvm_core::SYSTEM_LOG_MAX_TEXT_BYTES
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }

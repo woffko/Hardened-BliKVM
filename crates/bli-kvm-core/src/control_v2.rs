@@ -296,6 +296,19 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the display's sleep time.
     DisplaySleepState {},
+    /// The system log's settings, written for its forwarder
+    /// (docs/design/system-log-v1.md).
+    SystemLog {
+        settings: crate::system_log::SystemLogSettings,
+    },
+    /// Read back the system log's settings and whether the system has its
+    /// forwarder.
+    SystemLogState {},
+    /// The tail of one log, at most `lines` lines.
+    SystemLogRead {
+        kind: crate::system_log::SystemLogKind,
+        lines: u16,
+    },
     /// Present HID only and refuse every virtual-media attach.
     HidOnly {
         enabled: bool,
@@ -471,6 +484,8 @@ pub enum ControlV2ValidationError {
     InvalidWifiNetwork,
     #[error("display sleep time is not one of the choices")]
     InvalidDisplaySleep,
+    #[error("system log settings or read are invalid")]
+    InvalidSystemLog,
     #[error("target agent call or its timeout is invalid")]
     InvalidTargetAgentCall,
 }
@@ -652,6 +667,21 @@ impl PlatformControlRequestV2 {
                 }
             }
             Self::DisplaySleepState {} => Ok(()),
+            Self::SystemLog { settings } => {
+                if settings.is_valid() {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidSystemLog)
+                }
+            }
+            Self::SystemLogState {} => Ok(()),
+            Self::SystemLogRead { lines, .. } => {
+                if (1..=crate::system_log::SYSTEM_LOG_MAX_LINES).contains(lines) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidSystemLog)
+                }
+            }
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
             Self::AdminFeature { .. } => Ok(()),

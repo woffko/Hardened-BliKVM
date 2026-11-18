@@ -3,25 +3,14 @@ import { Button, Popconfirm } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
-import * as api from '@/api/auth.ts';
-import { removeToken } from '@/lib/cookie.ts';
-import { clearPicoclawStorage } from '@/lib/picoclaw-storage.ts';
+import { logOut } from '@/lib/logout.ts';
 
 export const Logout = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
   function logout() {
-    api.logout().then((rsp) => {
-      if (rsp.code !== 0) {
-        console.log(rsp.msg);
-        return;
-      }
-
-      removeToken();
-      clearPicoclawStorage();
-      navigate('/auth/login');
-    });
+    void logOut(navigate);
   }
 
   return (

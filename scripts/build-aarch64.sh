@@ -65,6 +65,7 @@ scripts/verify-aarch64-elf.sh \
   "$release_dir/bli-kvm-admin-helper" \
   "$release_dir/bli-kvm-system-update" \
   "$release_dir/bli-kvm-quic-gateway" \
+  "$release_dir/bli-kvm-syslog-forward" \
   "$release_dir/bli-kvm-update-trust-config"
 sha256sum \
   "$release_dir/bli-kvm-server" \
@@ -77,4 +78,5 @@ sha256sum \
   "$release_dir/bli-kvm-admin-helper" \
   "$release_dir/bli-kvm-system-update" \
   "$release_dir/bli-kvm-quic-gateway" \
+  "$release_dir/bli-kvm-syslog-forward" \
   "$release_dir/bli-kvm-update-trust-config"

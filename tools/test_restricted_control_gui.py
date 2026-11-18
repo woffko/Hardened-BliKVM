@@ -214,6 +214,30 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("usesBliApplicationUpdates(manifest)", power)
         self.assertIn("if (hardened) {", power)
 
+    def test_the_system_log_page_follows_the_boards_forwarder(self) -> None:
+        # docs/baselines/work-plan-20261117-system-log.md, L4: the board keeps
+        # the errors on the card, writes only where its system has the
+        # forwarder, and offers the four logs.
+        page = (ROOT / "web/src/pages/desktop/menu/settings/system-log/index.tsx").read_text()
+        self.assertIn("rsp.data.localStorage === 'card'", page)
+        self.assertIn("rsp.data.writable !== false", page)
+        self.assertIn("const locked = readOnly || !writable;", page)
+        self.assertIn("['system', 'kernel', 'backend', 'saved']", page)
+        self.assertIn('data-testid="system-log-card"', page)
+
+    def test_logout_sits_on_the_toolbar_and_asks_first(self) -> None:
+        # docs/baselines/work-plan-20261117-system-log.md, L5.
+        menu = (ROOT / "web/src/pages/desktop/menu/index.tsx").read_text()
+        self.assertIn("<Settings />\n            {isEnabled('logout') && <Logout />}", menu)
+        button = (ROOT / "web/src/pages/desktop/menu/logout.tsx").read_text()
+        self.assertIn("<Popconfirm", button)
+        self.assertIn("t('settings.account.logoutDesc')", button)
+        self.assertIn("logOut(navigate)", button)
+        account = (ROOT / "web/src/pages/desktop/menu/settings/account/logout.tsx").read_text()
+        self.assertIn("logOut(navigate)", account)
+        icons = (ROOT / "web/src/pages/desktop/menu/settings/appearance/menu-icons.tsx").read_text()
+        self.assertIn("key: 'logout'", icons)
+
     def test_paste_and_shortcuts_follow_the_restricted_capability(self) -> None:
         paste = (ROOT / "web/src/pages/desktop/menu/keyboard/paste.tsx").read_text()
         self.assertIn("useHidLease", paste)

@@ -24,8 +24,8 @@ from tools import ve_module
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev46"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39", "0.1.0~dev40", "0.1.0~dev41", "0.1.0~dev42", "0.1.0~dev43", "0.1.0~dev44", "0.1.0~dev45", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev47"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", "0.1.0~dev38", "0.1.0~dev39", "0.1.0~dev40", "0.1.0~dev41", "0.1.0~dev42", "0.1.0~dev43", "0.1.0~dev44", "0.1.0~dev45", "0.1.0~dev46", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -247,6 +247,15 @@ FILE_MAP.update({
     f"share/ve/source/{name}": f"usr/share/doc/{PACKAGE_NAME}/ve-module-source/{name}"
     for name in VE_MODULE_SOURCE_FILES
 })
+# dev47: the system log forwarder, which syslog.socket starts: it keeps the
+# board's errors on the card and sends an optional remote copy
+# (docs/design/system-log-v1.md).
+FILE_MAP.update({
+    "libexec/bli-kvm-syslog-forward": "usr/libexec/hardened-blikvm/bli-kvm-syslog-forward",
+    "share/systemd/hardened-blikvm-syslog.service": (
+        "lib/systemd/system/hardened-blikvm-syslog.service"
+    ),
+})
 NATIVE_PROFILE_UNITS = (
     "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
     "update-activation@",
@@ -269,6 +278,7 @@ EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-system-update",
     "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
     "usr/libexec/hardened-blikvm/bli-kvm-ve-load",
+    "usr/libexec/hardened-blikvm/bli-kvm-syslog-forward",
     "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update",
     "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update",
 }
@@ -328,6 +338,9 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-picoclaw-install.conf": 37,
         # dev42 is the 39th.
         "50-system-config.conf": 39,
+        # dev47 is the 44th.
+        "bli-kvm-syslog-forward": 44,
+        "hardened-blikvm-syslog.service": 44,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

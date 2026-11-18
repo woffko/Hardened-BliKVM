@@ -75,6 +75,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-ve-load"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-encoder"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-syslog-forward"
 # The PicoClaw runtime is downloaded at run time, not packaged.
 install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
 install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
@@ -115,6 +116,11 @@ printf '%s\n' \
   'Type=simple' \
   'ExecStart=/bin/true' \
   > "$test_root/usr/lib/systemd/system/kvmd.service"
+# systemd's own syslog socket, which starts the system log forwarder.
+printf '%s\n' \
+  '[Socket]' \
+  'ListenDatagram=/run/systemd/journal/syslog' \
+  > "$test_root/usr/lib/systemd/system/syslog.socket"
 printf '%s\n' \
   '[Service]' \
   'Type=simple' \

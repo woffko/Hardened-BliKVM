@@ -860,6 +860,13 @@ name = "bli-kvm-st7789-model"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-syslog-forward"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "bli-kvm-system-action-journal"
 version = "0.1.0"
 dependencies = [

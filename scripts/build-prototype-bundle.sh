@@ -52,6 +52,8 @@ system_update_binary="$release_dir/bli-kvm-system-update"
 scripts/verify-aarch64-elf.sh "$system_update_binary"
 quic_gateway_binary="$release_dir/bli-kvm-quic-gateway"
 scripts/verify-aarch64-elf.sh "$quic_gateway_binary"
+syslog_forward_binary="$release_dir/bli-kvm-syslog-forward"
+scripts/verify-aarch64-elf.sh "$syslog_forward_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 mkdir -p -- "$output_dir"
@@ -96,6 +98,7 @@ install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec
 install -m 0755 "$admin_helper_binary" "$stage/libexec/bli-kvm-admin-helper"
 install -m 0755 "$system_update_binary" "$stage/libexec/bli-kvm-system-update"
 install -m 0755 "$quic_gateway_binary" "$stage/libexec/bli-kvm-quic-gateway"
+install -m 0755 "$syslog_forward_binary" "$stage/libexec/bli-kvm-syslog-forward"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 # The target agent for Windows and its drive: a signed slot carries its
@@ -155,6 +158,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-picoclaw-api@.service \
   packaging/systemd/hardened-blikvm-system-update-booted.service \
   packaging/systemd/hardened-blikvm-ve.service \
+  packaging/systemd/hardened-blikvm-syslog.service \
   "$stage/share/systemd/"
 install -d -m 0755 "$stage/share/systemd/native"
 install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
@@ -388,6 +392,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-admin-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-system-update")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-quic-gateway")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-syslog-forward")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755

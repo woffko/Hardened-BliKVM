@@ -1,0 +1,11 @@
+[package]
+name = "bli-kvm-syslog-forward"
+description = "Hardened BliKVM system log forwarder: errors kept on the card, an optional remote copy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

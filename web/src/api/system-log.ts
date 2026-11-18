@@ -13,7 +13,7 @@ export type SystemLogConfig = {
   kernelConsoleLevel: number;
 };
 
-export type SystemLogKind = 'system' | 'kernel' | 'backend';
+export type SystemLogKind = 'system' | 'kernel' | 'backend' | 'saved';
 
 export function getConfig() {
   return http.get('/api/system-log/config');

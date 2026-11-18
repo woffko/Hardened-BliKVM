@@ -156,7 +156,11 @@ assemble() {
       "$gadget_state/target-agent.env" "$gadget_state/system-switches.json" \
       "$gadget_state/mouse-jiggler.env" "$gadget_state"/network-revert-*.json \
       "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
-      "$staging/var/lib/hardened-blikvm/screen-area.json"
+      "$staging/var/lib/hardened-blikvm/screen-area.json" \
+      "$staging/etc/hardened-blikvm/syslog.env"
+    # The system log forwarder keeps the source board errors; a new card
+    # starts with none and with the remote copy off (plan of 2026-11-17, L2).
+    rm -rf "$staging/var/lib/private/hardened-blikvm-syslog" "$staging/var/lib/hardened-blikvm-syslog"
     # The system-action journal is the source board'"'"'s reboots under its boot
     # identities, one perhaps not yet accepted, and it has room for sixteen:
     # a new card'"'"'s owner starts an empty one.
@@ -186,7 +190,7 @@ assemble() {
       \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
       -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
       -o -name hid-only.env -o -name display-sleep.env -o -name target-agent.env \
-      -o -name system-switches.json \
+      -o -name system-switches.json -o -name syslog.env \
       -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
@@ -314,6 +318,23 @@ assemble() {
     install -m 0644 -o 0 -g 0 "$script_dir/hardened-blikvm-firstboot.service" "$staging/etc/systemd/system/hardened-blikvm-firstboot.service"
     ln -sf ../hardened-blikvm-firstboot.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-firstboot.service"
     : > "$staging/etc/hardened-blikvm/.firstboot-pending"
+    # A hung board resets itself: systemd feeds the SoC watchdog, and a kernel
+    # panic reboots (plan of 2026-11-17, L1). A RAW update carries them too.
+    packaging=$script_dir/../../packaging
+    install -d -m 0755 -o 0 -g 0 "$staging/etc/systemd/system.conf.d"
+    install -m 0644 -o 0 -g 0 "$packaging/systemd/system.conf.d/60-hardened-blikvm-watchdog.conf" "$staging/etc/systemd/system.conf.d/"
+    install -m 0644 -o 0 -g 0 "$packaging/sysctl/60-hardened-blikvm-panic.conf" "$staging/etc/sysctl.d/"
+    # The system log (plan of 2026-11-17, L2): the update runtime installs the
+    # forwarder that syslog.socket starts; it is enabled and is syslog.service.
+    # busybox syslogd and klogd took /dev/log from journald: masked.
+    [ -f "$staging/lib/systemd/system/hardened-blikvm-syslog.service" ] || {
+      echo "the system log forwarder is missing on the source board" >&2
+      exit 1
+    }
+    ln -sfn /lib/systemd/system/hardened-blikvm-syslog.service "$staging/etc/systemd/system/syslog.service"
+    ln -sfn /lib/systemd/system/hardened-blikvm-syslog.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-syslog.service"
+    ln -sfn /dev/null "$staging/etc/systemd/system/busybox-syslogd.service"
+    ln -sfn /dev/null "$staging/etc/systemd/system/busybox-klogd.service"
     # The About page shows this as the system image version.
     printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"

@@ -5,7 +5,7 @@ import { RefreshCwIcon, SendIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/system-log.ts';
-import type { SystemLogConfig } from '@/api/system-log.ts';
+import type { SystemLogConfig, SystemLogKind } from '@/api/system-log.ts';
 
 import type { SystemActionHandle, SystemActionState } from '../system/action.ts';
 
@@ -43,6 +43,12 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
     const [isLogLoading, setIsLogLoading] = useState(false);
     const [isTesting, setIsTesting] = useState(false);
     const [logTruncated, setLogTruncated] = useState(false);
+    const [kind, setKind] = useState<SystemLogKind>('system');
+    // This board keeps the errors on the card and writes the settings only
+    // where its system has the forwarder (docs/design/system-log-v1.md).
+    const [board, setBoard] = useState(false);
+    const [writable, setWritable] = useState(true);
+    const locked = readOnly || !writable;
 
     const priorityOptions = useMemo(
       () =>
@@ -58,10 +64,10 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
     }
 
     const refreshLog = useCallback(
-      async (lines = lineCount) => {
+      async (lines = lineCount, logKind: SystemLogKind = kind) => {
         setIsLogLoading(true);
         try {
-          const rsp = await api.getMessages('system', lines);
+          const rsp = await api.getMessages(logKind, lines);
           if (rsp.code !== 0 || !rsp.data) {
             message.error(rsp.msg || t('settings.systemLog.logLoadFailed'));
             return;
@@ -75,7 +81,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
           setIsLogLoading(false);
         }
       },
-      [lineCount, t]
+      [kind, lineCount, t]
     );
 
     const loadConfig = useCallback(async () => {
@@ -91,6 +97,8 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
         setConfig(nextConfig);
         setSavedConfig(nextConfig);
         setLocalLogFile(rsp.data.localLogFile || defaultConfigPath());
+        setBoard(rsp.data.localStorage === 'card');
+        setWritable(rsp.data.writable !== false);
       } catch {
         message.error(t('settings.systemLog.loadFailed'));
       } finally {
@@ -100,8 +108,11 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
 
     useEffect(() => {
       void loadConfig();
-      void refreshLog(200);
-    }, [loadConfig, refreshLog]);
+    }, [loadConfig]);
+
+    useEffect(() => {
+      void refreshLog();
+    }, [refreshLog]);
 
     const save = useCallback(async () => {
       if (isSaving) return;
@@ -158,7 +169,6 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
 
     function changeLineCount(value: number) {
       setLineCount(value);
-      refreshLog(value);
     }
 
     const normalizedConfig = normalizeSystemLogConfig(config);
@@ -206,7 +216,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
               className="shrink-0"
               checked={config.remoteEnabled}
               loading={isLoading}
-              disabled={readOnly}
+              disabled={locked}
               onChange={(remoteEnabled) => patchConfig({ remoteEnabled })}
             />
           </div>
@@ -217,7 +227,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                 <Input
                   value={config.remoteHost}
                   placeholder="192.0.2.1"
-                  disabled={readOnly}
+                  disabled={locked}
                   onChange={(event) => patchConfig({ remoteHost: event.target.value })}
                 />
               </SettingRow>
@@ -226,101 +236,146 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                   min={1}
                   max={65535}
                   value={config.remotePort}
-                  disabled={readOnly}
+                  disabled={locked}
                   onChange={(value) => patchConfig({ remotePort: value || 514 })}
                   className="w-full"
                 />
               </SettingRow>
+              {board && (
+                <>
+                  <SettingRow label={t('settings.systemLog.board.priority')}>
+                    <Select
+                      value={config.priority}
+                      options={priorityOptions}
+                      disabled={locked}
+                      onChange={(priority) => patchConfig({ priority })}
+                      className="w-full"
+                    />
+                  </SettingRow>
+                  <SettingRow label={t('settings.systemLog.board.kernel')}>
+                    <Switch
+                      checked={config.kernelEnabled}
+                      disabled={locked}
+                      onChange={(kernelEnabled) => patchConfig({ kernelEnabled })}
+                    />
+                  </SettingRow>
+                </>
+              )}
               <div className="break-words text-xs text-neutral-500">
-                {t('settings.systemLog.remote.protocol')}
+                {t(
+                  board ? 'settings.systemLog.board.protocol' : 'settings.systemLog.remote.protocol'
+                )}
               </div>
             </div>
           )}
 
-          <div className="min-w-0 space-y-3 overflow-hidden rounded-xl bg-neutral-800/50 p-4">
-            <div>
+          {board && (
+            <div
+              className="min-w-0 space-y-1 overflow-hidden rounded-xl bg-neutral-800/50 p-4"
+              data-testid="system-log-card"
+            >
               <div className="font-semibold text-neutral-100">
-                {t('settings.systemLog.local.title')}
+                {t('settings.systemLog.board.cardTitle')}
               </div>
-              <div className="mt-0.5 break-words text-xs leading-snug text-neutral-500">
-                {t('settings.systemLog.local.description', { path: localLogFile })}
+              <div className="break-words text-xs leading-snug text-neutral-500">
+                {t('settings.systemLog.board.cardDescription', { path: localLogFile })}
               </div>
+              {!writable && (
+                <div className="break-words text-xs leading-snug text-amber-500">
+                  {t('settings.systemLog.board.noForwarder')}
+                </div>
+              )}
             </div>
-            <SettingRow label={t('settings.systemLog.local.priority')}>
-              <Select
-                value={config.priority}
-                options={priorityOptions}
-                disabled={readOnly}
-                onChange={(priority) => patchConfig({ priority })}
-                className="w-full"
-              />
-            </SettingRow>
-            <SettingRow label={t('settings.systemLog.local.buffer')}>
-              <InputNumber<number>
-                min={16}
-                max={1024}
-                value={config.bufferKb}
-                addonAfter="KiB"
-                disabled={readOnly}
-                onChange={(value) => patchConfig({ bufferKb: value || 200 })}
-                className="w-full"
-              />
-            </SettingRow>
-            <SettingRow label={t('settings.systemLog.local.rotations')}>
-              <InputNumber<number>
-                min={0}
-                max={4}
-                value={config.rotations}
-                disabled={readOnly}
-                onChange={(value) => patchConfig({ rotations: value || 0 })}
-                className="w-full"
-              />
-            </SettingRow>
-            <SettingRow label={t('settings.systemLog.local.compact')}>
-              <Switch
-                checked={config.smallOutput}
-                disabled={readOnly}
-                onChange={(smallOutput) => patchConfig({ smallOutput })}
-              />
-            </SettingRow>
-            <SettingRow label={t('settings.systemLog.local.stripTimestamps')} isLast>
-              <Switch
-                checked={config.stripTimestamps}
-                disabled={readOnly}
-                onChange={(stripTimestamps) => patchConfig({ stripTimestamps })}
-              />
-            </SettingRow>
-          </div>
+          )}
 
-          <div className="min-w-0 space-y-3 overflow-hidden rounded-xl bg-neutral-800/50 p-4">
-            <div>
-              <div className="font-semibold text-neutral-100">
-                {t('settings.systemLog.kernel.title')}
+          {!board && (
+            <div className="min-w-0 space-y-3 overflow-hidden rounded-xl bg-neutral-800/50 p-4">
+              <div>
+                <div className="font-semibold text-neutral-100">
+                  {t('settings.systemLog.local.title')}
+                </div>
+                <div className="mt-0.5 break-words text-xs leading-snug text-neutral-500">
+                  {t('settings.systemLog.local.description', { path: localLogFile })}
+                </div>
               </div>
-              <div className="mt-0.5 break-words text-xs leading-snug text-neutral-500">
-                {t('settings.systemLog.kernel.description')}
-              </div>
+              <SettingRow label={t('settings.systemLog.local.priority')}>
+                <Select
+                  value={config.priority}
+                  options={priorityOptions}
+                  disabled={locked}
+                  onChange={(priority) => patchConfig({ priority })}
+                  className="w-full"
+                />
+              </SettingRow>
+              <SettingRow label={t('settings.systemLog.local.buffer')}>
+                <InputNumber<number>
+                  min={16}
+                  max={1024}
+                  value={config.bufferKb}
+                  addonAfter="KiB"
+                  disabled={locked}
+                  onChange={(value) => patchConfig({ bufferKb: value || 200 })}
+                  className="w-full"
+                />
+              </SettingRow>
+              <SettingRow label={t('settings.systemLog.local.rotations')}>
+                <InputNumber<number>
+                  min={0}
+                  max={4}
+                  value={config.rotations}
+                  disabled={locked}
+                  onChange={(value) => patchConfig({ rotations: value || 0 })}
+                  className="w-full"
+                />
+              </SettingRow>
+              <SettingRow label={t('settings.systemLog.local.compact')}>
+                <Switch
+                  checked={config.smallOutput}
+                  disabled={locked}
+                  onChange={(smallOutput) => patchConfig({ smallOutput })}
+                />
+              </SettingRow>
+              <SettingRow label={t('settings.systemLog.local.stripTimestamps')} isLast>
+                <Switch
+                  checked={config.stripTimestamps}
+                  disabled={locked}
+                  onChange={(stripTimestamps) => patchConfig({ stripTimestamps })}
+                />
+              </SettingRow>
             </div>
-            <SettingRow label={t('settings.systemLog.kernel.enabled')}>
-              <Switch
-                checked={config.kernelEnabled}
-                disabled={readOnly}
-                onChange={(kernelEnabled) => patchConfig({ kernelEnabled })}
-              />
-            </SettingRow>
-            <SettingRow label={t('settings.systemLog.kernel.consoleLevel')} isLast>
-              <Select
-                value={config.kernelConsoleLevel}
-                options={priorityOptions}
-                disabled={readOnly}
-                onChange={(kernelConsoleLevel) => patchConfig({ kernelConsoleLevel })}
-                className="w-full"
-              />
-            </SettingRow>
-          </div>
+          )}
+
+          {!board && (
+            <div className="min-w-0 space-y-3 overflow-hidden rounded-xl bg-neutral-800/50 p-4">
+              <div>
+                <div className="font-semibold text-neutral-100">
+                  {t('settings.systemLog.kernel.title')}
+                </div>
+                <div className="mt-0.5 break-words text-xs leading-snug text-neutral-500">
+                  {t('settings.systemLog.kernel.description')}
+                </div>
+              </div>
+              <SettingRow label={t('settings.systemLog.kernel.enabled')}>
+                <Switch
+                  checked={config.kernelEnabled}
+                  disabled={locked}
+                  onChange={(kernelEnabled) => patchConfig({ kernelEnabled })}
+                />
+              </SettingRow>
+              <SettingRow label={t('settings.systemLog.kernel.consoleLevel')} isLast>
+                <Select
+                  value={config.kernelConsoleLevel}
+                  options={priorityOptions}
+                  disabled={locked}
+                  onChange={(kernelConsoleLevel) => patchConfig({ kernelConsoleLevel })}
+                  className="w-full"
+                />
+              </SettingRow>
+            </div>
+          )}
 
           <div className="flex min-w-0 flex-wrap justify-end gap-2">
-            {!readOnly && (
+            {!locked && (
               <Button
                 className="min-w-0"
                 icon={<SendIcon size={16} />}
@@ -330,7 +385,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                 {t('settings.systemLog.test')}
               </Button>
             )}
-            {showFooter && !readOnly && (
+            {showFooter && !locked && (
               <Button
                 type="primary"
                 loading={isSaving}
@@ -348,6 +403,19 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-base">{t('settings.systemLog.viewer.title')}</div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Select
+                  value={kind}
+                  data-testid="system-log-kind"
+                  options={(board
+                    ? (['system', 'kernel', 'backend', 'saved'] as const)
+                    : (['system', 'kernel', 'backend'] as const)
+                  ).map((value) => ({
+                    value,
+                    label: t(`settings.systemLog.kind.${value}`)
+                  }))}
+                  onChange={setKind}
+                  className="min-w-[160px] flex-1 sm:flex-none"
+                />
                 <Select
                   value={lineCount}
                   options={[100, 200, 500, 1000].map((value) => ({

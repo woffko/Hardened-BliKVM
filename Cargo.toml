@@ -83,6 +83,7 @@ members = [
   "crates/bli-kvm-quic-gateway",
   "crates/bli-kvm-video-client",
   "crates/bli-kvm-video-proxy",
+  "crates/bli-kvm-syslog-forward",
   "crates/bli-kvm-server",
 ]
 exclude = ["tools/lsp-smoke/rust"]

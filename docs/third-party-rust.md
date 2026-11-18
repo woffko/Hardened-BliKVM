@@ -411,3 +411,12 @@ resolves `windows-sys` 0.61.2, already in the lock, for `errno`, `quinn-udp`,
 agent for Windows uses none of them. `cargo audit --deny warnings`, run
 without fetching (the database of 2026-11-12, 1,490 advisories), reports
 nothing; the lock keeps 317 packages.
+
+## RustSec scan for 0.1.0-beta.14 (2026-11-18)
+
+An application, an update runtime (`0.1.0~dev47`), a card image and a RAW
+system update: the system log kept through a hang, the watchdog and the
+toolbar's logout (`docs/baselines/audit-20261117-system-log.md`). The lock
+has `rustix` 1.1.6 since beta.13's scan and the system log forwarder's crate,
+which brings no dependency (318 packages). `cargo audit --deny warnings`,
+with the database fetched on 2026-11-17 (1,527 advisories), reports nothing.

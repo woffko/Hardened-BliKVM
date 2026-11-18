@@ -1081,6 +1081,22 @@ const en = {
           truncated: 'Only the latest log data is shown.',
           lines: '{{count}} lines'
         },
+        board: {
+          priority: 'Send messages up to',
+          kernel: 'Send kernel messages',
+          protocol: "Sent over UDP syslog (RFC 3164) with the board's name.",
+          cardTitle: 'Errors kept on the card',
+          cardDescription:
+            'Messages of priority Error and above are kept in {{path}} and survive a hang or a power cut; the rest of the log stays in memory until the board restarts.',
+          noForwarder:
+            "This board's system has no log forwarder yet: the settings are shown, not written. A system update brings it."
+        },
+        kind: {
+          system: 'System',
+          kernel: 'Kernel',
+          backend: 'Board services',
+          saved: 'Kept errors'
+        },
         level: {
           1: '1 - Alert',
           2: '2 - Critical',
@@ -1476,6 +1492,7 @@ const en = {
       toggle: 'Toggle Fullscreen'
     },
     menu: {
+      logout: 'Log out',
       collapse: 'Collapse Menu',
       expand: 'Expand Menu',
       show: 'Show Menu'

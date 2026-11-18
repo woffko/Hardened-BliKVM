@@ -6,6 +6,7 @@ import {
   DownloadIcon,
   FileJsonIcon,
   GaugeIcon,
+  LogOutIcon,
   MaximizeIcon,
   NetworkIcon,
   PowerIcon,
@@ -53,6 +54,7 @@ export const MenuIcons = () => {
     { key: 'picoclaw', icon: <Robot size={16} /> },
     { key: 'power', icon: <PowerIcon size={16} /> },
     { key: 'qualityMonitor', icon: <GaugeIcon size={16} /> },
+    { key: 'logout', icon: <LogOutIcon size={16} />, label: 'menu.logout' },
     { key: 'fullscreen', icon: <MaximizeIcon size={16} />, label: 'fullscreen.toggle' },
     { key: 'collapse', icon: <XIcon size={16} />, label: 'menu.collapse' }
   ].filter((item) =>
